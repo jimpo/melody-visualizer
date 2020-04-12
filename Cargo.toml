@@ -1,0 +1,7 @@
+[package]
+name = "melody-visualizer"
+version = "0.1.0"
+authors = ["Jim Posen <jim.posen@gmail.com>"]
+edition = "2018"
+
+[dependencies]

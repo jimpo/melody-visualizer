@@ -2,6 +2,7 @@ use gtk::prelude::*;
 use gtk::{Application, Orientation};
 
 use crate::gui::control_pane;
+use crate::gui::spiral_graphic::SpiralGraphic;
 
 const TITLE: &str = "Melody Visualizer";
 
@@ -15,9 +16,9 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), glib::Error> {
 
 	let paned = gtk::Paned::new(Orientation::Horizontal);
 
-	let left_control = control_pane::new()?;
-	left_control.show();
-	paned.add1(&left_control);
+	let graphic = SpiralGraphic::new();
+	graphic.widget().show();
+	paned.add1(graphic.widget());
 
 	let control = control_pane::new()?;
 	control.show();

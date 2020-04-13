@@ -5,6 +5,7 @@ authors = ["Jim Posen <jim.posen@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+cairo = { package = "cairo-rs", version = "0.8.1" }
 gio = "0.8.1"
 glib = "0.9.3"
 gtk = "0.8.1"

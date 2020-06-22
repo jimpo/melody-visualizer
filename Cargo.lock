@@ -90,6 +90,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 
 [[package]]
+name = "derive_more"
+version = "0.99.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc655351f820d774679da6cdc23355a93de496867d8203496675162e17b1d671"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -434,6 +445,7 @@ name = "melody-visualizer"
 version = "0.1.0"
 dependencies = [
  "cairo-rs",
+ "derive_more",
  "env_logger",
  "gio",
  "glib",

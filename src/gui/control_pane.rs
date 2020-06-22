@@ -1,8 +1,9 @@
-use std::cell::RefCell;
-use std::rc::Rc;use glib::Type;
-use log::info;
+use glib::Type;
 use gtk::{Orientation, TreeSelection, Widget};
 use gtk::prelude::*;
+use log::debug;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::error::Error;
 use crate::application::{Controller, SourceType};
@@ -36,17 +37,25 @@ impl ControlPane {
 		let source_type_box = gtk::Box::new(Orientation::Horizontal, 0);
 		source_control_inner.add(&source_type_box);
 
-		let audio_selector = gtk::RadioButton::new_with_label("Audio");
-		let midi_selector = gtk::RadioButton::new_with_label_from_widget(&audio_selector, "MIDI");
-		source_type_box.add(&audio_selector);
-		source_type_box.add(&midi_selector);
+		let mut radio_button_group = None;
+		for source_type in [SourceType::Audio, SourceType::MIDI].iter() {
+			let selector = if let Some(ref widget) = radio_button_group {
+				gtk::RadioButton::new_with_label_from_widget(widget, &source_type.to_string())
+			} else {
+				gtk::RadioButton::new_with_label(&source_type.to_string())
+			};
+			source_type_box.add(&selector);
 
-		audio_selector.connect_toggled(
-			|selector| on_source_type_toggled(selector, SourceType::Audio)
-		);
-		midi_selector.connect_property_active_notify(
-			|selector| on_source_type_toggled(selector, SourceType::MIDI)
-		);
+			let is_active = controller.borrow().get_source_type() == *source_type;
+			selector.set_active(is_active);
+
+			let controller_clone = controller.clone();
+			selector.connect_toggled(
+				move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
+			);
+
+			radio_button_group = Some(selector)
+		}
 
 		let (port_store, port_view) = build_port_view();
 		port_view.show();
@@ -88,9 +97,15 @@ fn on_changed(selection: &TreeSelection) {
 
 }
 
-fn on_source_type_toggled(selector: &gtk::RadioButton, source_type: SourceType) {
+fn on_source_type_toggled(
+	controller: &RefCell<Controller>,
+	selector: &gtk::RadioButton,
+	source_type: SourceType
+) {
 	if !selector.get_active() {
 		return;
 	}
-	debug!("Source type \"{:?}\" activated", source_type);
+
+	let mut controller = controller.borrow_mut();
+	controller.set_source_type(source_type);
 }

@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 cairo = { package = "cairo-rs", version = "0.8.1" }
+derive_more = "0.99.8"
 jack = "0.6.2"
 env_logger = "0.7.1"
 log = "0.4.8"

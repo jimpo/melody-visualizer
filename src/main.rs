@@ -1,3 +1,6 @@
+mod application;
+mod audio;
+mod error;
 mod gui;
 
 use gio::prelude::*;

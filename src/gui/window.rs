@@ -14,7 +14,7 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	// We create the main window.
 	let win = gtk::ApplicationWindow::new(app);
 
-	let controller = Rc::new(RefCell::new(Controller::new()));
+	let controller = Rc::new(RefCell::new(Controller::new()?));
 
 	// Then we set its size and a title.
 	win.set_title(TITLE);

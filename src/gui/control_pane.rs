@@ -1,4 +1,4 @@
-use glib::Type;
+use glib::{Type, value::Value};
 use gtk::{Orientation, TreeSelection, Widget};
 use gtk::prelude::*;
 use log::debug;
@@ -7,12 +7,15 @@ use std::rc::Rc;
 
 use crate::error::Error;
 use crate::application::{Controller, SourceType};
+use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
 
+const PORT_NAME_COL: i32 = 0;
+
 pub struct ControlPane {
 	controller: Rc<RefCell<Controller>>,
-	port_store: gtk::ListStore,
+	port_store: Rc<gtk::ListStore>,
 	view: gtk::Box,
 }
 
@@ -64,6 +67,20 @@ impl ControlPane {
 		let selection = port_view.get_selection();
 		selection.connect_changed(|selection| on_changed(selection));
 
+		let port_store = Rc::new(port_store);
+
+		{
+			let controller_clone = controller.clone();
+			let port_store_clone = port_store.clone();
+			let callback = Box::new(move |_port_id| {
+				refresh_inputs(&controller_clone.borrow(), &port_store_clone);
+			});
+			let mut controller = controller.borrow_mut();
+			controller.subscribe_inputs_changed(callback);
+		}
+
+		refresh_inputs(&controller.borrow(), &port_store);
+
 		Ok(ControlPane {
 			controller,
 			port_store,
@@ -85,7 +102,7 @@ fn build_port_view() -> (gtk::ListStore, gtk::TreeView) {
 	let column = gtk::TreeViewColumn::new();
 	column.pack_start(&renderer, true);
 	column.set_title("Port");
-	column.add_attribute(&renderer, "text", 0);
+	column.add_attribute(&renderer, "text", PORT_NAME_COL);
 
 	let port_view = gtk::TreeView::new_with_model(&port_store);
 	port_view.append_column(&column);
@@ -108,4 +125,53 @@ fn on_source_type_toggled(
 
 	let mut controller = controller.borrow_mut();
 	controller.set_source_type(source_type);
+}
+
+fn refresh_inputs(controller: &Controller, port_store: &gtk::ListStore) {
+	let ports = controller.jack_client()
+		.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT);
+
+	// Remove rows from ListStore.
+	if let Some(iter) = port_store.get_iter_first() {
+		loop {
+			let name = port_store
+				.get_value(&iter, PORT_NAME_COL)
+				.get::<String>()
+				.expect("values in PORT_NAME_COL are strings")
+				.expect("port names cannot be None");
+			let found = ports.contains(&name);
+			let iter_invalid = if !found {
+				port_store.remove(&iter)
+			} else {
+				port_store.iter_next(&iter)
+			};
+			if !iter_invalid {
+				break;
+			}
+		}
+	}
+
+	// Add rows to ListStore.
+	for new_port in ports {
+		let found = if let Some(iter) = port_store.get_iter_first() {
+			loop {
+				let name = port_store
+					.get_value(&iter, PORT_NAME_COL)
+					.get::<String>()
+					.expect("values in PORT_NAME_COL are strings")
+					.expect("port names cannot be None");
+				if name == new_port {
+					break true;
+				} else if !port_store.iter_next(&iter) {
+					break false;
+				}
+			}
+		} else {
+			false
+		};
+		if !found {
+			let iter = port_store.append();
+			port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.to_value());
+		}
+	}
 }

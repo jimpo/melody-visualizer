@@ -2,6 +2,7 @@ mod application;
 mod audio;
 mod error;
 mod gui;
+mod source;
 
 use gio::prelude::*;
 use gtk::prelude::*;

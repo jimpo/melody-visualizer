@@ -1,12 +1,13 @@
 use glib::{Type, value::Value};
 use gtk::{Orientation, TreeSelection, Widget};
 use gtk::prelude::*;
-use log::debug;
+use log::{debug, error};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::Error;
-use crate::application::{Controller, SourceType};
+use crate::application::Controller;
+use crate::source::SourceType;
 use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
@@ -49,7 +50,7 @@ impl ControlPane {
 			};
 			source_type_box.add(&selector);
 
-			let is_active = controller.borrow().get_source_type() == *source_type;
+			let is_active = controller.borrow().get_source_type() == Some(*source_type);
 			selector.set_active(is_active);
 
 			let controller_clone = controller.clone();
@@ -124,12 +125,15 @@ fn on_source_type_toggled(
 	}
 
 	let mut controller = controller.borrow_mut();
-	controller.set_source_type(source_type);
+	if let Err(err) = controller.set_source_type(source_type) {
+		error!("failed to change source type: {}", err);
+	}
 }
 
 fn refresh_inputs(controller: &Controller, port_store: &gtk::ListStore) {
 	let ports = controller.jack_client()
-		.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT);
+		.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
+		.unwrap_or_default();
 
 	// Remove rows from ListStore.
 	if let Some(iter) = port_store.get_iter_first() {

@@ -1,5 +1,5 @@
 use jack::{
-	AudioIn, NotificationHandler, RingBufferWriter, ProcessHandler, ProcessScope, Control, RingBuffer, Client, PortId, ClientStatus,
+	AudioIn, NotificationHandler, RingBufferWriter, ProcessHandler, ProcessScope, Control, RingBuffer, Client, Port, PortId, ClientStatus,
 };
 use log::error;
 use std::sync::{Arc, Mutex};
@@ -11,6 +11,7 @@ const TITLE: &str = "Melody Visualizer";
 
 pub struct AudioSourceController {
 	client: jack::AsyncClient<AudioNotificationHandler, AudioProcessHandler>,
+	input_port: jack::Port<jack::Unowned>,
 }
 
 impl AudioSourceController {
@@ -23,17 +24,19 @@ impl AudioSourceController {
 
 		let port = client.register_port("input", AudioIn)
 			.map_err(Error::Jack)?;
+		let input_port = port.clone_unowned();
 
 		let (buffer_reader, buffer_writer) = RingBuffer::new(buffer_size)
 			.map_err(|()| Error::RingBufferAllocFailure { size: buffer_size })?
 			.into_reader_writer();
 		let client = client.activate_async(
 			AudioNotificationHandler::new(signals),
-			AudioProcessHandler::new(buffer_writer),
+			AudioProcessHandler::new(port, buffer_writer),
 		)
 			.map_err(Error::Jack)?;
 		Ok(AudioSourceController {
 			client,
+			input_port,
 		})
 	}
 }
@@ -73,21 +76,29 @@ impl NotificationHandler for AudioNotificationHandler {
 }
 
 struct AudioProcessHandler {
+	port: Port<AudioIn>,
 	// This should not need a Mutex, but it does.
 	// https://github.com/RustAudio/rust-jack/issues/121
 	ring_buffer: Mutex<RingBufferWriter>,
 }
 
 impl AudioProcessHandler {
-	fn new(ring_buffer: RingBufferWriter) -> Self {
+	fn new(port: Port<AudioIn>, ring_buffer: RingBufferWriter) -> Self {
 		AudioProcessHandler {
+			port,
 			ring_buffer: Mutex::new(ring_buffer),
 		}
 	}
 }
 
 impl ProcessHandler for AudioProcessHandler {
-	fn process(&mut self, _: &Client, _process_scope: &ProcessScope) -> Control {
+	fn process(&mut self, client: &Client, scope: &ProcessScope) -> Control {
+		let mut ring_buffer = self.ring_buffer.lock()
+			.expect("I shouldn't even need a Mutex...");
+		// TODO: Create a custom ring buffer holding an [f32] that is more efficient.
+		for sample in self.port.as_slice(scope) {
+			ring_buffer.write_buffer(&sample.to_ne_bytes());
+		}
 		Control::Continue
 	}
 }
@@ -95,6 +106,10 @@ impl ProcessHandler for AudioProcessHandler {
 impl JackSource for AudioSourceController {
 	fn client(&self) -> &jack::Client {
 		self.client.as_client()
+	}
+
+	fn input_port(&self) -> &jack::Port<jack::Unowned> {
+		&self.input_port
 	}
 
 	fn source_type(&self) -> SourceType {

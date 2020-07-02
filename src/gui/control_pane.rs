@@ -1,5 +1,5 @@
 use glib::{Type, value::Value};
-use gtk::{Orientation, TreeSelection, Widget};
+use gtk::{Orientation, TreeSelection, Widget, TreeIter};
 use gtk::prelude::*;
 use log::{debug, error};
 use std::cell::RefCell;
@@ -66,7 +66,8 @@ impl ControlPane {
 		source_control_inner.add(&port_view);
 
 		let selection = port_view.get_selection();
-		selection.connect_changed(|selection| on_changed(selection));
+		let controller_clone = controller.clone();
+		selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
 
 		let port_store = Rc::new(port_store);
 
@@ -111,8 +112,11 @@ fn build_port_view() -> (gtk::ListStore, gtk::TreeView) {
 	(port_store, port_view)
 }
 
-fn on_changed(selection: &TreeSelection) {
-
+fn on_port_selected(controller: &RefCell<Controller>, selection: &TreeSelection) {
+	let port_name = selection.get_selected()
+		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
+	let mut controller = controller.borrow_mut();
+	controller.connect_port(port_name);
 }
 
 fn on_source_type_toggled(
@@ -138,12 +142,7 @@ fn refresh_inputs(controller: &Controller, port_store: &gtk::ListStore) {
 	// Remove rows from ListStore.
 	if let Some(iter) = port_store.get_iter_first() {
 		loop {
-			let name = port_store
-				.get_value(&iter, PORT_NAME_COL)
-				.get::<String>()
-				.expect("values in PORT_NAME_COL are strings")
-				.expect("port names cannot be None");
-			let found = ports.contains(&name);
+			let found = ports.contains(&get_port_name(port_store, &iter));
 			let iter_invalid = if !found {
 				port_store.remove(&iter)
 			} else {
@@ -159,12 +158,7 @@ fn refresh_inputs(controller: &Controller, port_store: &gtk::ListStore) {
 	for new_port in ports {
 		let found = if let Some(iter) = port_store.get_iter_first() {
 			loop {
-				let name = port_store
-					.get_value(&iter, PORT_NAME_COL)
-					.get::<String>()
-					.expect("values in PORT_NAME_COL are strings")
-					.expect("port names cannot be None");
-				if name == new_port {
+				if new_port == get_port_name(port_store, &iter) {
 					break true;
 				} else if !port_store.iter_next(&iter) {
 					break false;
@@ -178,4 +172,12 @@ fn refresh_inputs(controller: &Controller, port_store: &gtk::ListStore) {
 			port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.to_value());
 		}
 	}
+}
+
+fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
+	port_store
+		.get_value(&iter, PORT_NAME_COL)
+		.get::<String>()
+		.expect("values in PORT_NAME_COL are strings")
+		.expect("port names cannot be None")
 }

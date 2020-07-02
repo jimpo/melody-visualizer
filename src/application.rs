@@ -1,6 +1,6 @@
 use cairo;
 use jack::PortId;
-use log::debug;
+use log::{debug, error};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -86,4 +86,31 @@ impl Controller {
 	pub fn jack_client(&self) -> Option<&jack::Client> {
 		self.source.as_ref().map(|source| source.client())
 	}
+
+	pub fn connect_port(&mut self, output_port: Option<String>) {
+		match self.source {
+			Some(ref source) => {
+				if let Err(err) = connect_port(&**source, output_port) {
+					error!("connect_port: {}", err);
+				}
+			}
+			None => error!("connect_port called with empty source"),
+		}
+	}
+}
+
+fn connect_port(source: &dyn JackSource, output_port: Option<String>) -> Result<(), Error> {
+	let client = source.client();
+	let input_port = source.input_port();
+	client.disconnect(input_port)?;
+	if let Some(output_port_name) = output_port {
+		client.connect_ports_by_name(
+			&output_port_name,
+			&input_port.name()?
+		)?;
+		debug!("Connected port {}", output_port_name);
+	} else {
+		debug!("Disconnected all ports");
+	}
+	Ok(())
 }

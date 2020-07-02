@@ -11,3 +11,9 @@ pub enum Error {
 	#[display(fmt = "failed to allocate a ring buffer of size {}", size)]
 	RingBufferAllocFailure { size: usize },
 }
+
+impl From<jack::Error> for Error {
+	fn from(err: jack::Error) -> Self {
+		Error::Jack(err)
+	}
+}

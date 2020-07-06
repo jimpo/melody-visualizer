@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::audio::AudioSourceController;
 use crate::error::Error;
-use crate::graphic_renderer::AsyncGraphicRenderer;
+use crate::graphic_renderer::{AsyncGraphicRenderer, Graphic};
 use crate::source::{JackSource, SourceSignals, SourceType};
 use crate::spectral_renderer::AsyncSpectrumRenderer;
 
@@ -20,7 +20,7 @@ pub struct Controller {
 	signals: Arc<SourceSignals>,
 	graphic_update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
 	inputs_changed_callbacks: Rc<RefCell<Vec<Box<dyn Fn(PortId)>>>>,
-	graphic: Rc<RefCell<cairo::ImageSurface>>,
+	graphic: Rc<RefCell<Graphic>>,
 }
 
 impl Controller {
@@ -52,9 +52,7 @@ impl Controller {
 		// - Command SpectrumPipeline
 		// - Channel<Spectrum> out
 
-		let graphic = Rc::new(RefCell::new(
-			cairo::ImageSurface::create(cairo::Format::Rgb24, 0, 0)?
-		));
+		let graphic = Rc::new(RefCell::new(Graphic::default()));
 
 		// Channel sending the graphic surface from the main thread to the graphic rendering thread.
 		let (mut main_graphic_tx, main_graphic_rx) = mpsc::channel(0);
@@ -94,7 +92,7 @@ impl Controller {
 				}
 
 				// Recycle the old graphic surface and send to renderer.
-				if let Err(err) = main_graphic_tx.send(old_graphic).await {
+				if let Err(err) = main_graphic_tx.send(old_graphic.into_buffer()).await {
 					if err.is_disconnected() {
 						debug!("graphic output channel disconnected, stopping main thread handler");
 						break;
@@ -114,7 +112,7 @@ impl Controller {
 		})
 	}
 
-	pub fn graphic_mut(&mut self) -> &mut cairo::ImageSurface {
+	pub fn graphic_mut(&mut self) -> &mut Graphic {
 		&mut *self.graphic.borrow_mut()
 	}
 

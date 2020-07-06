@@ -1,11 +1,14 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use log::error;
 use gtk::prelude::*;
+use std::borrow::Borrow;
+use std::cell::RefCell;
+use std::convert::TryInto;
+use std::mem;
+use std::rc::Rc;
 
 use crate::application::Controller;
-use std::convert::TryInto;
-use std::borrow::Borrow;
+use crate::error::Error;
+use crate::graphic_renderer::{Graphic, GraphicBuffer};
 
 struct WidgetState {
 	frames_since_last_buffer: usize,
@@ -26,9 +29,12 @@ impl VisualizationPane {
 		// );
 
 		let controller_clone = controller.clone();
-		area.connect_draw(
-			move |area, ctx| on_draw(&mut controller_clone.borrow_mut(), area, ctx)
-		);
+		area.connect_draw(move |area, ctx| {
+			if let Err(err) = on_draw(&mut controller_clone.borrow_mut(), area, ctx) {
+				error!("error drawing to visualization pane: {}", err);
+			}
+			Inhibit(false)
+		});
 
 		controller.borrow_mut()
 			.subscribe_graphic_update(|| area.queue_draw());
@@ -44,43 +50,38 @@ impl VisualizationPane {
 	}
 }
 
-fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context) -> Inhibit {
+fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context)
+	-> Result<(), Error>
+{
 	let x_max = area.get_allocated_width();
 	let y_max = area.get_allocated_height();
 	let graphic = state.graphic_mut();
 
 	// Resize the graphic if it is the wrong size.
-	if graphic.get_width() != x_max || graphic.get_height() != y_max {
-		match resize_surface(ctx, graphic, x_max, y_max) {
-			Ok(new_surface) => *graphic = new_surface,
-			Err(err) => {
-				error!("error creating new image surface: {}", err);
-				return Inhibit(false);
-			}
-		}
+	if graphic.width() != x_max || graphic.height() != y_max {
+		resize_surface(graphic, x_max, y_max)?;
 	}
 
-	ctx.set_source_surface(&**graphic, 0f64, 0f64);
-	ctx.fill();
-
-	Inhibit(false)
+	graphic.with_image_surface(|surface| {
+		ctx.set_source_surface(surface, 0f64, 0f64);
+		ctx.fill();
+		Ok(())
+	})
 }
 
-fn resize_surface(ctx: &cairo::Context, graphic: &cairo::ImageSurface, x_max: i32, y_max: i32)
-	-> Result<cairo::ImageSurface, cairo::Error>
-{
-	let new_surface: cairo::ImageSurface = ctx
-		.get_target()
-		.create_similar_image(cairo::Format::Rgb24, x_max, y_max)?
-		.try_into()
-		.expect("create_similar_image must return an ImageSurface");
-
-	// Set the new surface to all black.
-	// TODO: Attempt to modify the old surface maybe?
-	let new_ctx = cairo::Context::new(&*new_surface);
-	new_ctx.set_source_rgb(0.0, 0.0, 0.0);
-	new_ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
-	new_ctx.fill();
-
-	Ok(new_surface)
+fn resize_surface(graphic: &mut Graphic, x_max: i32, y_max: i32) -> Result<(), Error> {
+	let old_graphic = mem::replace(graphic, Graphic::default());
+	let new_graphic = old_graphic
+		.into_buffer()
+		.resize(x_max, y_max)
+		.draw(|ctx| {
+			// Set the new surface to all black.
+			// TODO: Attempt to modify the old surface maybe?
+			ctx.set_source_rgb(0.0, 0.0, 0.0);
+			ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
+			ctx.fill();
+			Ok(())
+		})?;
+	*graphic = new_graphic;
+	Ok(())
 }

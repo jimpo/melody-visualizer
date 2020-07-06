@@ -20,10 +20,122 @@ use crate::error::Error;
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum GraphicProcessingError {
 	SendError(mpsc::SendError),
+	Other(Error),
 }
 
-struct Graphic {
+#[derive(Clone, Default)]
+pub struct Graphic {
+	width: i32,
+	height: i32,
+	stride: i32,
+	data: Vec<u8>,
+}
 
+impl Graphic {
+	pub fn into_buffer(self) -> GraphicBuffer {
+		let Graphic { width, height, stride, data } = self;
+		GraphicBuffer { width, height, stride, data }
+	}
+
+	pub fn width(&self) -> i32 {
+		self.width
+	}
+
+	pub fn height(&self) -> i32 {
+		self.height
+	}
+
+	pub fn with_image_surface<T, F>(&self, f: F) -> Result<T, Error>
+		where F: Fn(&cairo::Surface) -> Result<T, Error>
+	{
+		// This is an unnecessary clone.
+		// TODO: Open issue on cairo-rs to be able to recover ownership of data.
+		// Alternately, use unsafe code to store multiple mutable references.
+		let data = self.data.clone();
+		let surface = cairo::ImageSurface::create_for_data(
+			data,
+			cairo::Format::Rgb24,
+			self.width,
+			self.height,
+			self.stride
+		)?;
+		f(&*surface)
+	}
+}
+
+#[derive(Clone)]
+pub struct GraphicBuffer {
+	width: i32,
+	height: i32,
+	stride: i32,
+	data: Vec<u8>,
+}
+
+impl GraphicBuffer {
+	pub fn new(width: i32, height: i32) -> Self {
+		let buffer = GraphicBuffer {
+			width: 0,
+			height: 0,
+			stride: 0,
+			data: Vec::new(),
+		};
+		buffer.resize(width, height)
+	}
+
+	pub fn width(&self) -> i32 {
+		self.width
+	}
+
+	pub fn height(&self) -> i32 {
+		self.height
+	}
+
+	pub fn resize(self, width: i32, height: i32) -> Self {
+		let stride = cairo::Format::Rgb24.stride_for_width(width as u32)
+			.expect("stride_for_width cannot fail");
+
+		let mut data = self.data;
+		data.resize((stride * height) as usize, 0);
+
+		GraphicBuffer {
+			width,
+			height,
+			stride,
+			data,
+		}
+	}
+
+	pub fn draw(self, draw: impl Fn(&cairo::Context) -> Result<(), Error>)
+		-> Result<Graphic, Error>
+	{
+		let GraphicBuffer { width, height, stride, data } = self;
+		let mut surface = cairo::ImageSurface::create_for_data(
+			data,
+			cairo::Format::Rgb24,
+			width,
+			height,
+			stride
+		)?;
+		{
+			let ctx = cairo::Context::new(&*surface);
+			draw(&ctx)?;
+		}
+		let data = surface.get_data()
+			.map_err(|err| match err {
+				cairo::BorrowError::Cairo(err) => err.into(),
+				cairo::BorrowError::NonExclusive => Error::GraphicDrawClonesContext,
+			})?
+			// This does an avoidable allocation :-(.
+			// TODO: Open issue on cairo-rs to be able to recover ownership of data.
+			// Alternately, use unsafe code to store multiple mutable references.
+			.to_vec();
+		Ok(Graphic {
+			width,
+			height,
+			stride,
+			data,
+		})
+	}
 }
 
 struct GraphicRenderer {
@@ -34,15 +146,17 @@ impl GraphicRenderer {
 		GraphicRenderer {}
 	}
 
-	fn render(&mut self, surface: &cairo::ImageSurface) {
-		let x_max = surface.get_width();
-		let y_max = surface.get_height();
+	fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
+		let x_max = buffer.width();
+		let y_max = buffer.height();
 
-		// Dummy routine. Make the whole area red.
-		let ctx = cairo::Context::new(&**surface);
-		ctx.set_source_rgb(255.0, 0.0, 0.0);
-		ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
-		ctx.fill();
+		buffer.draw(|ctx| {
+			// Dummy routine. Make the whole area red.
+			ctx.set_source_rgb(255.0, 0.0, 0.0);
+			ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
+			ctx.fill();
+			Ok(())
+		})
 	}
 
 	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
@@ -60,8 +174,8 @@ enum GraphicRendererCmd {
 
 impl AsyncGraphicRenderer {
 	pub fn new(
-		graphic_input: mpsc::Receiver<cairo::ImageSurface>,
-		graphic_output: mpsc::Sender<cairo::ImageSurface>,
+		graphic_input: mpsc::Receiver<GraphicBuffer>,
+		graphic_output: mpsc::Sender<Graphic>,
 		spectrum_input: mpsc::Receiver<Spectrum>,
 		spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	) -> Result<Self, Error>	{
@@ -76,8 +190,8 @@ impl AsyncGraphicRenderer {
 
 	pub fn with_thread_name(
 		name: String,
-		graphic_input: mpsc::Receiver<cairo::ImageSurface>,
-		graphic_output: mpsc::Sender<cairo::ImageSurface>,
+		graphic_input: mpsc::Receiver<GraphicBuffer>,
+		graphic_output: mpsc::Sender<Graphic>,
 		spectrum_input: mpsc::Receiver<Spectrum>,
 		spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	) -> Result<Self, Error> {
@@ -102,8 +216,8 @@ impl AsyncGraphicRenderer {
 
 async fn process_loop(
 	mut control_rx: mpsc::Receiver<GraphicRendererCmd>,
-	mut graphic_input: mpsc::Receiver<cairo::ImageSurface>,
-	mut graphic_output: mpsc::Sender<cairo::ImageSurface>,
+	mut graphic_input: mpsc::Receiver<GraphicBuffer>,
+	mut graphic_output: mpsc::Sender<Graphic>,
 	mut spectrum_input: mpsc::Receiver<Spectrum>,
 	mut spectrum_output: mpsc::Sender<SpectrumBuffer>,
 ) {
@@ -111,8 +225,8 @@ async fn process_loop(
 	loop {
 		let result = select! {
 			cmd = control_rx.next() => handle_cmd(&mut renderer, cmd).await,
-			new_graphic = graphic_input.next() =>
-				handle_new_graphic(&mut renderer, new_graphic, &mut graphic_output).await,
+			new_buffer = graphic_input.next() =>
+				handle_new_buffer(&mut renderer, new_buffer, &mut graphic_output).await,
 			new_spectrum = spectrum_input.next() =>
 				handle_new_spectrum(&mut renderer, new_spectrum, &mut spectrum_output).await,
 		};
@@ -128,6 +242,7 @@ async fn handle_cmd(renderer: &mut GraphicRenderer, cmd: Option<GraphicRendererC
 	-> Result<bool, GraphicProcessingError>
 {
 	match cmd {
+		Some(_) => Ok(true),
 		None => Ok(false),
 	}
 }
@@ -155,14 +270,14 @@ async fn handle_new_spectrum(
 	}
 }
 
-async fn handle_new_graphic(
+async fn handle_new_buffer(
 	renderer: &mut GraphicRenderer,
-	graphic: Option<cairo::ImageSurface>,
-	graphic_output: &mut mpsc::Sender<cairo::ImageSurface>,
+	buffer: Option<GraphicBuffer>,
+	graphic_output: &mut mpsc::Sender<Graphic>,
 ) -> Result<bool, GraphicProcessingError>
 {
-	if let Some(graphic) = graphic {
-		renderer.render(&graphic);
+	if let Some(buffer) = buffer {
+		let graphic = renderer.render(buffer)?;
 		if let Err(err) = graphic_output.send(graphic).await {
 			return if err.is_disconnected() {
 				debug!("graphic output channel disconnected, stopping graphic processing");

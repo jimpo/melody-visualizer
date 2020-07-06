@@ -15,4 +15,5 @@ pub enum Error {
 	RingBufferAllocFailure { size: usize },
 	#[display(fmt = "failed to spawn a new thread: {}", _0)]
 	ThreadSpawnFailure(io::Error),
+	GraphicDrawClonesContext,
 }

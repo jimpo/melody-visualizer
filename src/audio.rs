@@ -1,6 +1,4 @@
-use jack::{
-	AudioIn, NotificationHandler, RingBufferWriter, ProcessHandler, ProcessScope, Control, RingBuffer, Client, Port, PortId, ClientStatus,
-};
+use jack::{AudioIn, NotificationHandler, RingBufferWriter, ProcessHandler, ProcessScope, Control, RingBuffer, Client, Port, PortId, ClientStatus, RingBufferReader};
 use log::error;
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +13,7 @@ pub struct AudioSourceController {
 }
 
 impl AudioSourceController {
-	pub fn new(buffer_size: usize, signals: Arc<SourceSignals>) -> Result<Self, Error> {
+	pub fn new(buffer_size: usize, signals: Arc<SourceSignals>) -> Result<(Self, RingBufferReader), Error> {
 		let (client, status) = jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER)
 			.map_err(Error::Jack)?;
 		if !status.is_empty() {

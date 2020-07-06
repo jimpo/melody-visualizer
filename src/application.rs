@@ -1,53 +1,113 @@
 use cairo;
 use jack::PortId;
+use futures::{prelude::*, channel::mpsc};
 use log::{debug, error};
 use std::cell::RefCell;
+use std::mem;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::audio::AudioSourceController;
 use crate::error::Error;
+use crate::graphic_renderer::AsyncGraphicRenderer;
 use crate::source::{JackSource, SourceSignals, SourceType};
-use glib::Continue;
+use crate::spectral_renderer::AsyncSpectrumRenderer;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
-
 
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	signals: Arc<SourceSignals>,
+	graphic_update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
 	inputs_changed_callbacks: Rc<RefCell<Vec<Box<dyn Fn(PortId)>>>>,
-	graphic: Option<cairo::ImageSurface>,
+	graphic: Rc<RefCell<cairo::ImageSurface>>,
 }
 
 impl Controller {
 	pub fn new() -> Result<Self, Error> {
+		let inputs_changed_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn(PortId)>>>::new()));
+		let graphic_update_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn()>>>::new()));
+
 		let (inputs_changed_tx, inputs_changed_rx) =
 			glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 
 		let signals = Arc::new(SourceSignals {
 			on_inputs_changed: inputs_changed_tx,
 		});
-		let source = Box::new(AudioSourceController::new(BUFFER_SIZE, signals.clone())?);
-		let inputs_changed_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn(PortId)>>>::new()));
 
 		let inputs_changed_callbacks_clone = inputs_changed_callbacks.clone();
 		inputs_changed_rx.attach(None, move |port_id| {
-			for callback in inputs_changed_callbacks_clone.borrow_mut().iter() {
+			for callback in inputs_changed_callbacks_clone.borrow().iter() {
 				callback(port_id);
 			}
-			Continue(true)
+			glib::Continue(true)
+		});
+
+		// Create graphical rendering thread.
+
+		let (source, buffer_reader) = AudioSourceController::new(BUFFER_SIZE, signals.clone())?;
+
+		// Create spectral rendering thread.
+		// - Channel<Spectrum> in
+		// - Command SpectrumPipeline
+		// - Channel<Spectrum> out
+
+		let graphic = Rc::new(RefCell::new(
+			cairo::ImageSurface::create(cairo::Format::Rgb24, 0, 0)?
+		));
+
+		// Channel sending the graphic surface from the main thread to the graphic rendering thread.
+		let (mut main_graphic_tx, main_graphic_rx) = mpsc::channel(0);
+		// Channel sending the graphic surface from the graphic rendering thread to the main thread.
+		let (graphic_main_tx, mut graphic_main_rx) = mpsc::channel(0);
+
+		// Channel sending the spectrum from the spectrum rendering thread to the graphic rendering
+		// thread.
+		let (spectrum_graphic_tx, spectrum_graphic_rx) = mpsc::channel(0);
+		// Channel sending the spectrum buffer from the graphic rendering thread to the spectrum
+		// rendering thread.
+		let (graphic_spectrum_tx, graphic_spectrum_rx) = mpsc::channel(0);
+
+		let graphic_renderer = AsyncGraphicRenderer::new(
+			main_graphic_rx,
+			graphic_main_tx,
+			spectrum_graphic_rx,
+			graphic_spectrum_tx,
+		)?;
+
+		let spectrum_renderer = AsyncSpectrumRenderer::new(
+			graphic_spectrum_rx,
+			spectrum_graphic_tx,
+		)?;
+
+		let main_context = glib::MainContext::default();
+		let graphic_update_callbacks_clone = graphic_update_callbacks.clone();
+		main_context.spawn_local(async move {
+			while let Some(new_graphic) = graphic_main_rx.next().await {
+				// Update the stored graphic.
+				mem::swap(&mut *graphic.borrow_mut(), new_graphic);
+
+				// Notify subscribers that graphic has been updated. This triggers a redraw on the
+				// visualization pane.
+				for callback in graphic_update_callbacks_clone.borrow().iter() {
+					callback();
+				}
+
+				// Recycle the old graphic surface and send to renderer.
+				main_graphic_tx.send().await?;
+			}
 		});
 
 		Ok(Controller {
-			source: Some(source),
+			source: Some(Box::new(source)),
 			signals,
 			inputs_changed_callbacks,
-			graphic: None,
+			graphic_update_callbacks,
+			graphic,
 		})
 	}
 
-	pub fn graphic_mut(&mut self) -> &mut Option<cairo::ImageSurface> {
+	pub fn graphic_mut(&mut self) -> &mut cairo::ImageSurface {
 		&mut self.graphic
 	}
 
@@ -77,10 +137,18 @@ impl Controller {
 		Ok(())
 	}
 
-	pub fn subscribe_inputs_changed(&mut self, callback: Box<dyn Fn(PortId)>) {
+	// TODO: Maybe make this just return a Receiver<()>.
+	pub fn subscribe_graphic_update(&mut self, callback: impl Fn()) {
+		self.graphic_update_callbacks
+			.borrow_mut()
+			.push(Box::new(callback));
+	}
+
+	// TODO: Maybe make this just return a Receiver<PortId>.
+	pub fn subscribe_inputs_changed(&mut self, callback: impl Fn(PortId)) {
 		self.inputs_changed_callbacks
 			.borrow_mut()
-			.push(callback);
+			.push(Box::new(callback));
 	}
 
 	pub fn jack_client(&self) -> Option<&jack::Client> {

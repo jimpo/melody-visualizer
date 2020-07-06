@@ -74,11 +74,10 @@ impl ControlPane {
 		{
 			let controller_clone = controller.clone();
 			let port_store_clone = port_store.clone();
-			let callback = Box::new(move |_port_id| {
-				refresh_inputs(&controller_clone.borrow(), &port_store_clone);
-			});
-			let mut controller = controller.borrow_mut();
-			controller.subscribe_inputs_changed(callback);
+			controller.borrow_mut()
+				.subscribe_inputs_changed(move |_port_id| {
+					refresh_inputs(&controller_clone.borrow(), &port_store_clone);
+				});
 		}
 
 		refresh_inputs(&controller.borrow(), &port_store);

@@ -1,4 +1,4 @@
-use glib::{Type, value::Value};
+use glib::Type;
 use gtk::{Orientation, TreeSelection, Widget, TreeIter};
 use gtk::prelude::*;
 use log::{debug, error};
@@ -44,9 +44,9 @@ impl ControlPane {
 		let mut radio_button_group = None;
 		for source_type in [SourceType::Audio, SourceType::MIDI].iter() {
 			let selector = if let Some(ref widget) = radio_button_group {
-				gtk::RadioButton::new_with_label_from_widget(widget, &source_type.to_string())
+				gtk::RadioButton::with_label_from_widget(widget, &source_type.to_string())
 			} else {
-				gtk::RadioButton::new_with_label(&source_type.to_string())
+				gtk::RadioButton::with_label(&source_type.to_string())
 			};
 			source_type_box.add(&selector);
 
@@ -105,7 +105,7 @@ fn build_port_view() -> (gtk::ListStore, gtk::TreeView) {
 	column.set_title("Port");
 	column.add_attribute(&renderer, "text", PORT_NAME_COL);
 
-	let port_view = gtk::TreeView::new_with_model(&port_store);
+	let port_view = gtk::TreeView::with_model(&port_store);
 	port_view.append_column(&column);
 
 	(port_store, port_view)

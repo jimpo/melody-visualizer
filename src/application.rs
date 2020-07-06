@@ -85,7 +85,7 @@ impl Controller {
 		main_context.spawn_local(async move {
 			while let Some(new_graphic) = graphic_main_rx.next().await {
 				// Update the stored graphic.
-				mem::swap(&mut *graphic.borrow_mut(), new_graphic);
+				let old_graphic = mem::replace(&mut *graphic.borrow_mut(), new_graphic);
 
 				// Notify subscribers that graphic has been updated. This triggers a redraw on the
 				// visualization pane.
@@ -94,7 +94,14 @@ impl Controller {
 				}
 
 				// Recycle the old graphic surface and send to renderer.
-				main_graphic_tx.send().await?;
+				if let Err(err) = main_graphic_tx.send(old_graphic).await {
+					if err.is_disconnected() {
+						debug!("graphic output channel disconnected, stopping main thread handler");
+						break;
+					} else {
+						error!("error sending graphic surface to processing thread");
+					}
+				}
 			}
 		});
 
@@ -108,7 +115,7 @@ impl Controller {
 	}
 
 	pub fn graphic_mut(&mut self) -> &mut cairo::ImageSurface {
-		&mut self.graphic
+		&mut *self.graphic.borrow_mut()
 	}
 
 	pub fn on_visualization_resize(x_max: i32, y_max: i32) {}
@@ -126,9 +133,12 @@ impl Controller {
 		// Drop old source first in case new source cannot be constructed.
 		self.source = None;
 
-		let new_source = match source_type {
+		let (new_source, reader) = match source_type {
 			SourceType::Audio => {
-				Box::new(AudioSourceController::new(BUFFER_SIZE, self.signals.clone())?)
+				let (controller, reader) = AudioSourceController::new(
+					BUFFER_SIZE, self.signals.clone()
+				)?;
+				(Box::new(controller), reader)
 			}
 			SourceType::MIDI => unimplemented!("MIDI source is not yet implemented"),
 		};
@@ -138,14 +148,14 @@ impl Controller {
 	}
 
 	// TODO: Maybe make this just return a Receiver<()>.
-	pub fn subscribe_graphic_update(&mut self, callback: impl Fn()) {
+	pub fn subscribe_graphic_update(&mut self, callback: impl Fn() + 'static) {
 		self.graphic_update_callbacks
 			.borrow_mut()
 			.push(Box::new(callback));
 	}
 
 	// TODO: Maybe make this just return a Receiver<PortId>.
-	pub fn subscribe_inputs_changed(&mut self, callback: impl Fn(PortId)) {
+	pub fn subscribe_inputs_changed(&mut self, callback: impl Fn(PortId) + 'static) {
 		self.inputs_changed_callbacks
 			.borrow_mut()
 			.push(Box::new(callback));

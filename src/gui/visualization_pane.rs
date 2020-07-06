@@ -12,7 +12,7 @@ struct WidgetState {
 }
 
 pub struct VisualizationPane {
-	state: Rc<RefCell<Controller>>,
+	controller: Rc<RefCell<Controller>>,
 	view: Rc<gtk::DrawingArea>,
 }
 
@@ -34,7 +34,7 @@ impl VisualizationPane {
 			.subscribe_graphic_update(|| area.queue_draw());
 
 		VisualizationPane {
-			state,
+			controller,
 			view: area,
 		}
 	}
@@ -52,7 +52,7 @@ fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context
 	// Resize the graphic if it is the wrong size.
 	if graphic.get_width() != x_max || graphic.get_height() != y_max {
 		match resize_surface(ctx, graphic, x_max, y_max) {
-			Some(new_surface) => *graphic = new_surface,
+			Ok(new_surface) => *graphic = new_surface,
 			Err(err) => {
 				error!("error creating new image surface: {}", err);
 				return Inhibit(false);
@@ -69,7 +69,7 @@ fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context
 fn resize_surface(ctx: &cairo::Context, graphic: &cairo::ImageSurface, x_max: i32, y_max: i32)
 	-> Result<cairo::ImageSurface, cairo::Error>
 {
-	let new_surface = ctx
+	let new_surface: cairo::ImageSurface = ctx
 		.get_target()
 		.create_similar_image(cairo::Format::Rgb24, x_max, y_max)?
 		.try_into()
@@ -77,7 +77,7 @@ fn resize_surface(ctx: &cairo::Context, graphic: &cairo::ImageSurface, x_max: i3
 
 	// Set the new surface to all black.
 	// TODO: Attempt to modify the old surface maybe?
-	let new_ctx = cairo::Content::new(&new_surface);
+	let new_ctx = cairo::Context::new(&*new_surface);
 	new_ctx.set_source_rgb(0.0, 0.0, 0.0);
 	new_ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
 	new_ctx.fill();

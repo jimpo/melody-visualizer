@@ -1,6 +1,6 @@
-use std::error;
+use std::io;
 
-#[derive(Debug, derive_more::Display, derive_more::Error)]
+#[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
 pub enum Error {
 	#[display(fmt = "Cairo error: {}", _0)]
 	Cairo(cairo::Error),
@@ -11,17 +11,8 @@ pub enum Error {
 	#[display(fmt = "JACK non-empty client status: {:?}", _0)]
 	JackStatus(#[error(not(source))] jack::ClientStatus),
 	#[display(fmt = "failed to allocate a ring buffer of size {}", size)]
+	#[from(ignore)]
 	RingBufferAllocFailure { size: usize },
-}
-
-impl From<cairo::Error> for Error {
-	fn from(err: cairo::Error) -> Self {
-		Error::Cairo(err)
-	}
-}
-
-impl From<jack::Error> for Error {
-	fn from(err: jack::Error) -> Self {
-		Error::Jack(err)
-	}
+	#[display(fmt = "failed to spawn a new thread: {}", _0)]
+	ThreadSpawnFailure(io::Error),
 }

@@ -22,9 +22,9 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 
 	let paned = gtk::Paned::new(Orientation::Horizontal);
 
-	let graphic = VisualizationPane::new(controller.clone());
-	graphic.widget().show();
-	paned.add1(graphic.widget());
+	let visualization = VisualizationPane::new(controller.clone());
+	visualization.widget().show();
+	paned.add1(visualization.widget());
 
 	let control = ControlPane::new(controller.clone())?;
 	control.widget().show();

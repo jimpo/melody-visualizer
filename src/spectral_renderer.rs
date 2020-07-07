@@ -1,5 +1,6 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
 use log::{debug, warn, error};
+use std::fmt::Debug;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -11,15 +12,15 @@ enum SpectrumProcessingError {
 	SpectrumReceivedDuplicateBuffer,
 }
 
+#[derive(Clone)]
 pub struct SpectrumBuffer {
 }
 
-impl Default for SpectrumBuffer {
-	fn default() -> Self {
-		SpectrumBuffer {}
-	}
+impl SpectrumBuffer {
+
 }
 
+#[derive(Clone)]
 pub struct Spectrum {
 }
 
@@ -29,20 +30,32 @@ impl Spectrum {
 	}
 }
 
-pub type SpectrumGenerator = dyn FnMut(SpectrumBuffer) -> Spectrum;
-pub type SpectrumTransform = dyn FnMut(Spectrum) -> Spectrum;
+pub trait SpectrumGenerator: Debug + Send {
+	fn generate(&self, buffer: SpectrumBuffer) -> Spectrum;
+}
+
+pub trait SpectrumTransform: Debug + Send {
+	fn transform(&self, spectrum: Spectrum) -> Spectrum;
+}
 
 pub struct SpectrumRenderer {
 
 }
 
 impl SpectrumRenderer {
-	fn new() -> Self {}
-	fn next_tick_interval(&self) -> Duration {}
-	fn render(&mut self, spectrum: SpectrumBuffer) -> Result<Spectrum, SpectrumProcessingError> {}
-	fn set_generator(&mut self, generator: Box<SpectrumGenerator>) {}
-	fn insert_transform(&mut self, transform: Box<SpectrumTransform>, index: usize) {}
-	fn remove_transform(&mut self, index: usize) -> Box<SpectrumTransform> {}
+	fn new() -> Self {
+		SpectrumRenderer {}
+	}
+
+	// fn next_tick_interval(&self) -> Duration {}
+
+	fn render(&mut self, spectrum: SpectrumBuffer) -> Result<Spectrum, SpectrumProcessingError> {
+		Ok(Spectrum {})
+	}
+
+	fn set_generator(&mut self, generator: Box<dyn SpectrumGenerator>) {}
+	// fn insert_transform(&mut self, transform: Box<SpectrumTransform>, index: usize) {}
+	// fn remove_transform(&mut self, index: usize) -> Box<SpectrumTransform> {}
 }
 
 // pub struct SpectrumProcessingPipeline {}
@@ -53,8 +66,9 @@ pub struct AsyncSpectrumRenderer {
 	control_tx: mpsc::Sender<SpectrumRendererCmd>,
 }
 
+#[derive(Debug)]
 enum SpectrumRendererCmd {
-	SetGenerator(Box<SpectrumGenerator>),
+	SetGenerator(Box<dyn SpectrumGenerator>),
 }
 
 impl AsyncSpectrumRenderer {
@@ -92,6 +106,7 @@ async fn process_loop(
 	mut spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	mut spectrum_output: mpsc::Sender<Spectrum>,
 ) {
+	debug!("Starting spectrum rendering thread");
 	let mut renderer = SpectrumRenderer::new();
 	let mut buffer = None;
 	loop {
@@ -108,11 +123,13 @@ async fn process_loop(
 			Err(err) => error!("error during spectrum render processing: {}", err),
 		}
 	}
+	debug!("Exiting spectrum rendering thread");
 }
 
 async fn handle_cmd(renderer: &mut SpectrumRenderer, cmd: Option<SpectrumRendererCmd>)
 	-> Result<bool, SpectrumProcessingError>
 {
+	debug!("spectrum rendering thread received command: {:?}", cmd);
 	match cmd {
 		Some(SpectrumRendererCmd::SetGenerator(generator)) => {
 			renderer.set_generator(generator);

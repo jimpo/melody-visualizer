@@ -1,6 +1,7 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
 use log::{debug, error};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crate::spectral_renderer::{Spectrum, SpectrumBuffer};
 use crate::error::Error;
@@ -63,7 +64,7 @@ impl Graphic {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GraphicBuffer {
 	width: i32,
 	height: i32,
@@ -169,6 +170,7 @@ pub struct AsyncGraphicRenderer {
 	control_tx: mpsc::Sender<GraphicRendererCmd>,
 }
 
+#[derive(Debug)]
 enum GraphicRendererCmd {
 }
 
@@ -198,13 +200,15 @@ impl AsyncGraphicRenderer {
 		let (control_tx, control_rx) = mpsc::channel(0);
 		let processing_thread = thread::Builder::new()
 			.name(name)
-			.spawn(move || executor::block_on(process_loop(
-				control_rx,
-				graphic_input,
-				graphic_output,
-				spectrum_input,
-				spectrum_output,
-			)))?;
+			.spawn(move || {
+				executor::block_on(process_loop(
+					control_rx,
+					graphic_input,
+					graphic_output,
+					spectrum_input,
+					spectrum_output,
+				));
+			})?;
 		Ok(AsyncGraphicRenderer {
 			thread: processing_thread,
 			control_tx,
@@ -221,6 +225,7 @@ async fn process_loop(
 	mut spectrum_input: mpsc::Receiver<Spectrum>,
 	mut spectrum_output: mpsc::Sender<SpectrumBuffer>,
 ) {
+	debug!("Starting graphic rendering thread");
 	let mut renderer = GraphicRenderer::new();
 	loop {
 		let result = select! {
@@ -236,11 +241,13 @@ async fn process_loop(
 			Err(err) => error!("error during graphic render processing: {}", err),
 		}
 	}
+	debug!("Exiting graphic rendering thread");
 }
 
 async fn handle_cmd(renderer: &mut GraphicRenderer, cmd: Option<GraphicRendererCmd>)
 	-> Result<bool, GraphicProcessingError>
 {
+	debug!("graphic rendering thread received command: {:?}", cmd);
 	match cmd {
 		Some(_) => Ok(true),
 		None => Ok(false),
@@ -276,8 +283,10 @@ async fn handle_new_buffer(
 	graphic_output: &mut mpsc::Sender<Graphic>,
 ) -> Result<bool, GraphicProcessingError>
 {
+	debug!("graphic rendering thread received buffer");
 	if let Some(buffer) = buffer {
 		let graphic = renderer.render(buffer)?;
+		thread::sleep(Duration::from_millis(40));
 		if let Err(err) = graphic_output.send(graphic).await {
 			return if err.is_disconnected() {
 				debug!("graphic output channel disconnected, stopping graphic processing");

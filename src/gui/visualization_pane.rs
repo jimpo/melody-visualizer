@@ -1,5 +1,5 @@
-use log::error;
 use gtk::prelude::*;
+use log::{debug, error};
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::convert::TryInto;
@@ -36,8 +36,9 @@ impl VisualizationPane {
 			Inhibit(false)
 		});
 
+		let area_clone = area.clone();
 		controller.borrow_mut()
-			.subscribe_graphic_update(|| area.queue_draw());
+			.subscribe_graphic_update(move || area_clone.queue_draw());
 
 		VisualizationPane {
 			controller,
@@ -53,9 +54,11 @@ impl VisualizationPane {
 fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context)
 	-> Result<(), Error>
 {
+	debug!("redrawing visualization pane");
+
 	let x_max = area.get_allocated_width();
 	let y_max = area.get_allocated_height();
-	let graphic = state.graphic_mut();
+	let graphic = &mut *state.graphic_mut();
 
 	// Resize the graphic if it is the wrong size.
 	if graphic.width() != x_max || graphic.height() != y_max {
@@ -64,6 +67,7 @@ fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context
 
 	graphic.with_image_surface(|surface| {
 		ctx.set_source_surface(surface, 0f64, 0f64);
+		ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
 		ctx.fill();
 		Ok(())
 	})

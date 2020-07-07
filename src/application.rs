@@ -2,18 +2,20 @@ use cairo;
 use jack::PortId;
 use futures::{prelude::*, channel::mpsc};
 use log::{debug, error};
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::mem;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::audio::AudioSourceController;
 use crate::error::Error;
-use crate::graphic_renderer::{AsyncGraphicRenderer, Graphic};
+use crate::graphic_renderer::{AsyncGraphicRenderer, Graphic, GraphicBuffer};
 use crate::source::{JackSource, SourceSignals, SourceType};
 use crate::spectral_renderer::AsyncSpectrumRenderer;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
+
+// TODO: Wait for rendering threads on Drop.
 
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
@@ -21,6 +23,8 @@ pub struct Controller {
 	graphic_update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
 	inputs_changed_callbacks: Rc<RefCell<Vec<Box<dyn Fn(PortId)>>>>,
 	graphic: Rc<RefCell<Graphic>>,
+	graphic_renderer: AsyncGraphicRenderer,
+	spectrum_renderer: AsyncSpectrumRenderer,
 }
 
 impl Controller {
@@ -79,11 +83,18 @@ impl Controller {
 		)?;
 
 		let main_context = glib::MainContext::default();
+		let graphic_clone = graphic.clone();
 		let graphic_update_callbacks_clone = graphic_update_callbacks.clone();
 		main_context.spawn_local(async move {
+			// Kick things off by sending an empty graphic buffer.
+			if let Err(err) = main_graphic_tx.send(GraphicBuffer::default()).await {
+				error!("error sending initial graphic buffer to processing thread: {}", err);
+				return;
+			}
+
 			while let Some(new_graphic) = graphic_main_rx.next().await {
 				// Update the stored graphic.
-				let old_graphic = mem::replace(&mut *graphic.borrow_mut(), new_graphic);
+				let old_graphic = mem::replace(&mut *graphic_clone.borrow_mut(), new_graphic);
 
 				// Notify subscribers that graphic has been updated. This triggers a redraw on the
 				// visualization pane.
@@ -97,11 +108,14 @@ impl Controller {
 						debug!("graphic output channel disconnected, stopping main thread handler");
 						break;
 					} else {
-						error!("error sending graphic surface to processing thread");
+						error!("error sending graphic buffer to processing thread");
 					}
 				}
 			}
 		});
+
+		// Kick things off by sending empty buffers.
+
 
 		Ok(Controller {
 			source: Some(Box::new(source)),
@@ -109,11 +123,13 @@ impl Controller {
 			inputs_changed_callbacks,
 			graphic_update_callbacks,
 			graphic,
+			graphic_renderer,
+			spectrum_renderer,
 		})
 	}
 
-	pub fn graphic_mut(&mut self) -> &mut Graphic {
-		&mut *self.graphic.borrow_mut()
+	pub fn graphic_mut(&mut self) -> RefMut<Graphic> {
+		self.graphic.borrow_mut()
 	}
 
 	pub fn on_visualization_resize(x_max: i32, y_max: i32) {}

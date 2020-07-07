@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::error::Error;
 use crate::application::Controller;
-use crate::source::SourceType;
+use crate::source::{events::InputsChanged, SourceType};
 use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
@@ -74,8 +74,9 @@ impl ControlPane {
 		{
 			let controller_clone = controller.clone();
 			let port_store_clone = port_store.clone();
-			controller.borrow_mut()
-				.subscribe_inputs_changed(move |_port_id| {
+			controller.borrow()
+				.pubsub()
+				.subscribe(move |_: &InputsChanged| {
 					refresh_inputs(&controller_clone.borrow(), &port_store_clone);
 				});
 		}

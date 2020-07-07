@@ -7,14 +7,10 @@ pub enum SourceType {
 	MIDI,
 }
 
-pub struct SourceSignals {
-	pub on_inputs_changed: Sender<PortId>,
-}
-
 pub mod events {
 	use jack::PortId;
 
-	pub struct InputsChanged(PortId);
+	pub struct InputsChanged(pub PortId);
 }
 
 pub trait JackSource {

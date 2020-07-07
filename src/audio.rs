@@ -1,9 +1,12 @@
 use jack::{AudioIn, NotificationHandler, RingBufferWriter, ProcessHandler, ProcessScope, Control, RingBuffer, Client, Port, PortId, ClientStatus, RingBufferReader};
 use log::error;
+use std::any::Any;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::error::Error;
-use crate::source::{JackSource, SourceSignals, SourceType};
+use crate::pubsub::Notifier;
+use crate::source::{events, JackSource, SourceType};
 
 const TITLE: &str = "Melody Visualizer";
 
@@ -13,9 +16,7 @@ pub struct AudioSourceController {
 }
 
 impl AudioSourceController {
-	pub fn new(buffer_size: usize, signals: Arc<SourceSignals>)
-		-> Result<(Self, RingBufferReader), Error>
-	{
+	pub fn new(buffer_size: usize, notifier: Notifier) -> Result<(Self, RingBufferReader), Error> {
 		let (client, status) = jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER)
 			.map_err(Error::Jack)?;
 		if !status.is_empty() {
@@ -30,7 +31,7 @@ impl AudioSourceController {
 			.map_err(|()| Error::RingBufferAllocFailure { size: buffer_size })?
 			.into_reader_writer();
 		let client = client.activate_async(
-			AudioNotificationHandler::new(signals),
+			AudioNotificationHandler::new(notifier),
 			AudioProcessHandler::new(port, buffer_writer),
 		)
 			.map_err(Error::Jack)?;
@@ -43,14 +44,12 @@ impl AudioSourceController {
 }
 
 struct AudioNotificationHandler {
-	signals: Arc<SourceSignals>,
+	notifier: Notifier,
 }
 
 impl AudioNotificationHandler {
-	fn new(signals: Arc<SourceSignals>) -> Self {
-		AudioNotificationHandler {
-			signals,
-		}
+	fn new(notifier: Notifier) -> Self {
+		AudioNotificationHandler { notifier }
 	}
 }
 
@@ -61,16 +60,16 @@ impl NotificationHandler for AudioNotificationHandler {
 	}
 
 	fn port_registration(&mut self, _client: &Client, port_id: PortId, _is_registered: bool) {
-		if let Err(err) = self.signals.on_inputs_changed.send(port_id) {
-			error!("failed to signal JACK input change to main context: {}", err);
+		if let Err(err) = self.notifier.send(events::InputsChanged(port_id)) {
+			error!("failed to notify of JACK input change: {}", err);
 		}
 	}
 
 	fn port_rename(&mut self, _: &Client, port_id: PortId, _old_name: &str, _new_name: &str)
 		-> Control
 	{
-		if let Err(err) = self.signals.on_inputs_changed.send(port_id) {
-			error!("failed to signal JACK input change to main context: {}", err);
+		if let Err(err) = self.notifier.send(events::InputsChanged(port_id)) {
+			error!("failed to notify of JACK input change: {}", err);
 		}
 		Control::Continue
 	}

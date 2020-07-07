@@ -4,13 +4,13 @@ use log::{debug, error};
 use std::cell::{RefCell, RefMut};
 use std::mem;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::audio::AudioSourceController;
 use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer};
 use crate::graphic_renderer::AsyncGraphicRenderer;
-use crate::source::{JackSource, SourceSignals, SourceType};
+use crate::pubsub::PubSub;
+use crate::source::{JackSource, SourceType};
 use crate::spectrum_renderer::AsyncSpectrumRenderer;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
@@ -19,7 +19,7 @@ const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
-	signals: Arc<SourceSignals>,
+	pubsub: PubSub,
 	graphic_update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
 	inputs_changed_callbacks: Rc<RefCell<Vec<Box<dyn Fn(PortId)>>>>,
 	graphic: Rc<RefCell<Graphic>>,
@@ -32,12 +32,10 @@ impl Controller {
 		let inputs_changed_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn(PortId)>>>::new()));
 		let graphic_update_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn()>>>::new()));
 
+		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
+
 		let (inputs_changed_tx, inputs_changed_rx) =
 			glib::MainContext::channel(glib::PRIORITY_DEFAULT);
-
-		let signals = Arc::new(SourceSignals {
-			on_inputs_changed: inputs_changed_tx,
-		});
 
 		let inputs_changed_callbacks_clone = inputs_changed_callbacks.clone();
 		inputs_changed_rx.attach(None, move |port_id| {
@@ -49,7 +47,7 @@ impl Controller {
 
 		// Create graphical rendering thread.
 
-		let (source, buffer_reader) = AudioSourceController::new(BUFFER_SIZE, signals.clone())?;
+		let (source, buffer_reader) = AudioSourceController::new(BUFFER_SIZE, pubsub.notifier())?;
 
 		// Create spectral rendering thread.
 		// - Channel<Spectrum> in
@@ -94,13 +92,17 @@ impl Controller {
 
 		Ok(Controller {
 			source: Some(Box::new(source)),
-			signals,
 			inputs_changed_callbacks,
 			graphic_update_callbacks,
 			graphic,
+			pubsub,
 			graphic_renderer,
 			spectrum_renderer,
 		})
+	}
+
+	pub fn pubsub(&self) -> &PubSub {
+		&self.pubsub
 	}
 
 	pub fn graphic_mut(&mut self) -> RefMut<Graphic> {
@@ -123,7 +125,7 @@ impl Controller {
 		let (new_source, reader) = match source_type {
 			SourceType::Audio => {
 				let (controller, reader) = AudioSourceController::new(
-					BUFFER_SIZE, self.signals.clone()
+					BUFFER_SIZE, self.pubsub.notifier()
 				)?;
 				(Box::new(controller), reader)
 			}

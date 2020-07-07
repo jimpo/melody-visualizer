@@ -2,10 +2,11 @@ use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::sync::mpsc::SendError;
 
 pub struct PubSub {
 	subscribers: Rc<RefCell<HashMap<TypeId, Vec<Subscription>>>>,
-	notification_tx: glib::Sender<Box<dyn Any>>,
+	notifier: Notifier,
 }
 
 impl PubSub {
@@ -22,16 +23,20 @@ impl PubSub {
 
 		PubSub {
 			subscribers,
-			notification_tx,
+			notifier: Notifier::new(notification_tx),
 		}
 	}
 
-	pub fn notifications(&self) -> glib::Sender<Box<dyn Any>> {
-		self.notification_tx.clone()
+	pub fn notifier(&self) -> Notifier {
+		self.notifier.clone()
 	}
 
-	pub fn subscribe<N: Any, F: Fn(&N) + 'static>(&self, callback: F) -> SubscriptionHandle {
-		let callback: Rc<Box<dyn Fn(&dyn Any)>> = Rc::new(Box::new(move |notification| {
+	pub fn subscribe<N, F>(&self, callback: F) -> SubscriptionHandle
+		where
+			N: Any + Send,
+			F: Fn(&N) + 'static
+	{
+		let callback: Rc<Box<dyn Fn(&(dyn Any + Send))>> = Rc::new(Box::new(move |notification| {
 			let notification = notification.downcast_ref::<N>()
 				.expect(
 					"all subscribers registered for a notification by TypeId will only be called \
@@ -50,7 +55,10 @@ impl PubSub {
 	}
 }
 
-fn notify(subscribers: &mut HashMap<TypeId, Vec<Subscription>>, notification: Box<dyn Any>) {
+fn notify(
+	subscribers: &mut HashMap<TypeId, Vec<Subscription>>,
+	notification: Box<dyn Any + Send>
+) {
 	let type_id = (*notification).type_id();
 	if let Some(subscribers) = subscribers.get_mut(&type_id) {
 		let mut i = 0;
@@ -65,11 +73,11 @@ fn notify(subscribers: &mut HashMap<TypeId, Vec<Subscription>>, notification: Bo
 }
 
 struct Subscription {
-	callback: Weak<Box<dyn Fn(&dyn Any)>>,
+	callback: Weak<Box<dyn Fn(&(dyn Any + Send))>>,
 }
 
 impl Subscription {
-	fn try_callback(&self, notification: &dyn Any) -> bool {
+	fn try_callback(&self, notification: &(dyn Any + Send)) -> bool {
 		match self.callback.upgrade() {
 			Some(callback) => {
 				callback(notification);
@@ -81,7 +89,30 @@ impl Subscription {
 }
 
 #[derive(Clone)]
-pub struct SubscriptionHandle(Rc<Box<dyn Fn(&dyn Any)>>);
+pub struct Notifier {
+	notification_tx: glib::Sender<Box<dyn Any + Send>>,
+}
+
+impl Notifier {
+	fn new(notification_tx: glib::Sender<Box<dyn Any + Send>>) -> Self {
+		Notifier { notification_tx }
+	}
+
+	pub fn send<T: Any + Send>(&self, notification: T)
+		-> Result<(), SendError<Box<dyn Any + Send>>>
+	{
+		self.send_boxed(Box::new(notification))
+	}
+
+	pub fn send_boxed(&self, notification: Box<dyn Any + Send>)
+		-> Result<(), SendError<Box<dyn Any + Send>>>
+	{
+		self.notification_tx.send(notification)
+	}
+}
+
+#[derive(Clone)]
+pub struct SubscriptionHandle(Rc<Box<dyn Fn(&(dyn Any + Send))>>);
 
 #[cfg(test)]
 mod tests {
@@ -140,7 +171,7 @@ mod tests {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
-			pubsub.notifications().send(Box::new(TestNotification)).unwrap();
+			pubsub.notifier().send_boxed(Box::new(TestNotification)).unwrap();
 			yield_rx.next().await.unwrap();
 
 			assert!(*subscription_called.borrow());
@@ -158,7 +189,7 @@ mod tests {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
-			pubsub.notifications().send(Box::new(TestNotification)).unwrap();
+			pubsub.notifier().send(TestNotification).unwrap();
 			yield_rx.next().await.unwrap();
 
 			assert!(!*subscription_called.borrow());
@@ -178,7 +209,7 @@ mod tests {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
-			pubsub.notifications().send(Box::new(OtherTestNotification)).unwrap();
+			pubsub.notifier().send(Box::new(OtherTestNotification)).unwrap();
 			yield_rx.next().await.unwrap();
 
 			assert!(!*subscription_called.borrow());

@@ -9,8 +9,7 @@ mod spectrum;
 mod spectrum_renderer;
 
 use gio::prelude::*;
-use gtk::prelude::*;
-use log::{info, error};
+use log::error;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -45,7 +44,7 @@ fn main() {
     });
 
     let controller_outer = controller.clone();
-    uiapp.connect_shutdown(move |app| {
+    uiapp.connect_shutdown(move |_app| {
 		// On shutdown we want to wait for the controller to shut down background processing
         // threads. This must be done asynchronously to avoid deadlocking.
         let main_context = glib::MainContext::default();

@@ -1,7 +1,7 @@
 use glib::Type;
 use gtk::{Orientation, TreeSelection, TreeIter};
 use gtk::prelude::*;
-use log::{debug, error};
+use log::error;
 use std::cell::RefCell;
 use std::rc::Rc;
 

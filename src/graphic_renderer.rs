@@ -1,5 +1,7 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
 use log::{debug, error};
+use std::collections::VecDeque;
+use std::fmt::Debug;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -25,30 +27,59 @@ enum GraphicProcessingError {
 	Other(Error),
 }
 
-
-struct GraphicRenderer {
+pub trait GraphicGenerator: Debug + Send {
+	fn generate(&mut self, buffer: GraphicBuffer, spectrum_history: &VecDeque<Spectrum>)
+		-> Result<Graphic, Error>;
+	fn history_len(&self) -> usize;
 }
 
-impl GraphicRenderer {
-	fn new() -> Self {
-		GraphicRenderer {}
-	}
+#[derive(Debug)]
+pub struct DefaultGraphicGenerator;
 
-	fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
+impl GraphicGenerator for DefaultGraphicGenerator {
+	fn generate(&mut self, buffer: GraphicBuffer, _spectrum_history: &VecDeque<Spectrum>)
+		-> Result<Graphic, Error>
+	{
 		let x_max = buffer.width();
 		let y_max = buffer.height();
 
 		buffer.draw(|ctx| {
-			// Dummy routine. Make the whole area red.
-			ctx.set_source_rgb(255.0, 0.0, 0.0);
+			ctx.set_source_rgb(0.0, 0.0, 0.0);
 			ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
 			ctx.fill();
 			Ok(())
 		})
 	}
 
+	fn history_len(&self) -> usize {
+		1
+	}
+}
+
+struct GraphicRenderer {
+	generator: Box<dyn GraphicGenerator>,
+	spectrum_history: VecDeque<Spectrum>,
+}
+
+impl GraphicRenderer {
+	fn new() -> Self {
+		GraphicRenderer {
+			generator: Box::new(DefaultGraphicGenerator),
+			spectrum_history: VecDeque::new(),
+		}
+	}
+
+	fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
+		self.generator.generate(buffer, &self.spectrum_history)
+	}
+
 	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
-		spectrum.into_buffer()
+		self.spectrum_history.truncate(self.generator.history_len());
+		let buffer = self.spectrum_history.pop_back()
+			.map(Spectrum::into_buffer)
+			.unwrap_or_else(SpectrumBuffer::default);
+		self.spectrum_history.push_front(spectrum);
+		buffer
 	}
 }
 

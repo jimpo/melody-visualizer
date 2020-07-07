@@ -1,14 +1,12 @@
 use gtk::prelude::*;
-use log::{debug, error};
-use std::borrow::Borrow;
+use log::error;
 use std::cell::RefCell;
-use std::convert::TryInto;
 use std::mem;
 use std::rc::Rc;
 
 use crate::application::Controller;
 use crate::error::Error;
-use crate::graphic::{Graphic, GraphicBuffer};
+use crate::graphic::Graphic;
 
 struct WidgetState {
 	frames_since_last_buffer: usize,

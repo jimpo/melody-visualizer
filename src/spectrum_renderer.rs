@@ -2,7 +2,6 @@ use futures::{prelude::*, channel::mpsc, executor, select};
 use log::{debug, warn, error};
 use std::fmt::Debug;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumBuffer};
@@ -14,29 +13,48 @@ enum SpectrumProcessingError {
 }
 
 pub trait SpectrumGenerator: Debug + Send {
-	fn generate(&self, buffer: SpectrumBuffer) -> Spectrum;
+	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
 }
 
 pub trait SpectrumTransform: Debug + Send {
-	fn transform(&self, spectrum: Spectrum) -> Spectrum;
+	fn transform(&mut self, spectrum: Spectrum) -> Spectrum;
 }
 
 pub struct SpectrumRenderer {
+	generator: Box<dyn SpectrumGenerator>,
+	transforms: Vec<Box<dyn SpectrumTransform>>,
+}
 
+#[derive(Debug)]
+pub struct DefaultSpectrumGenerator;
+
+impl SpectrumGenerator for DefaultSpectrumGenerator {
+	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum {
+		Spectrum::default()
+	}
 }
 
 impl SpectrumRenderer {
 	fn new() -> Self {
-		SpectrumRenderer {}
+		SpectrumRenderer {
+			generator: Box::new(DefaultSpectrumGenerator),
+			transforms: Vec::new(),
+		}
 	}
 
 	// fn next_tick_interval(&self) -> Duration {}
 
-	fn render(&mut self, spectrum: SpectrumBuffer) -> Result<Spectrum, SpectrumProcessingError> {
-		Ok(Spectrum {})
+	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, SpectrumProcessingError> {
+		let initial_spectrum = self.generator.generate(buffer);
+		let final_spectrum = self.transforms.iter_mut()
+			.fold(initial_spectrum, |spectrum, transform| transform.transform(spectrum));
+		Ok(final_spectrum)
 	}
 
-	fn set_generator(&mut self, generator: Box<dyn SpectrumGenerator>) {}
+	fn set_generator(&mut self, generator: Box<dyn SpectrumGenerator>) {
+		self.generator = generator;
+	}
+
 	// fn insert_transform(&mut self, transform: Box<SpectrumTransform>, index: usize) {}
 	// fn remove_transform(&mut self, index: usize) -> Box<SpectrumTransform> {}
 }

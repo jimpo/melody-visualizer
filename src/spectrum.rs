@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SpectrumBuffer {
 }
 
@@ -6,7 +6,7 @@ impl SpectrumBuffer {
 
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Spectrum {
 }
 

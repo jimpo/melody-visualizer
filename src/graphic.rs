@@ -1,4 +1,4 @@
-use cairo::{BorrowError, ImageSurface, Context};
+use cairo::{BorrowError, Context, Format, ImageSurface, Surface};
 use std::mem;
 
 use crate::error::Error;
@@ -22,7 +22,7 @@ impl Graphic {
 	}
 
 	pub fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
-		where F: Fn(&cairo::Surface) -> Result<T, Error>
+		where F: Fn(&Surface) -> Result<T, Error>
 	{
 		self.buffer.with_image_surface(f)
 	}
@@ -56,7 +56,7 @@ impl GraphicBuffer {
 	}
 
 	pub fn resize(self, width: i32, height: i32) -> Self {
-		let stride = cairo::Format::Rgb24.stride_for_width(width as u32)
+		let stride = Format::Rgb24.stride_for_width(width as u32)
 			.expect("stride_for_width cannot fail");
 
 		let mut data = self.data;
@@ -70,17 +70,17 @@ impl GraphicBuffer {
 		}
 	}
 
-	pub fn draw(mut self, draw: impl Fn(&cairo::Context) -> Result<(), Error>)
+	pub fn draw(mut self, draw: impl Fn(&Context) -> Result<(), Error>)
 		-> Result<Graphic, Error>
 	{
-		self.with_image_surface(|surface| draw(&cairo::Context::new(surface)))?;
+		self.with_image_surface(|surface| draw(&Context::new(surface)))?;
 		Ok(Graphic { buffer: self })
 	}
 
 	/// The callback must destroy any copies it makes of the surface reference, even if Cairo
 	/// creates the copies internally. Otherwise, this returns Error::GraphicDrawCopiesSurface.
 	fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
-		where F: Fn(&cairo::Surface) -> Result<T, Error>
+		where F: Fn(&Surface) -> Result<T, Error>
 	{
 		// Use unsafe cast to extend lifetime of the data reference because
 		// ImageSurface::create_for_data takes ownership of the data
@@ -94,7 +94,7 @@ impl GraphicBuffer {
 		};
 		let mut surface = ImageSurface::create_for_data(
 			data_ref,
-			cairo::Format::Rgb24,
+			Format::Rgb24,
 			self.width,
 			self.height,
 			self.stride
@@ -108,8 +108,8 @@ impl GraphicBuffer {
 			.map_err(|err| {
 				self.data = self.data.clone();
 				match err {
-					cairo::BorrowError::Cairo(err) => err.into(),
-					cairo::BorrowError::NonExclusive => Error::GraphicDrawClonesSurface,
+					BorrowError::Cairo(err) => err.into(),
+					BorrowError::NonExclusive => Error::GraphicDrawClonesSurface,
 				}
 			})?;
 

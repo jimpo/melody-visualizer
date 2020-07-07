@@ -107,8 +107,6 @@ impl Controller {
 		self.graphic.borrow_mut()
 	}
 
-	pub fn on_visualization_resize(x_max: i32, y_max: i32) {}
-
 	pub fn get_source_type(&self) -> Option<SourceType> {
 		self.source.as_ref().map(|source| source.source_type())
 	}

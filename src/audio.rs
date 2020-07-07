@@ -93,7 +93,7 @@ impl AudioProcessHandler {
 }
 
 impl ProcessHandler for AudioProcessHandler {
-	fn process(&mut self, client: &Client, scope: &ProcessScope) -> Control {
+	fn process(&mut self, _client: &Client, scope: &ProcessScope) -> Control {
 		let mut ring_buffer = self.ring_buffer.lock()
 			.expect("I shouldn't even need a Mutex...");
 		// TODO: Create a custom ring buffer holding an [f32] that is more efficient.

@@ -9,7 +9,8 @@ use crate::spectrum::{Spectrum, SpectrumBuffer};
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
 	SendError(mpsc::SendError),
-	SpectrumReceivedDuplicateBuffer,
+	#[display(fmt = "received an unexpected buffer while one is already available")]
+	ReceivedUnexpectedBuffer,
 }
 
 pub trait SpectrumGenerator: Debug + Send {
@@ -121,8 +122,8 @@ async fn process_loop(
 	let mut buffer = None;
 	loop {
 		let result = select! {
-			cmd = control_rx.next().fuse() => handle_cmd(&mut renderer, cmd).await,
-			new_buffer = spectrum_input.next().fuse() => {
+			cmd = control_rx.next() => handle_cmd(&mut renderer, cmd).await,
+			new_buffer = spectrum_input.next() => {
 				handle_new_buffer(&mut renderer, &mut buffer, new_buffer, &mut spectrum_output)
 					.await
 			}
@@ -151,18 +152,18 @@ async fn handle_cmd(renderer: &mut SpectrumRenderer, cmd: Option<SpectrumRendere
 
 async fn handle_new_buffer(
 	renderer: &mut SpectrumRenderer,
-	buffer: &mut Option<SpectrumBuffer>,
+	current_buffer: &mut Option<SpectrumBuffer>,
 	new_buffer: Option<SpectrumBuffer>,
 	spectrum_output: &mut mpsc::Sender<Spectrum>,
 ) -> Result<bool, SpectrumProcessingError> {
 	if let Some(new_buffer) = new_buffer {
-		if buffer.is_some() {
-			return Err(SpectrumProcessingError::SpectrumReceivedDuplicateBuffer);
+		if current_buffer.is_some() {
+			return Err(SpectrumProcessingError::ReceivedUnexpectedBuffer);
 		} else {
-			*buffer = Some(new_buffer);
+			*current_buffer = Some(new_buffer);
 		}
 		// TODO: make this happen on a timer tick.
-		if let Some(buffer) = buffer.take() {
+		if let Some(buffer) = current_buffer.take() {
 			let spectrum = renderer.render(buffer)?;
 			if let Err(err) = spectrum_output.send(spectrum).await {
 				return if err.is_disconnected() {

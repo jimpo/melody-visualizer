@@ -1,9 +1,10 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
+use futures_timer::Delay;
 use log::{debug, error};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::graphic::{Graphic, GraphicBuffer};
 use crate::spectrum::{Spectrum, SpectrumBuffer};
@@ -24,6 +25,10 @@ use crate::error::Error;
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum GraphicProcessingError {
 	SendError(mpsc::SendError),
+	#[display(fmt = "skipping tick because no buffer is available")]
+	NoBuffer,
+	#[display(fmt = "received an unexpected buffer while one is already available")]
+	ReceivedUnexpectedBuffer,
 	Other(Error),
 }
 
@@ -59,6 +64,7 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 struct GraphicRenderer {
 	generator: Box<dyn GraphicGenerator>,
 	spectrum_history: VecDeque<Spectrum>,
+	interval: Duration,
 }
 
 impl GraphicRenderer {
@@ -66,6 +72,7 @@ impl GraphicRenderer {
 		GraphicRenderer {
 			generator: Box::new(DefaultGraphicGenerator),
 			spectrum_history: VecDeque::new(),
+			interval: Duration::from_millis(40),
 		}
 	}
 
@@ -80,6 +87,14 @@ impl GraphicRenderer {
 			.unwrap_or_else(SpectrumBuffer::default);
 		self.spectrum_history.push_front(spectrum);
 		buffer
+	}
+
+	fn frame_interval(&self) -> Duration {
+		self.interval
+	}
+
+	fn set_frame_interval(&mut self, interval: Duration) {
+		self.interval = interval;
 	}
 }
 
@@ -153,13 +168,22 @@ async fn process_loop(
 ) {
 	debug!("Starting graphic rendering thread");
 	let mut renderer = GraphicRenderer::new();
+	let mut buffer = Some(GraphicBuffer::default());
+	let mut next_tick_time = Instant::now();
 	loop {
+		let tick_delay = next_tick_time.saturating_duration_since(Instant::now());
 		let result = select! {
 			cmd = control_rx.next() => handle_cmd(&mut renderer, cmd).await,
 			new_buffer = graphic_input.next() =>
-				handle_new_buffer(&mut renderer, new_buffer, &mut graphic_output).await,
+				handle_new_buffer(&mut renderer, &mut buffer, new_buffer).await,
 			new_spectrum = spectrum_input.next() =>
 				handle_new_spectrum(&mut renderer, new_spectrum, &mut spectrum_output).await,
+			_ = Delay::new(tick_delay).fuse() => handle_tick(
+				&mut renderer,
+				&mut next_tick_time,
+				buffer.take(),
+				&mut graphic_output,
+			).await,
 		};
 		match result {
 			Ok(true) => {},
@@ -205,13 +229,34 @@ async fn handle_new_spectrum(
 
 async fn handle_new_buffer(
 	renderer: &mut GraphicRenderer,
+	current_buffer: &mut Option<GraphicBuffer>,
+	new_buffer: Option<GraphicBuffer>,
+) -> Result<bool, GraphicProcessingError>
+{
+	if let Some(new_buffer) = new_buffer {
+		if current_buffer.is_some() {
+			Err(GraphicProcessingError::ReceivedUnexpectedBuffer)
+		} else {
+			*current_buffer = Some(new_buffer);
+			Ok(true)
+		}
+	} else {
+		debug!("graphic input channel closed, stopping graphic processing");
+		Ok(false)
+	}
+}
+
+async fn handle_tick(
+	renderer: &mut GraphicRenderer,
+	next_tick_time: &mut Instant,
 	buffer: Option<GraphicBuffer>,
 	graphic_output: &mut mpsc::Sender<Graphic>,
 ) -> Result<bool, GraphicProcessingError>
 {
+	*next_tick_time += renderer.frame_interval();
+
 	if let Some(buffer) = buffer {
 		let graphic = renderer.render(buffer)?;
-		thread::sleep(Duration::from_millis(40));
 		if let Err(err) = graphic_output.send(graphic).await {
 			return if err.is_disconnected() {
 				debug!("graphic output channel disconnected, stopping graphic processing");
@@ -222,7 +267,6 @@ async fn handle_new_buffer(
 		}
 		Ok(true)
 	} else {
-		debug!("graphic input channel closed, stopping graphic processing");
-		Ok(false)
+		Err(GraphicProcessingError::NoBuffer)
 	}
 }

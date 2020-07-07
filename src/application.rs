@@ -193,12 +193,6 @@ async fn process_graphic_updates(
 	mut graphic_rx: mpsc::Receiver<Graphic>,
 	mut graphic_tx: mpsc::Sender<GraphicBuffer>,
 ) {
-	// Kick things off by sending an empty graphic buffer.
-	if let Err(err) = graphic_tx.send(GraphicBuffer::default()).await {
-		error!("error sending initial graphic buffer to processing thread: {}", err);
-		return;
-	}
-
 	while let Some(new_graphic) = graphic_rx.next().await {
 		// Update the stored graphic.
 		let old_graphic = mem::replace(&mut *graphic.borrow_mut(), new_graphic);

@@ -54,8 +54,6 @@ impl VisualizationPane {
 fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context)
 	-> Result<(), Error>
 {
-	debug!("redrawing visualization pane");
-
 	let x_max = area.get_allocated_width();
 	let y_max = area.get_allocated_height();
 	let graphic = &mut *state.graphic_mut();

@@ -1,4 +1,3 @@
-use cairo;
 use jack::PortId;
 use futures::{prelude::*, channel::mpsc};
 use log::{debug, error};
@@ -59,9 +58,9 @@ impl Controller {
 		let graphic = Rc::new(RefCell::new(Graphic::default()));
 
 		// Channel sending the graphic surface from the main thread to the graphic rendering thread.
-		let (mut main_graphic_tx, main_graphic_rx) = mpsc::channel(0);
+		let (main_graphic_tx, main_graphic_rx) = mpsc::channel(0);
 		// Channel sending the graphic surface from the graphic rendering thread to the main thread.
-		let (graphic_main_tx, mut graphic_main_rx) = mpsc::channel(0);
+		let (graphic_main_tx, graphic_main_rx) = mpsc::channel(0);
 
 		// Channel sending the spectrum from the spectrum rendering thread to the graphic rendering
 		// thread.
@@ -70,6 +69,7 @@ impl Controller {
 		// rendering thread.
 		let (graphic_spectrum_tx, graphic_spectrum_rx) = mpsc::channel(0);
 
+		// Start the graphic rendering background thread.
 		let graphic_renderer = AsyncGraphicRenderer::new(
 			main_graphic_rx,
 			graphic_main_tx,
@@ -77,45 +77,19 @@ impl Controller {
 			graphic_spectrum_tx,
 		)?;
 
+		// Start the spectrum rendering background thread.
 		let spectrum_renderer = AsyncSpectrumRenderer::new(
 			graphic_spectrum_rx,
 			spectrum_graphic_tx,
 		)?;
 
 		let main_context = glib::MainContext::default();
-		let graphic_clone = graphic.clone();
-		let graphic_update_callbacks_clone = graphic_update_callbacks.clone();
-		main_context.spawn_local(async move {
-			// Kick things off by sending an empty graphic buffer.
-			if let Err(err) = main_graphic_tx.send(GraphicBuffer::default()).await {
-				error!("error sending initial graphic buffer to processing thread: {}", err);
-				return;
-			}
-
-			while let Some(new_graphic) = graphic_main_rx.next().await {
-				// Update the stored graphic.
-				let old_graphic = mem::replace(&mut *graphic_clone.borrow_mut(), new_graphic);
-
-				// Notify subscribers that graphic has been updated. This triggers a redraw on the
-				// visualization pane.
-				for callback in graphic_update_callbacks_clone.borrow().iter() {
-					callback();
-				}
-
-				// Recycle the old graphic surface and send to renderer.
-				if let Err(err) = main_graphic_tx.send(old_graphic.into_buffer()).await {
-					if err.is_disconnected() {
-						debug!("graphic output channel disconnected, stopping main thread handler");
-						break;
-					} else {
-						error!("error sending graphic buffer to processing thread");
-					}
-				}
-			}
-		});
-
-		// Kick things off by sending empty buffers.
-
+		main_context.spawn_local(process_graphic_updates(
+			graphic.clone(),
+			graphic_update_callbacks.clone(),
+			graphic_main_rx,
+			main_graphic_tx,
+		));
 
 		Ok(Controller {
 			source: Some(Box::new(source)),
@@ -189,6 +163,13 @@ impl Controller {
 			None => error!("connect_port called with empty source"),
 		}
 	}
+
+	pub async fn shutdown(&mut self) -> Result<(), Error> {
+		self.source = None;
+		self.spectrum_renderer.stop().await?;
+		self.graphic_renderer.stop().await?;
+		Ok(())
+	}
 }
 
 fn connect_port(source: &dyn JackSource, output_port: Option<String>) -> Result<(), Error> {
@@ -205,4 +186,38 @@ fn connect_port(source: &dyn JackSource, output_port: Option<String>) -> Result<
 		debug!("Disconnected all ports");
 	}
 	Ok(())
+}
+
+async fn process_graphic_updates(
+	graphic: Rc<RefCell<Graphic>>,
+	update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
+	mut graphic_rx: mpsc::Receiver<Graphic>,
+	mut graphic_tx: mpsc::Sender<GraphicBuffer>,
+) {
+	// Kick things off by sending an empty graphic buffer.
+	if let Err(err) = graphic_tx.send(GraphicBuffer::default()).await {
+		error!("error sending initial graphic buffer to processing thread: {}", err);
+		return;
+	}
+
+	while let Some(new_graphic) = graphic_rx.next().await {
+		// Update the stored graphic.
+		let old_graphic = mem::replace(&mut *graphic.borrow_mut(), new_graphic);
+
+		// Notify subscribers that graphic has been updated. This triggers a redraw on the
+		// visualization pane.
+		for callback in update_callbacks.borrow().iter() {
+			callback();
+		}
+
+		// Recycle the old graphic surface and send to renderer.
+		if let Err(err) = graphic_tx.send(old_graphic.into_buffer()).await {
+			if err.is_disconnected() {
+				debug!("graphic output channel disconnected, stopping main thread handler");
+				break;
+			} else {
+				error!("error sending graphic buffer to processing thread");
+			}
+		}
+	}
 }

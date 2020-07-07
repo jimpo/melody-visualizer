@@ -10,11 +10,11 @@ use crate::application::Controller;
 
 const TITLE: &str = "Melody Visualizer";
 
-pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
+pub fn start<P: IsA<Application>>(app: &P, controller: Rc<RefCell<Controller>>)
+	-> Result<(), Error>
+{
 	// We create the main window.
 	let win = gtk::ApplicationWindow::new(app);
-
-	let controller = Rc::new(RefCell::new(Controller::new()?));
 
 	// Then we set its size and a title.
 	win.set_title(TITLE);

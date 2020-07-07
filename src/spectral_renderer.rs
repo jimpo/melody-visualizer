@@ -61,14 +61,14 @@ impl SpectrumRenderer {
 // pub struct SpectrumProcessingPipeline {}
 
 
-pub struct AsyncSpectrumRenderer {
-	thread: JoinHandle<()>,
-	control_tx: mpsc::Sender<SpectrumRendererCmd>,
-}
-
 #[derive(Debug)]
 enum SpectrumRendererCmd {
 	SetGenerator(Box<dyn SpectrumGenerator>),
+}
+
+pub struct AsyncSpectrumRenderer {
+	thread: Option<JoinHandle<()>>,
+	control_tx: mpsc::Sender<SpectrumRendererCmd>,
 }
 
 impl AsyncSpectrumRenderer {
@@ -91,9 +91,18 @@ impl AsyncSpectrumRenderer {
 				executor::block_on(process_loop(control_rx, spectrum_input, spectrum_output));
 			})?;
 		Ok(AsyncSpectrumRenderer {
-			thread: processing_thread,
+			thread: Some(processing_thread),
 			control_tx,
 		})
+	}
+
+	pub async fn stop(&mut self) -> Result<(), Error> {
+		if let Err(err) = self.control_tx.close().await {
+			if !err.is_disconnected() {
+				return Err(Error::ProcessingControlError(err));
+			}
+		}
+		Ok(())
 	}
 
 	// pub async fn set_generator(generator: Box<SpectrumGenerator>) {}

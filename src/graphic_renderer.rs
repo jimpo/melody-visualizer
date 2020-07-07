@@ -166,7 +166,7 @@ impl GraphicRenderer {
 }
 
 pub struct AsyncGraphicRenderer {
-	thread: JoinHandle<()>,
+	thread: Option<JoinHandle<()>>,
 	control_tx: mpsc::Sender<GraphicRendererCmd>,
 }
 
@@ -210,12 +210,20 @@ impl AsyncGraphicRenderer {
 				));
 			})?;
 		Ok(AsyncGraphicRenderer {
-			thread: processing_thread,
+			thread: Some(processing_thread),
 			control_tx,
 		})
 	}
 
 	// async fn update params
+	pub async fn stop(&mut self) -> Result<(), Error> {
+		if let Err(err) = self.control_tx.close().await {
+			if !err.is_disconnected() {
+				return Err(Error::ProcessingControlError(err));
+			}
+		}
+		Ok(())
+	}
 }
 
 async fn process_loop(
@@ -283,7 +291,6 @@ async fn handle_new_buffer(
 	graphic_output: &mut mpsc::Sender<Graphic>,
 ) -> Result<bool, GraphicProcessingError>
 {
-	debug!("graphic rendering thread received buffer");
 	if let Some(buffer) = buffer {
 		let graphic = renderer.render(buffer)?;
 		thread::sleep(Duration::from_millis(40));

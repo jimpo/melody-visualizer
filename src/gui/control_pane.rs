@@ -1,5 +1,5 @@
 use glib::Type;
-use gtk::{Orientation, TreeSelection, Widget, TreeIter};
+use gtk::{Orientation, TreeSelection, TreeIter};
 use gtk::prelude::*;
 use log::{debug, error};
 use std::cell::RefCell;

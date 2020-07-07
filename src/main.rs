@@ -4,6 +4,7 @@ mod error;
 mod gui;
 mod graphic;
 mod graphic_renderer;
+mod pubsub;
 mod source;
 mod spectrum;
 mod spectrum_renderer;

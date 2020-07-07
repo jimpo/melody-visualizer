@@ -22,6 +22,25 @@ use crate::error::Error;
 // |                                                                                      |
 // ________________________________________________________________________________________
 
+// ProcessingComponents
+//
+// Q's: Where are the spectrum params decided? It must be the SpectrumRenderer. Or set on both
+// processing components.
+//
+// Control must be an RPC interface to handle dynamic commands. Commands are Box::Any.
+//
+// RPC: async fn call<R>(&mut self, cmd: C) -> Result<R, Error>
+// async fn stop(&mut self) -> Result<(), Error>
+//
+// ApplicationPubSub
+//
+// glib::Sender<Box<dyn Any>>
+// Subscription: fn subscribe<S>(&mut self) -> Subscription
+//
+// TODO: Subscription interface
+//
+//
+
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum GraphicProcessingError {
 	SendError(mpsc::SendError),

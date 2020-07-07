@@ -89,6 +89,7 @@ impl ControlPane {
 		})
 	}
 
+	// TODO: Make this Deref<Target = gtk::Box>
 	pub fn widget(&self) -> &gtk::Box {
 		&self.view
 	}

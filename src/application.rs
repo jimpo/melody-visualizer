@@ -214,3 +214,5 @@ async fn process_graphic_updates(
 		}
 	}
 }
+
+struct Subscription;

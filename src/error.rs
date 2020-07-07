@@ -16,7 +16,7 @@ pub enum Error {
 	RingBufferAllocFailure { size: usize },
 	#[display(fmt = "failed to spawn a new thread: {}", _0)]
 	ThreadSpawnFailure(io::Error),
-	GraphicDrawClonesContext,
+	GraphicDrawClonesSurface,
 	#[display(fmt = "failed to send control command to processing thread: {}", _0)]
 	#[from(ignore)]
 	ProcessingControlError(mpsc::SendError),

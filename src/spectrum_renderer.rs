@@ -5,29 +5,12 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::error::Error;
+use crate::spectrum::{Spectrum, SpectrumBuffer};
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
 	SendError(mpsc::SendError),
 	SpectrumReceivedDuplicateBuffer,
-}
-
-#[derive(Clone)]
-pub struct SpectrumBuffer {
-}
-
-impl SpectrumBuffer {
-
-}
-
-#[derive(Clone)]
-pub struct Spectrum {
-}
-
-impl Spectrum {
-	pub fn into_buffer(self) -> SpectrumBuffer {
-		SpectrumBuffer {}
-	}
 }
 
 pub trait SpectrumGenerator: Debug + Send {

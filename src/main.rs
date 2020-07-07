@@ -2,9 +2,11 @@ mod application;
 mod audio;
 mod error;
 mod gui;
+mod graphic;
 mod graphic_renderer;
 mod source;
-mod spectral_renderer;
+mod spectrum;
+mod spectrum_renderer;
 
 use gio::prelude::*;
 use gtk::prelude::*;

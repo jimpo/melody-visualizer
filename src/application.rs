@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use crate::audio::AudioSourceController;
 use crate::error::Error;
-use crate::graphic_renderer::{AsyncGraphicRenderer, Graphic, GraphicBuffer};
+use crate::graphic::{Graphic, GraphicBuffer};
+use crate::graphic_renderer::AsyncGraphicRenderer;
 use crate::source::{JackSource, SourceSignals, SourceType};
-use crate::spectral_renderer::AsyncSpectrumRenderer;
+use crate::spectrum_renderer::AsyncSpectrumRenderer;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
@@ -210,7 +211,7 @@ async fn process_graphic_updates(
 			callback();
 		}
 
-		// Recycle the old graphic surface and send to renderer.
+		// Recycle the old graphic and send empty buffer to renderer.
 		if let Err(err) = graphic_tx.send(old_graphic.into_buffer()).await {
 			if err.is_disconnected() {
 				debug!("graphic output channel disconnected, stopping main thread handler");

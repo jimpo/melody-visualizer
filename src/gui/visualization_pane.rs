@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::application::Controller;
 use crate::error::Error;
-use crate::graphic_renderer::{Graphic, GraphicBuffer};
+use crate::graphic::{Graphic, GraphicBuffer};
 
 struct WidgetState {
 	frames_since_last_buffer: usize,
@@ -67,6 +67,10 @@ fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context
 		ctx.set_source_surface(surface, 0f64, 0f64);
 		ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
 		ctx.fill();
+
+		// Change the source, releasing the context's reference to the surface.
+		ctx.set_source_rgb(0.0, 0.0, 0.0);
+
 		Ok(())
 	})
 }

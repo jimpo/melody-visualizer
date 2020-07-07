@@ -3,7 +3,8 @@ use log::{debug, error};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::spectral_renderer::{Spectrum, SpectrumBuffer};
+use crate::graphic::{Graphic, GraphicBuffer};
+use crate::spectrum::{Spectrum, SpectrumBuffer};
 use crate::error::Error;
 
 // Graphics renderer
@@ -24,120 +25,6 @@ enum GraphicProcessingError {
 	Other(Error),
 }
 
-#[derive(Clone, Default)]
-pub struct Graphic {
-	width: i32,
-	height: i32,
-	stride: i32,
-	data: Vec<u8>,
-}
-
-impl Graphic {
-	pub fn into_buffer(self) -> GraphicBuffer {
-		let Graphic { width, height, stride, data } = self;
-		GraphicBuffer { width, height, stride, data }
-	}
-
-	pub fn width(&self) -> i32 {
-		self.width
-	}
-
-	pub fn height(&self) -> i32 {
-		self.height
-	}
-
-	pub fn with_image_surface<T, F>(&self, f: F) -> Result<T, Error>
-		where F: Fn(&cairo::Surface) -> Result<T, Error>
-	{
-		// This is an unnecessary clone.
-		// TODO: Open issue on cairo-rs to be able to recover ownership of data.
-		// Alternately, use unsafe code to store multiple mutable references.
-		let data = self.data.clone();
-		let surface = cairo::ImageSurface::create_for_data(
-			data,
-			cairo::Format::Rgb24,
-			self.width,
-			self.height,
-			self.stride
-		)?;
-		f(&*surface)
-	}
-}
-
-#[derive(Clone, Default)]
-pub struct GraphicBuffer {
-	width: i32,
-	height: i32,
-	stride: i32,
-	data: Vec<u8>,
-}
-
-impl GraphicBuffer {
-	pub fn new(width: i32, height: i32) -> Self {
-		let buffer = GraphicBuffer {
-			width: 0,
-			height: 0,
-			stride: 0,
-			data: Vec::new(),
-		};
-		buffer.resize(width, height)
-	}
-
-	pub fn width(&self) -> i32 {
-		self.width
-	}
-
-	pub fn height(&self) -> i32 {
-		self.height
-	}
-
-	pub fn resize(self, width: i32, height: i32) -> Self {
-		let stride = cairo::Format::Rgb24.stride_for_width(width as u32)
-			.expect("stride_for_width cannot fail");
-
-		let mut data = self.data;
-		data.resize((stride * height) as usize, 0);
-
-		GraphicBuffer {
-			width,
-			height,
-			stride,
-			data,
-		}
-	}
-
-	pub fn draw(self, draw: impl Fn(&cairo::Context) -> Result<(), Error>)
-		-> Result<Graphic, Error>
-	{
-		let GraphicBuffer { width, height, stride, data } = self;
-		let mut surface = cairo::ImageSurface::create_for_data(
-			data,
-			cairo::Format::Rgb24,
-			width,
-			height,
-			stride
-		)?;
-		{
-			let ctx = cairo::Context::new(&*surface);
-			draw(&ctx)?;
-		}
-		let data = surface.get_data()
-			.map_err(|err| match err {
-				cairo::BorrowError::Cairo(err) => err.into(),
-				cairo::BorrowError::NonExclusive => Error::GraphicDrawClonesContext,
-			})?
-			// This does an avoidable allocation :-(.
-			// TODO: Open issue on cairo-rs to be able to recover ownership of data.
-			// Alternately, use unsafe code to store multiple mutable references.
-			.to_vec();
-		Ok(Graphic {
-			width,
-			height,
-			stride,
-			data,
-		})
-	}
-}
 
 struct GraphicRenderer {
 }

@@ -1,4 +1,3 @@
-use jack::PortId;
 use futures::{prelude::*, channel::mpsc};
 use log::{debug, error};
 use std::cell::{RefCell, RefMut};
@@ -6,12 +5,14 @@ use std::mem;
 use std::rc::Rc;
 
 use crate::audio::AudioSourceController;
+use crate::audio_spectrum_generator::AudioSpectrumGenerator;
 use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer};
 use crate::graphic_renderer::AsyncGraphicRenderer;
-use crate::pubsub::PubSub;
+use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
-use crate::spectrum_renderer::AsyncSpectrumRenderer;
+use crate::spectrum_renderer::{AsyncSpectrumRenderer, SpectrumRendererCmd};
+use glib::MainContext;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
@@ -20,8 +21,6 @@ const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	pubsub: PubSub,
-	graphic_update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
-	inputs_changed_callbacks: Rc<RefCell<Vec<Box<dyn Fn(PortId)>>>>,
 	graphic: Rc<RefCell<Graphic>>,
 	graphic_renderer: AsyncGraphicRenderer,
 	spectrum_renderer: AsyncSpectrumRenderer,
@@ -29,25 +28,9 @@ pub struct Controller {
 
 impl Controller {
 	pub fn new() -> Result<Self, Error> {
-		let inputs_changed_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn(PortId)>>>::new()));
-		let graphic_update_callbacks = Rc::new(RefCell::new(<Vec<Box<dyn Fn()>>>::new()));
-
 		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
 
-		let (inputs_changed_tx, inputs_changed_rx) =
-			glib::MainContext::channel(glib::PRIORITY_DEFAULT);
-
-		let inputs_changed_callbacks_clone = inputs_changed_callbacks.clone();
-		inputs_changed_rx.attach(None, move |port_id| {
-			for callback in inputs_changed_callbacks_clone.borrow().iter() {
-				callback(port_id);
-			}
-			glib::Continue(true)
-		});
-
 		// Create graphical rendering thread.
-
-		let (source, buffer_reader) = AudioSourceController::new(BUFFER_SIZE, pubsub.notifier())?;
 
 		// Create spectral rendering thread.
 		// - Channel<Spectrum> in
@@ -85,20 +68,20 @@ impl Controller {
 		let main_context = glib::MainContext::default();
 		main_context.spawn_local(process_graphic_updates(
 			graphic.clone(),
-			graphic_update_callbacks.clone(),
+			pubsub.notifier(),
 			graphic_main_rx,
 			main_graphic_tx,
 		));
 
-		Ok(Controller {
-			source: Some(Box::new(source)),
-			inputs_changed_callbacks,
-			graphic_update_callbacks,
+		let mut controller = Controller {
+			source: None,
 			graphic,
 			pubsub,
 			graphic_renderer,
 			spectrum_renderer,
-		})
+		};
+		controller.set_source_type(SourceType::Audio)?;
+		Ok(controller)
 	}
 
 	pub fn pubsub(&self) -> &PubSub {
@@ -122,32 +105,29 @@ impl Controller {
 		// Drop old source first in case new source cannot be constructed.
 		self.source = None;
 
-		let (new_source, reader) = match source_type {
+		let (new_source, new_generator) = match source_type {
 			SourceType::Audio => {
-				let (controller, reader) = AudioSourceController::new(
+				let (source, reader) = AudioSourceController::new(
 					BUFFER_SIZE, self.pubsub.notifier()
 				)?;
-				(Box::new(controller), reader)
+				let sample_rate = source.client().sample_rate() as jack::Frames;
+				let generator = AudioSpectrumGenerator::new(
+					reader,
+					sample_rate,
+				);
+				(Box::new(source), Box::new(generator))
 			}
 			SourceType::MIDI => unimplemented!("MIDI source is not yet implemented"),
 		};
 		self.source = Some(new_source);
 
+		let mut spectrum_renderer = self.spectrum_renderer.clone();
+		MainContext::default().spawn_local(async move {
+			let _  = spectrum_renderer.call::<()>(SpectrumRendererCmd::SetGenerator(new_generator))
+				.await;
+		});
+
 		Ok(())
-	}
-
-	// TODO: Maybe make this just return a Receiver<()>.
-	pub fn subscribe_graphic_update(&mut self, callback: impl Fn() + 'static) {
-		self.graphic_update_callbacks
-			.borrow_mut()
-			.push(Box::new(callback));
-	}
-
-	// TODO: Maybe make this just return a Receiver<PortId>.
-	pub fn subscribe_inputs_changed(&mut self, callback: impl Fn(PortId) + 'static) {
-		self.inputs_changed_callbacks
-			.borrow_mut()
-			.push(Box::new(callback));
 	}
 
 	pub fn jack_client(&self) -> Option<&jack::Client> {
@@ -191,7 +171,7 @@ fn connect_port(source: &dyn JackSource, output_port: Option<String>) -> Result<
 
 async fn process_graphic_updates(
 	graphic: Rc<RefCell<Graphic>>,
-	update_callbacks: Rc<RefCell<Vec<Box<dyn Fn()>>>>,
+	notifier: Notifier,
 	mut graphic_rx: mpsc::Receiver<Graphic>,
 	mut graphic_tx: mpsc::Sender<GraphicBuffer>,
 ) {
@@ -201,8 +181,8 @@ async fn process_graphic_updates(
 
 		// Notify subscribers that graphic has been updated. This triggers a redraw on the
 		// visualization pane.
-		for callback in update_callbacks.borrow().iter() {
-			callback();
+		if let Err(err) = notifier.send(events::GraphicUpdate) {
+			error!("failed to notify of graphic update: {}", err);
 		}
 
 		// Recycle the old graphic and send empty buffer to renderer.
@@ -217,4 +197,6 @@ async fn process_graphic_updates(
 	}
 }
 
-struct Subscription;
+pub mod events {
+	pub struct GraphicUpdate;
+}

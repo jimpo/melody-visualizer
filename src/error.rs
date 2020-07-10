@@ -20,4 +20,5 @@ pub enum Error {
 	#[display(fmt = "failed to send control command to processing thread: {}", _0)]
 	#[from(ignore)]
 	ProcessingControlError(mpsc::SendError),
+	AsyncCallFailure,
 }

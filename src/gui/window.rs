@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use gtk::{Application, Orientation};
+use log::error;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -10,10 +11,10 @@ use crate::application::Controller;
 
 const TITLE: &str = "Melody Visualizer";
 
-pub fn start<P: IsA<Application>>(app: &P, controller: Rc<RefCell<Controller>>)
-	-> Result<(), Error>
-{
-	// We create the main window.
+pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
+	let controller = Rc::new(RefCell::new(Controller::new()?));
+
+	// Create the main window.
 	let win = gtk::ApplicationWindow::new(app);
 
 	// Then we set its size and a title.
@@ -38,6 +39,18 @@ pub fn start<P: IsA<Application>>(app: &P, controller: Rc<RefCell<Controller>>)
 
 	// Don't forget to make all widgets visible.
 	win.show_all();
+
+	win.connect_destroy(move |_| {
+		// On shutdown we want to wait for the controller to shut down background processing
+		// threads. This must be done asynchronously to avoid deadlocking.
+		let main_context = glib::MainContext::default();
+		let controller_clone = controller.clone();
+		main_context.spawn_local(async move {
+			if let Err(err) = controller_clone.borrow_mut().shutdown().await {
+				error!("error shutting down controller: {}", err);
+			}
+		});
+	});
 
 	Ok(())
 }

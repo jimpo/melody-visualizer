@@ -5,8 +5,11 @@ use log::error;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::error::Error;
+use crate::note;
 use crate::application::Controller;
+use crate::error::Error;
+use crate::note::Note;
+use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
 use jack::{PortFlags, AudioOut, PortSpec};
 
@@ -14,14 +17,23 @@ const STYLE: &[u8] = include_bytes!("control_pane.css");
 
 const PORT_NAME_COL: i32 = 0;
 
+const MIN_NOTE: Note = note!(A, 0);
+const MAX_NOTE: Note = note!(C, 8);
+
+const DEFAULT_MIN_FREQ: f64 = 200.0; // Hz
+const DEFAULT_MAX_FREQ: f64 = 2000.0; // Hz
+const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
+
 pub struct ControlPane {
-	controller: Rc<RefCell<Controller>>,
-	port_store: Rc<gtk::ListStore>,
+	app_controller: Rc<RefCell<Controller>>,
+	local_controller: Rc<RefCell<ControlPaneController>>,
 	view: gtk::Box,
 }
 
 impl ControlPane {
-	pub fn new(controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
+	pub fn new(app_controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
+		let local_controller = Rc::new(RefCell::new(ControlPaneController::new()));
+
 		let view = gtk::Box::new(Orientation::Vertical, 10);
 
 		let style_provider = gtk::CssProvider::new();
@@ -50,10 +62,10 @@ impl ControlPane {
 			};
 			source_type_box.add(&selector);
 
-			let is_active = controller.borrow().get_source_type() == Some(*source_type);
+			let is_active = app_controller.borrow().get_source_type() == Some(*source_type);
 			selector.set_active(is_active);
 
-			let controller_clone = controller.clone();
+			let controller_clone = app_controller.clone();
 			selector.connect_toggled(
 				move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
 			);
@@ -66,26 +78,24 @@ impl ControlPane {
 		source_control_inner.add(&port_view);
 
 		let selection = port_view.get_selection();
-		let controller_clone = controller.clone();
+		let controller_clone = app_controller.clone();
 		selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
 
-		let port_store = Rc::new(port_store);
+		let app_controller_clone = app_controller.clone();
+		let local_controller_clone = local_controller.clone();
+		app_controller.borrow()
+			.pubsub()
+			.subscribe(move |_: &InputsChanged| {
+				local_controller_clone.borrow()
+					.refresh_inputs(&app_controller_clone.borrow());
+			});
 
-		{
-			let controller_clone = controller.clone();
-			let port_store_clone = port_store.clone();
-			controller.borrow()
-				.pubsub()
-				.subscribe(move |_: &InputsChanged| {
-					refresh_inputs(&controller_clone.borrow(), &port_store_clone);
-				});
-		}
-
-		refresh_inputs(&controller.borrow(), &port_store);
+		local_controller.borrow()
+			.refresh_inputs(&app_controller.borrow());
 
 		Ok(ControlPane {
-			controller,
-			port_store,
+			app_controller,
+			local_controller,
 			view,
 		})
 	}
@@ -98,7 +108,6 @@ impl ControlPane {
 
 fn build_port_view() -> (gtk::ListStore, gtk::TreeView) {
 	let column_types = [Type::String];
-
 	let port_store = gtk::ListStore::new(&column_types[..]);
 
 	let renderer = gtk::CellRendererText::new();
@@ -135,42 +144,69 @@ fn on_source_type_toggled(
 	}
 }
 
-fn refresh_inputs(controller: &Controller, port_store: &gtk::ListStore) {
-	let ports = controller.jack_client()
-		.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
-		.unwrap_or_default();
+struct ControlPaneController {
+	port_store: gtk::ListStore,
+	spectrum_params: SpectrumParams,
+}
 
-	// Remove rows from ListStore.
-	if let Some(iter) = port_store.get_iter_first() {
-		loop {
-			let found = ports.contains(&get_port_name(port_store, &iter));
-			let iter_invalid = if !found {
-				port_store.remove(&iter)
-			} else {
-				port_store.iter_next(&iter)
-			};
-			if !iter_invalid {
-				break;
-			}
+impl ControlPaneController {
+	fn new() -> Self {
+		let column_types = [Type::String];
+		let port_store = gtk::ListStore::new(&column_types[..]);
+		let spectrum_params = generate_spectrum_params(
+			DEFAULT_MIN_FREQ,
+			DEFAULT_MAX_FREQ,
+			DEFAULT_SAMPLES_PER_OCTAVE
+		);
+		ControlPaneController {
+			port_store,
+			spectrum_params,
 		}
 	}
 
-	// Add rows to ListStore.
-	for new_port in ports {
-		let found = if let Some(iter) = port_store.get_iter_first() {
+	fn port_store(&self) -> &gtk::ListStore {
+		&self.port_store
+	}
+
+	fn refresh_inputs(&self, controller: &Controller) {
+		let port_store = &self.port_store;
+
+		let ports = controller.jack_client()
+			.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
+			.unwrap_or_default();
+
+		// Remove rows from ListStore.
+		if let Some(iter) = port_store.get_iter_first() {
 			loop {
-				if new_port == get_port_name(port_store, &iter) {
-					break true;
-				} else if !port_store.iter_next(&iter) {
-					break false;
+				let found = ports.contains(&get_port_name(port_store, &iter));
+				let iter_invalid = if !found {
+					port_store.remove(&iter)
+				} else {
+					port_store.iter_next(&iter)
+				};
+				if !iter_invalid {
+					break;
 				}
 			}
-		} else {
-			false
-		};
-		if !found {
-			let iter = port_store.append();
-			port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.to_value());
+		}
+
+		// Add rows to ListStore.
+		for new_port in ports {
+			let found = if let Some(iter) = port_store.get_iter_first() {
+				loop {
+					if new_port == get_port_name(port_store, &iter) {
+						break true;
+					} else if !port_store.iter_next(&iter) {
+						break false;
+					}
+				}
+			} else {
+				false
+			};
+			if !found {
+				let iter = port_store.append();
+				port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.to_value());
+			}
 		}
 	}
 }
@@ -181,4 +217,14 @@ fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
 		.expect("port names cannot be None")
+}
+
+fn generate_spectrum_params(min_freq: f64, max_freq: f64, samples_per_octave: usize)
+	-> SpectrumParams
+{
+	let octaves = max_freq.log2() - min_freq.log2();
+	let samples = (samples_per_octave as f64 * octaves).round() as usize;
+	// there must be at least two samples, one at min_freq and one at max_freq
+	let samples = samples.max(2);
+	SpectrumParams::exp_spaced(samples, min_freq, max_freq)
 }

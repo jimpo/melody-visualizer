@@ -32,12 +32,8 @@ use crate::error::Error;
 // RPC: async fn call<R>(&mut self, cmd: C) -> Result<R, Error>
 // async fn stop(&mut self) -> Result<(), Error>
 //
-// ApplicationPubSub
-//
 // glib::Sender<Box<dyn Any>>
-// Subscription: fn subscribe<S>(&mut self) -> Subscription
 //
-// TODO: Subscription interface
 //
 //
 

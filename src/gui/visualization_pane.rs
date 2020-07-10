@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::mem;
 use std::rc::Rc;
 
-use crate::application::Controller;
+use crate::application::{events::GraphicUpdate, Controller};
 use crate::error::Error;
 use crate::graphic::Graphic;
 
@@ -36,7 +36,8 @@ impl VisualizationPane {
 
 		let area_clone = area.clone();
 		controller.borrow_mut()
-			.subscribe_graphic_update(move || area_clone.queue_draw());
+			.pubsub()
+			.subscribe(move |_: &GraphicUpdate| area_clone.queue_draw());
 
 		VisualizationPane {
 			controller,

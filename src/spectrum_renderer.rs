@@ -1,7 +1,8 @@
-use futures::{prelude::*, channel::mpsc, executor, select};
+use futures::{prelude::*, channel::{mpsc, oneshot}, executor, select};
 use log::{debug, warn, error};
+use std::any::Any;
 use std::fmt::Debug;
-use std::thread::{self, JoinHandle};
+use std::thread;
 
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumBuffer};
@@ -64,13 +65,13 @@ impl SpectrumRenderer {
 
 
 #[derive(Debug)]
-enum SpectrumRendererCmd {
+pub enum SpectrumRendererCmd {
 	SetGenerator(Box<dyn SpectrumGenerator>),
 }
 
+#[derive(Clone)]
 pub struct AsyncSpectrumRenderer {
-	thread: Option<JoinHandle<()>>,
-	control_tx: mpsc::Sender<SpectrumRendererCmd>,
+	control_tx: mpsc::Sender<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 }
 
 impl AsyncSpectrumRenderer {
@@ -87,15 +88,28 @@ impl AsyncSpectrumRenderer {
 		spectrum_output: mpsc::Sender<Spectrum>,
 	) -> Result<Self, Error> {
 		let (control_tx, control_rx) = mpsc::channel(0);
-		let processing_thread = thread::Builder::new()
+		let _ = thread::Builder::new()
 			.name(name)
 			.spawn(move || {
 				executor::block_on(process_loop(control_rx, spectrum_input, spectrum_output));
 			})?;
 		Ok(AsyncSpectrumRenderer {
-			thread: Some(processing_thread),
 			control_tx,
 		})
+	}
+
+	pub async fn call<R: Any + Send>(&mut self, cmd: SpectrumRendererCmd)
+		-> Result<R, Error>
+	{
+		let (reply_tx, reply_rx) = oneshot::channel();
+		self.control_tx.send((cmd, reply_tx)).await
+			.map_err(Error::ProcessingControlError)?;
+
+		let reply_untyped = reply_rx.await
+			.map_err(|_| Error::AsyncCallFailure)?;
+		let reply = reply_untyped.downcast()
+			.map_err(|_| Error::AsyncCallFailure)?;
+		Ok(*reply)
 	}
 
 	pub async fn stop(&mut self) -> Result<(), Error> {
@@ -113,7 +127,7 @@ impl AsyncSpectrumRenderer {
 }
 
 async fn process_loop(
-	mut control_rx: mpsc::Receiver<SpectrumRendererCmd>,
+	mut control_rx: mpsc::Receiver<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 	mut spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	mut spectrum_output: mpsc::Sender<Spectrum>,
 ) {
@@ -137,16 +151,26 @@ async fn process_loop(
 	debug!("Exiting spectrum rendering thread");
 }
 
-async fn handle_cmd(renderer: &mut SpectrumRenderer, cmd: Option<SpectrumRendererCmd>)
-	-> Result<bool, SpectrumProcessingError>
+async fn handle_cmd(
+	renderer: &mut SpectrumRenderer,
+	request: Option<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
+) -> Result<bool, SpectrumProcessingError>
 {
-	debug!("spectrum rendering thread received command: {:?}", cmd);
-	match cmd {
-		Some(SpectrumRendererCmd::SetGenerator(generator)) => {
-			renderer.set_generator(generator);
-			Ok(true)
+	if let Some((cmd, reply_tx)) = request {
+		debug!("spectrum rendering thread received command: {:?}", cmd);
+		let result = match cmd {
+			SpectrumRendererCmd::SetGenerator(generator) => {
+				renderer.set_generator(generator);
+				Box::new(())
+			}
+		};
+		if let Err(err) = reply_tx.send(result) {
+			debug!("RPC response channel disconnected");
 		}
-		None => Ok(false),
+		Ok(true)
+	} else {
+		debug!("spectrum control channel disconnected, stopping spectrum processing");
+		Ok(false)
 	}
 }
 

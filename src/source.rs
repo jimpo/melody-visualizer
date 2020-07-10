@@ -1,5 +1,4 @@
-use jack::{Client, PortId, Port, Unowned};
-use glib::Sender;
+use jack::{Client, Port, Unowned};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum SourceType {
@@ -8,9 +7,10 @@ pub enum SourceType {
 }
 
 pub mod events {
-	use jack::PortId;
+	use jack::{Frames, PortId};
 
 	pub struct InputsChanged(pub PortId);
+	pub struct SampleRateChanged(pub Frames);
 }
 
 pub trait JackSource {

@@ -1,8 +1,9 @@
-use jack::{AudioIn, NotificationHandler, RingBufferWriter, ProcessHandler, ProcessScope, Control, RingBuffer, Client, Port, PortId, ClientStatus, RingBufferReader};
+use jack::{
+	AudioIn, Client, ClientStatus, Control, Frames, NotificationHandler, Port, PortId,
+	ProcessHandler, ProcessScope, RingBuffer, RingBufferWriter, RingBufferReader,
+};
 use log::error;
-use std::any::Any;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::error::Error;
 use crate::pubsub::Notifier;
@@ -57,6 +58,13 @@ impl NotificationHandler for AudioNotificationHandler {
 	// TODO: Handle shutdown gracefully
 	fn shutdown(&mut self, status: ClientStatus, reason: &str) {
 		error!("JACK client shutdown: status = {:?}, reason = {}", status, reason);
+	}
+
+	fn sample_rate(&mut self, _client: &Client, sample_rate: Frames) -> Control {
+		if let Err(err) = self.notifier.send(events::SampleRateChanged(sample_rate)) {
+			error!("failed to notify of JACK sample rate change: {}", err);
+		}
+		Control::Continue
 	}
 
 	fn port_registration(&mut self, _client: &Client, port_id: PortId, _is_registered: bool) {

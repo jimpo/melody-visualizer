@@ -1,8 +1,10 @@
 use futures::{prelude::*, channel::{mpsc, oneshot}, executor, select};
+use futures_timer::Delay;
 use log::{debug, warn, error};
 use std::any::Any;
 use std::fmt::Debug;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
@@ -13,10 +15,13 @@ enum SpectrumProcessingError {
 	SendError(mpsc::SendError),
 	#[display(fmt = "received an unexpected buffer while one is already available")]
 	ReceivedUnexpectedBuffer,
+	#[display(fmt = "skipping tick because no buffer is available")]
+	NoBuffer,
 }
 
 pub trait SpectrumGenerator: Debug + Send {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
+	fn interval(&self) -> Duration;
 }
 
 pub trait SpectrumTransform: Debug + Send {
@@ -28,7 +33,12 @@ pub struct DefaultSpectrumGenerator;
 
 impl SpectrumGenerator for DefaultSpectrumGenerator {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum {
-		Spectrum::default()
+		debug!("generating spectrum");
+		buffer.fill(|_, _| ())
+	}
+
+	fn interval(&self) -> Duration {
+		Duration::from_millis(1)
 	}
 }
 
@@ -39,6 +49,7 @@ struct SpectrumProcessor {
 	control_rx: mpsc::Receiver<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
+	next_tick_time: Instant,
 }
 
 impl SpectrumProcessor {
@@ -54,16 +65,21 @@ impl SpectrumProcessor {
 			control_rx,
 			spectrum_input,
 			spectrum_output,
+			next_tick_time: Instant::now(),
 		}
 	}
 
 	async fn process_loop(&mut self) {
 		debug!("Starting spectrum rendering thread");
+		self.next_tick_time = Instant::now() + self.generator.interval();
+
 		loop {
+			let tick_delay = self.next_tick_time.saturating_duration_since(Instant::now());
 			let result = select! {
 				cmd = self.control_rx.next() => self.handle_cmd(cmd).await,
 				new_buffer = self.spectrum_input.next() =>
 					self.handle_new_buffer(new_buffer).await,
+				_ = Delay::new(tick_delay).fuse() => self.handle_tick().await,
 			};
 			match result {
 				Ok(true) => {},
@@ -106,24 +122,29 @@ impl SpectrumProcessor {
 			} else {
 				self.current_buffer = Some(new_buffer);
 			}
-			// TODO: make this happen on a timer tick.
-			if let Some(buffer) = self.current_buffer.take() {
-				let spectrum = self.render(buffer)?;
-				if let Err(err) = self.spectrum_output.send(spectrum).await {
-					return if err.is_disconnected() {
-						debug!("spectrum output channel disconnected, stopping spectrum processing");
-						Ok(false)
-					} else {
-						Err(err.into())
-					};
-				}
-			} else {
-				warn!("Spectrum renderer ticked and no buffer is available");
-			}
 			Ok(true)
 		} else {
 			debug!("spectrum input channel closed, stopping spectrum processing");
 			Ok(false)
+		}
+	}
+
+	async fn handle_tick(&mut self) -> Result<bool, SpectrumProcessingError> {
+		self.next_tick_time += self.generator.interval();
+
+		if let Some(buffer) = self.current_buffer.take() {
+			let spectrum = self.render(buffer)?;
+			if let Err(err) = self.spectrum_output.send(spectrum).await {
+				return if err.is_disconnected() {
+					debug!("spectrum output channel disconnected, stopping spectrum processing");
+					Ok(false)
+				} else {
+					Err(err.into())
+				};
+			}
+			Ok(true)
+		} else {
+			Err(SpectrumProcessingError::NoBuffer)
 		}
 	}
 

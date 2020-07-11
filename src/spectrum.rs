@@ -1,9 +1,34 @@
-#[derive(Clone, Default)]
+use std::sync::Arc;
+
+#[derive(Clone)]
 pub struct SpectrumBuffer {
-	params: SpectrumParams,
+	params: Arc<SpectrumParams>,
+	data: Vec<f64>,
 }
 
 impl SpectrumBuffer {
+	pub fn new(params: Arc<SpectrumParams>) -> Self {
+		let data = vec![0.0; params.samples()];
+		SpectrumBuffer {
+			params,
+			data,
+		}
+	}
+
+	pub fn fill(mut self, f: impl Fn(&mut [f64], &SpectrumParams)) -> Spectrum {
+		f(&mut self.data, &*self.params);
+		Spectrum { buffer: self }
+	}
+
+	pub fn params(&self) -> &Arc<SpectrumParams> {
+		&self.params
+	}
+}
+
+impl Default for SpectrumBuffer {
+	fn default() -> Self {
+		Self::new(Arc::new(SpectrumParams::default()))
+	}
 }
 
 #[derive(Clone, Default)]
@@ -14,6 +39,10 @@ pub struct Spectrum {
 impl Spectrum {
 	pub fn into_buffer(self) -> SpectrumBuffer {
 		self.buffer
+	}
+
+	pub fn params(&self) -> &Arc<SpectrumParams> {
+		self.buffer.params()
 	}
 }
 

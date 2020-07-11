@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use crate::async_processor::AsyncProcessor;
 use crate::graphic::{Graphic, GraphicBuffer};
@@ -82,6 +83,7 @@ struct GraphicRenderer {
 	generator: Box<dyn GraphicGenerator>,
 	spectrum_history: VecDeque<Spectrum>,
 	interval: Duration,
+	spectrum_params: Arc<SpectrumParams>,
 }
 
 impl GraphicRenderer {
@@ -90,6 +92,7 @@ impl GraphicRenderer {
 			generator: Box::new(DefaultGraphicGenerator),
 			spectrum_history: VecDeque::new(),
 			interval: Duration::from_millis(40),
+			spectrum_params: Arc::new(SpectrumParams::default()),
 		}
 	}
 
@@ -98,12 +101,27 @@ impl GraphicRenderer {
 	}
 
 	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
-		self.spectrum_history.truncate(self.generator.history_len());
-		let buffer = self.spectrum_history.pop_back()
-			.map(Spectrum::into_buffer)
-			.unwrap_or_else(SpectrumBuffer::default);
-		self.spectrum_history.push_front(spectrum);
-		buffer
+		let max_history_len = self.generator.history_len();
+		self.spectrum_history.truncate(max_history_len);
+		if Arc::ptr_eq(spectrum.params(), &self.spectrum_params) {
+			self.spectrum_history.push_front(spectrum);
+		}
+		if self.spectrum_history.len() > max_history_len {
+			self.spectrum_history.pop_back()
+				.expect("spectrum_history len is greater than 0")
+				.into_buffer()
+		} else {
+			self.new_spectrum_buffer()
+		}
+	}
+
+	fn new_spectrum_buffer(&self) -> SpectrumBuffer {
+		SpectrumBuffer::new(self.spectrum_params.clone())
+	}
+
+	fn set_spectrum_params(&mut self, params: SpectrumParams) {
+		self.spectrum_params = Arc::new(params);
+		self.spectrum_history.clear();
 	}
 
 	fn frame_interval(&self) -> Duration {
@@ -193,6 +211,19 @@ impl GraphicProcessor {
 		debug!("Starting graphic rendering thread");
 		self.current_buffer = Some(GraphicBuffer::default());
 		self.next_tick_time = Instant::now();
+
+		// Kick off the spectrum generation loop.
+		match self.send_spectrum_buffer(self.renderer.new_spectrum_buffer()).await {
+			Ok(true) => {},
+			_ => {
+				error!(
+					"failed to send initial spectrum buffer to processing thread, \
+					exiting graphic rendering thread"
+				);
+				return;
+			}
+		}
+
 		loop {
 			let tick_delay = self.next_tick_time.saturating_duration_since(Instant::now());
 			let result = select! {
@@ -218,7 +249,12 @@ impl GraphicProcessor {
 	{
 		if let Some((cmd, reply_tx)) = request {
 			debug!("graphic rendering thread received command: {:?}", cmd);
-			let result = Box::new(());
+			let result = match cmd {
+				GraphicRendererCmd::SetSpectrumParams(params) => {
+					self.renderer.set_spectrum_params(params);
+					Box::new(())
+				}
+			};
 			if let Err(err) = reply_tx.send(result) {
 				debug!("RPC response channel disconnected");
 			}
@@ -234,19 +270,25 @@ impl GraphicProcessor {
 	{
 		if let Some(spectrum) = spectrum {
 			let buffer = self.renderer.update_spectrum(spectrum);
-			if let Err(err) = self.spectrum_output.send(buffer).await {
-				return if err.is_disconnected() {
-					debug!("spectrum output channel disconnected, stopping graphic processing");
-					Ok(false)
-				} else {
-					Err(err.into())
-				};
-			}
-			Ok(true)
+			self.send_spectrum_buffer(buffer).await
 		} else {
 			debug!("spectrum input channel closed, stopping graphic processing");
 			Ok(false)
 		}
+	}
+
+	async fn send_spectrum_buffer(&mut self, buffer: SpectrumBuffer)
+		-> Result<bool, GraphicProcessingError>
+	{
+		if let Err(err) = self.spectrum_output.send(buffer).await {
+			return if err.is_disconnected() {
+				debug!("spectrum output channel disconnected, stopping graphic processing");
+				Ok(false)
+			} else {
+				Err(err.into())
+			};
+		}
+		Ok(true)
 	}
 
 	async fn handle_new_buffer(&mut self, new_buffer: Option<GraphicBuffer>)

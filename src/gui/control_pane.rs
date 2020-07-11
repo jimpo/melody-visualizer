@@ -73,7 +73,7 @@ impl ControlPane {
 			radio_button_group = Some(selector)
 		}
 
-		let (port_store, port_view) = build_port_view();
+		let port_view = build_port_view(&local_controller.borrow().port_store());
 		port_view.show();
 		source_control_inner.add(&port_view);
 
@@ -93,6 +93,21 @@ impl ControlPane {
 		local_controller.borrow()
 			.refresh_inputs(&app_controller.borrow());
 
+		let min_freq_scale = gtk::ScaleBuilder::new()
+			.adjustment(&gtk::Adjustment::new(
+				5.0,
+				0.0,
+				(MAX_NOTE - MIN_NOTE + 1) as f64,
+				1.0,
+				0.0,
+				0.0
+			))
+			.draw_value(false)
+			.show_fill_level(false)
+			.build();
+
+		view.add(&min_freq_scale);
+
 		Ok(ControlPane {
 			app_controller,
 			local_controller,
@@ -106,20 +121,16 @@ impl ControlPane {
 	}
 }
 
-fn build_port_view() -> (gtk::ListStore, gtk::TreeView) {
-	let column_types = [Type::String];
-	let port_store = gtk::ListStore::new(&column_types[..]);
-
+fn build_port_view(port_store: &gtk::ListStore) -> gtk::TreeView {
 	let renderer = gtk::CellRendererText::new();
 	let column = gtk::TreeViewColumn::new();
 	column.pack_start(&renderer, true);
 	column.set_title("Port");
 	column.add_attribute(&renderer, "text", PORT_NAME_COL);
 
-	let port_view = gtk::TreeView::with_model(&port_store);
+	let port_view = gtk::TreeView::with_model(port_store);
 	port_view.append_column(&column);
-
-	(port_store, port_view)
+	port_view
 }
 
 fn on_port_selected(controller: &RefCell<Controller>, selection: &TreeSelection) {

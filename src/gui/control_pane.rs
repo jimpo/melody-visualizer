@@ -1,7 +1,7 @@
 use glib::Type;
 use gtk::{Orientation, TreeSelection, TreeIter};
 use gtk::prelude::*;
-use log::error;
+use log::{debug, error};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,6 +14,7 @@ use crate::source::{events::InputsChanged, SourceType};
 use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
+const UI_DEF: &str = include_str!("control_pane.ui");
 
 const PORT_NAME_COL: i32 = 0;
 
@@ -32,6 +33,76 @@ pub struct ControlPane {
 
 impl ControlPane {
 	pub fn new(app_controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
+		let local_controller = Rc::new(RefCell::new(ControlPaneController::new()));
+
+		let builder = gtk::Builder::from_string(UI_DEF);
+		let view: gtk::Box = builder.get_object("control_pane").unwrap();
+		let source_type_selection: gtk::Box = builder.get_object("source_type_selection").unwrap();
+		let port_view: gtk::TreeView = builder.get_object("port_list").unwrap();
+		let min_freq_scale: gtk::Scale = builder.get_object("min_freq_scale").unwrap();
+		let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
+
+		// Style the control pane.
+		let style_provider = gtk::CssProvider::new();
+		style_provider.load_from_data(STYLE)
+			.map_err(Error::Glib)?;
+
+		// Populate source selection radio buttons.
+		for selector in build_source_type_selectors(&app_controller) {
+			source_type_selection.add(&selector);
+		}
+
+		port_view.set_model(Some(local_controller.borrow().port_store()));
+
+		min_freq_scale.set_adjustment(&gtk::Adjustment::new(
+			MIN_NOTE.log_frequency(),
+			MIN_NOTE.log_frequency(),
+			MAX_NOTE.log_frequency(),
+			1.0 / 12.0,
+			0.0,
+			0.0
+		));
+		max_freq_scale.set_adjustment(&gtk::Adjustment::new(
+			MIN_NOTE.log_frequency(),
+			MIN_NOTE.log_frequency(),
+			MAX_NOTE.log_frequency(),
+			1.0 / 12.0,
+			0.0,
+			0.0
+		));
+
+		{
+			let controller = local_controller.borrow();
+			min_freq_scale.set_value(controller.min_log_freq);
+			max_freq_scale.set_value(controller.max_log_freq);
+		}
+
+		let selection = port_view.get_selection();
+		let controller_clone = app_controller.clone();
+		selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
+
+		// Refresh port list when JACK inputs change.
+		let app_controller_clone = app_controller.clone();
+		let local_controller_clone = local_controller.clone();
+		app_controller.borrow()
+			.pubsub()
+			.subscribe(move |_: &InputsChanged| {
+				local_controller_clone.borrow()
+					.refresh_inputs(&app_controller_clone.borrow());
+			});
+
+		// Populate the initial port list.
+		local_controller.borrow()
+			.refresh_inputs(&app_controller.borrow());
+
+		Ok(ControlPane {
+			app_controller,
+			local_controller,
+			view,
+		})
+	}
+
+	pub fn new_old(app_controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
 		let local_controller = Rc::new(RefCell::new(ControlPaneController::new()));
 
 		let view = gtk::Box::new(Orientation::Vertical, 10);
@@ -53,24 +124,8 @@ impl ControlPane {
 		let source_type_box = gtk::Box::new(Orientation::Horizontal, 0);
 		source_control_inner.add(&source_type_box);
 
-		let mut radio_button_group = None;
-		for source_type in [SourceType::Audio, SourceType::MIDI].iter() {
-			let selector = if let Some(ref widget) = radio_button_group {
-				gtk::RadioButton::with_label_from_widget(widget, &source_type.to_string())
-			} else {
-				gtk::RadioButton::with_label(&source_type.to_string())
-			};
+		for selector in build_source_type_selectors(&app_controller) {
 			source_type_box.add(&selector);
-
-			let is_active = app_controller.borrow().get_source_type() == Some(*source_type);
-			selector.set_active(is_active);
-
-			let controller_clone = app_controller.clone();
-			selector.connect_toggled(
-				move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
-			);
-
-			radio_button_group = Some(selector)
 		}
 
 		let port_view = build_port_view(&local_controller.borrow().port_store());
@@ -157,21 +212,20 @@ fn on_source_type_toggled(
 
 struct ControlPaneController {
 	port_store: gtk::ListStore,
-	spectrum_params: SpectrumParams,
+	min_log_freq: f64,
+	max_log_freq: f64,
+	samples_per_octave: usize,
 }
 
 impl ControlPaneController {
 	fn new() -> Self {
 		let column_types = [Type::String];
 		let port_store = gtk::ListStore::new(&column_types[..]);
-		let spectrum_params = generate_spectrum_params(
-			DEFAULT_MIN_FREQ,
-			DEFAULT_MAX_FREQ,
-			DEFAULT_SAMPLES_PER_OCTAVE
-		);
 		ControlPaneController {
 			port_store,
-			spectrum_params,
+			min_log_freq: DEFAULT_MIN_FREQ.log2(),
+			max_log_freq: DEFAULT_MAX_FREQ.log2(),
+			samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
 		}
 	}
 
@@ -238,4 +292,27 @@ fn generate_spectrum_params(min_freq: f64, max_freq: f64, samples_per_octave: us
 	// there must be at least two samples, one at min_freq and one at max_freq
 	let samples = samples.max(2);
 	SpectrumParams::exp_spaced(samples, min_freq, max_freq)
+}
+
+fn build_source_type_selectors(controller: &Rc<RefCell<Controller>>) -> Vec<gtk::RadioButton> {
+	let active_source_type = controller.borrow().get_source_type();
+
+	let mut selectors = Vec::new();
+	for source_type in [SourceType::Audio, SourceType::MIDI].iter() {
+		let selector = if let Some(widget) = selectors.get(0) {
+			gtk::RadioButton::with_label_from_widget(widget, &source_type.to_string())
+		} else {
+			gtk::RadioButton::with_label(&source_type.to_string())
+		};
+
+		selector.set_active(active_source_type == Some(*source_type));
+
+		let controller_clone = controller.clone();
+		selector.connect_toggled(
+			move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
+		);
+
+		selectors.push(selector);
+	}
+	selectors
 }

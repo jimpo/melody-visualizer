@@ -37,10 +37,14 @@ macro_rules! note {
 
 impl Note {
 	pub fn frequency(&self) -> f64 {
+		self.log_frequency().exp2()
+	}
+
+	pub fn log_frequency(&self) -> f64 {
 		const A4: Note = note!(A, 4);
 		let x = (*self - A4) as f64;
 		let y = x / 12.0;
-		440.0 * ((*self - A4) as f64 / 12.0).exp2()
+		440.0f64.log2() + (*self - A4) as f64 / 12.0
 	}
 
 	fn to_half_step_count(&self) -> isize {

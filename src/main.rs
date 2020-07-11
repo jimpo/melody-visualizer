@@ -1,4 +1,5 @@
 mod application;
+mod async_processor;
 mod audio;
 mod audio_spectrum_generator;
 mod error;

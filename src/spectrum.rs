@@ -17,7 +17,7 @@ impl Spectrum {
 	}
 }
 
-#[derive(Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SpectrumParams {
 	frequencies: Vec<f64>,
 	log_frequencies: Vec<f64>,

@@ -6,12 +6,13 @@ use std::rc::Rc;
 
 use crate::audio::AudioSourceController;
 use crate::audio_spectrum_generator::AudioSpectrumGenerator;
+use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer};
-use crate::graphic_renderer::AsyncGraphicRenderer;
+use crate::graphic_renderer::{self, GraphicRendererCmd};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
-use crate::spectrum_renderer::{AsyncSpectrumRenderer, SpectrumRendererCmd};
+use crate::spectrum_renderer::{self, SpectrumRendererCmd};
 use glib::MainContext;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
@@ -22,8 +23,8 @@ pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	pubsub: PubSub,
 	graphic: Rc<RefCell<Graphic>>,
-	graphic_renderer: AsyncGraphicRenderer,
-	spectrum_renderer: AsyncSpectrumRenderer,
+	graphic_renderer: AsyncProcessor<GraphicRendererCmd>,
+	spectrum_renderer: AsyncProcessor<SpectrumRendererCmd>,
 }
 
 impl Controller {
@@ -52,7 +53,7 @@ impl Controller {
 		let (graphic_spectrum_tx, graphic_spectrum_rx) = mpsc::channel(0);
 
 		// Start the graphic rendering background thread.
-		let graphic_renderer = AsyncGraphicRenderer::new(
+		let graphic_renderer = graphic_renderer::start(
 			main_graphic_rx,
 			graphic_main_tx,
 			spectrum_graphic_rx,
@@ -60,7 +61,7 @@ impl Controller {
 		)?;
 
 		// Start the spectrum rendering background thread.
-		let spectrum_renderer = AsyncSpectrumRenderer::new(
+		let spectrum_renderer = spectrum_renderer::start(
 			graphic_spectrum_rx,
 			spectrum_graphic_tx,
 		)?;

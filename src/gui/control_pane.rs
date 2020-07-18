@@ -1,6 +1,6 @@
+use futures::prelude::*;
 use glib::Type;
-use gtk::{Orientation, TreeSelection, TreeIter};
-use gtk::prelude::*;
+use gtk::{prelude::*, Orientation, TreeSelection, TreeIter};
 use log::{debug, error};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -77,6 +77,16 @@ impl ControlPane {
 			0.0
 		));
 
+		let controller_clone = local_controller.clone();
+		min_freq_scale.connect_change_value(
+			move |_scale, _, value| on_min_freq_change(&controller_clone, value)
+		);
+
+		let controller_clone = local_controller.clone();
+		max_freq_scale.connect_change_value(
+			move |_scale, _, value| on_max_freq_change(&controller_clone, value)
+		);
+
 		{
 			let controller = local_controller.borrow();
 			min_freq_scale.set_value(controller.min_log_freq);
@@ -148,6 +158,42 @@ fn on_source_type_toggled(
 	}
 }
 
+fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+	let mut controller = controller_ref.borrow_mut();
+	if value > controller.max_log_freq {
+		return Inhibit(true);
+	}
+
+	controller.min_log_freq = value;
+	let async_update = controller.update_spectrum_params();
+
+	let main_context = glib::MainContext::default();
+	main_context.spawn_local(async move {
+		// TODO: Handle errors better
+		async_update.await.unwrap();
+	});
+
+	Inhibit(false)
+}
+
+fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+	let mut controller = controller_ref.borrow_mut();
+	if value < controller.min_log_freq {
+		return Inhibit(true);
+	}
+
+	controller.max_log_freq = value;
+	let async_update = controller.update_spectrum_params();
+
+	let main_context = glib::MainContext::default();
+	main_context.spawn_local(async move {
+		// TODO: Handle errors better
+		async_update.await.unwrap();
+	});
+
+	Inhibit(false)
+}
+
 struct ControlPaneController {
 	port_store: gtk::ListStore,
 	min_log_freq: f64,
@@ -164,7 +210,7 @@ impl ControlPaneController {
 		let app_controller = app_controller.borrow();
 		let graphic_renderer = app_controller.graphic_renderer().clone();
 
-		let controller = Rc::new(RefCell::new(ControlPaneController {
+		let controller_ref = Rc::new(RefCell::new(ControlPaneController {
 			port_store,
 			min_log_freq: DEFAULT_MIN_FREQ.log2(),
 			max_log_freq: DEFAULT_MAX_FREQ.log2(),
@@ -172,33 +218,38 @@ impl ControlPaneController {
 			graphic_renderer,
 		}));
 
-		let main_context = glib::MainContext::default();
+		{
+			let mut controller = controller_ref.borrow_mut();
+			let async_params_update = controller.update_spectrum_params();
+			let async_generator_update = controller.update_graphic_generator();
 
-		let controller_clone = controller.clone();
-		main_context.spawn_local(async move {
-			let mut controller = controller_clone.borrow_mut();
-			// TODO: Handle errors better
-			controller.update_spectrum_params().await.unwrap();
-			controller.update_graphic_generator().await.unwrap();
-		});
+			let main_context = glib::MainContext::default();
+			main_context.spawn_local(async move {
+				// TODO: Handle errors better
+				async_params_update.await.unwrap();
+				async_generator_update.await.unwrap();
+			});
+		}
 
-		controller
+		controller_ref
 	}
 
-	async fn update_spectrum_params(&mut self) -> Result<(), Error> {
+	fn update_spectrum_params(&mut self) -> impl Future<Output=Result<(), Error>> {
 		let spectrum_params = self.build_spectrum_params();
-		self.graphic_renderer.call::<()>(GraphicRendererCmd::SetSpectrumParams(spectrum_params))
-			.await
+		self.graphic_renderer.call_cloned::<()>(
+			GraphicRendererCmd::SetSpectrumParams(spectrum_params)
+		)
 	}
 
-	async fn update_graphic_generator(&mut self) -> Result<(), Error> {
+	fn update_graphic_generator(&mut self) -> impl Future<Output=Result<(), Error>> {
 		let spiral = SpiralGenerator::new(
 			DEFAULT_SPIRAL_OUTER_PAD,
 			DEFAULT_SPIRAL_INNER_PAD,
 			DEFAULT_SPIRAL_KEY
 		);
-		self.graphic_renderer.call::<()>(GraphicRendererCmd::SetGenerator(Box::new(spiral)))
-			.await
+		self.graphic_renderer.call_cloned::<()>(
+			GraphicRendererCmd::SetGenerator(Box::new(spiral))
+		)
 	}
 
 	fn port_store(&self) -> &gtk::ListStore {

@@ -26,6 +26,11 @@ impl<Cmd: Send> AsyncProcessor<Cmd> {
 		Ok(*reply)
 	}
 
+	pub fn call_cloned<R: Any + Send>(&self, cmd: Cmd) -> impl Future<Output=Result<R, Error>> {
+		let mut self_clone = self.clone();
+		async move { self_clone.call(cmd).await }
+	}
+
 	pub async fn stop(&mut self) -> Result<(), Error> {
 		if let Err(err) = self.control_tx.close().await {
 			if !err.is_disconnected() {

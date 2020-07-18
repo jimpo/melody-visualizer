@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -46,7 +47,7 @@ impl Spectrum {
 	}
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct SpectrumParams {
 	frequencies: Vec<f64>,
 	log_frequencies: Vec<f64>,
@@ -102,5 +103,15 @@ impl SpectrumParams {
 
 	pub fn max_log_freq(&self) -> Option<f64> {
 		self.log_frequencies.last().cloned()
+	}
+}
+
+impl fmt::Debug for SpectrumParams {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_struct("SpectrumParams")
+			.field("min_freq", &self.min_freq())
+			.field("max_freq", &self.max_freq())
+			.field("samples", &self.samples())
+			.finish()
 	}
 }

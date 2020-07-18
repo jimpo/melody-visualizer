@@ -87,4 +87,20 @@ impl SpectrumParams {
 	pub fn log_frequencies(&self) -> &[f64] {
 		&self.log_frequencies
 	}
+
+	pub fn min_freq(&self) -> Option<f64> {
+		self.frequencies.first().cloned()
+	}
+
+	pub fn max_freq(&self) -> Option<f64> {
+		self.frequencies.last().cloned()
+	}
+
+	pub fn min_log_freq(&self) -> Option<f64> {
+		self.log_frequencies.first().cloned()
+	}
+
+	pub fn max_log_freq(&self) -> Option<f64> {
+		self.log_frequencies.last().cloned()
+	}
 }

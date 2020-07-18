@@ -1,4 +1,5 @@
 use futures::{prelude::*, channel::mpsc};
+use glib::MainContext;
 use log::{debug, error};
 use std::cell::{RefCell, RefMut};
 use std::mem;
@@ -13,7 +14,6 @@ use crate::graphic_renderer::{self, GraphicRendererCmd};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
 use crate::spectrum_renderer::{self, SpectrumRendererCmd};
-use glib::MainContext;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 const DEFAULT_DFT_WINDOW_SIZE: jack::Frames = 2048;
@@ -96,6 +96,10 @@ impl Controller {
 
 	pub fn get_source_type(&self) -> Option<SourceType> {
 		self.source.as_ref().map(|source| source.source_type())
+	}
+
+	pub fn graphic_renderer(&self) -> &AsyncProcessor<GraphicRendererCmd> {
+		&self.graphic_renderer
 	}
 
 	pub fn set_source_type(&mut self, source_type: SourceType) -> Result<(), Error> {

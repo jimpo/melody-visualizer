@@ -5,12 +5,15 @@ use log::{debug, error};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::note;
+use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::application::Controller;
+use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
-use crate::note::Note;
+use crate::graphic_renderer::GraphicRendererCmd;
+use crate::note::{Note, PitchClass};
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
+use crate::spiral::SpiralGenerator;
 use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
@@ -24,6 +27,9 @@ const MAX_NOTE: Note = note!(C, 8);
 const DEFAULT_MIN_FREQ: f64 = 200.0; // Hz
 const DEFAULT_MAX_FREQ: f64 = 2000.0; // Hz
 const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
+const DEFAULT_SPIRAL_KEY: PitchClass = PitchClass::C;
+const DEFAULT_SPIRAL_OUTER_PAD: f64 = 20.0;
+const DEFAULT_SPIRAL_INNER_PAD: f64 = 50.0;
 
 pub struct ControlPane {
 	app_controller: Rc<RefCell<Controller>>,
@@ -33,7 +39,7 @@ pub struct ControlPane {
 
 impl ControlPane {
 	pub fn new(app_controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
-		let local_controller = Rc::new(RefCell::new(ControlPaneController::new()));
+		let local_controller = ControlPaneController::new(app_controller.clone());
 
 		let builder = gtk::Builder::from_string(UI_DEF);
 		let view: gtk::Box = builder.get_object("control_pane").unwrap();
@@ -102,74 +108,6 @@ impl ControlPane {
 		})
 	}
 
-	pub fn new_old(app_controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
-		let local_controller = Rc::new(RefCell::new(ControlPaneController::new()));
-
-		let view = gtk::Box::new(Orientation::Vertical, 10);
-
-		let style_provider = gtk::CssProvider::new();
-		style_provider.load_from_data(STYLE)
-			.map_err(Error::Glib)?;
-
-		let style_ctx = view.get_style_context();
-		style_ctx.add_provider(&style_provider, 1);
-		style_ctx.add_class("control-pane");
-
-		let source_control = gtk::Frame::new(Some("Input Source"));
-		view.add(&source_control);
-
-		let source_control_inner = gtk::Box::new(Orientation::Vertical, 10);
-		source_control.add(&source_control_inner);
-
-		let source_type_box = gtk::Box::new(Orientation::Horizontal, 0);
-		source_control_inner.add(&source_type_box);
-
-		for selector in build_source_type_selectors(&app_controller) {
-			source_type_box.add(&selector);
-		}
-
-		let port_view = build_port_view(&local_controller.borrow().port_store());
-		port_view.show();
-		source_control_inner.add(&port_view);
-
-		let selection = port_view.get_selection();
-		let controller_clone = app_controller.clone();
-		selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
-
-		let app_controller_clone = app_controller.clone();
-		let local_controller_clone = local_controller.clone();
-		app_controller.borrow()
-			.pubsub()
-			.subscribe(move |_: &InputsChanged| {
-				local_controller_clone.borrow()
-					.refresh_inputs(&app_controller_clone.borrow());
-			});
-
-		local_controller.borrow()
-			.refresh_inputs(&app_controller.borrow());
-
-		let min_freq_scale = gtk::ScaleBuilder::new()
-			.adjustment(&gtk::Adjustment::new(
-				5.0,
-				0.0,
-				(MAX_NOTE - MIN_NOTE + 1) as f64,
-				1.0,
-				0.0,
-				0.0
-			))
-			.draw_value(false)
-			.show_fill_level(false)
-			.build();
-
-		view.add(&min_freq_scale);
-
-		Ok(ControlPane {
-			app_controller,
-			local_controller,
-			view,
-		})
-	}
-
 	// TODO: Make this Deref<Target = gtk::Box>
 	pub fn widget(&self) -> &gtk::Box {
 		&self.view
@@ -215,18 +153,52 @@ struct ControlPaneController {
 	min_log_freq: f64,
 	max_log_freq: f64,
 	samples_per_octave: usize,
+	graphic_renderer: AsyncProcessor<GraphicRendererCmd>,
 }
 
 impl ControlPaneController {
-	fn new() -> Self {
+	fn new(app_controller: Rc<RefCell<Controller>>) -> Rc<RefCell<Self>> {
 		let column_types = [Type::String];
 		let port_store = gtk::ListStore::new(&column_types[..]);
-		ControlPaneController {
+
+		let app_controller = app_controller.borrow();
+		let graphic_renderer = app_controller.graphic_renderer().clone();
+
+		let controller = Rc::new(RefCell::new(ControlPaneController {
 			port_store,
 			min_log_freq: DEFAULT_MIN_FREQ.log2(),
 			max_log_freq: DEFAULT_MAX_FREQ.log2(),
 			samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
-		}
+			graphic_renderer,
+		}));
+
+		let main_context = glib::MainContext::default();
+
+		let controller_clone = controller.clone();
+		main_context.spawn_local(async move {
+			let mut controller = controller_clone.borrow_mut();
+			// TODO: Handle errors better
+			controller.update_spectrum_params().await.unwrap();
+			controller.update_graphic_generator().await.unwrap();
+		});
+
+		controller
+	}
+
+	async fn update_spectrum_params(&mut self) -> Result<(), Error> {
+		let spectrum_params = self.build_spectrum_params();
+		self.graphic_renderer.call::<()>(GraphicRendererCmd::SetSpectrumParams(spectrum_params))
+			.await
+	}
+
+	async fn update_graphic_generator(&mut self) -> Result<(), Error> {
+		let spiral = SpiralGenerator::new(
+			DEFAULT_SPIRAL_OUTER_PAD,
+			DEFAULT_SPIRAL_INNER_PAD,
+			DEFAULT_SPIRAL_KEY
+		);
+		self.graphic_renderer.call::<()>(GraphicRendererCmd::SetGenerator(Box::new(spiral)))
+			.await
 	}
 
 	fn port_store(&self) -> &gtk::ListStore {
@@ -274,6 +246,14 @@ impl ControlPaneController {
 			}
 		}
 	}
+
+	fn build_spectrum_params(&self) -> SpectrumParams {
+		let octaves = self.max_log_freq - self.min_log_freq;
+		let samples = (self.samples_per_octave as f64 * octaves).round() as usize;
+		// there must be at least two samples, one at min_freq and one at max_freq
+		let samples = samples.max(2);
+		SpectrumParams::exp_spaced(samples, self.min_log_freq.exp2(), self.max_log_freq.exp2())
+	}
 }
 
 fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
@@ -282,16 +262,6 @@ fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
 		.expect("port names cannot be None")
-}
-
-fn generate_spectrum_params(min_freq: f64, max_freq: f64, samples_per_octave: usize)
-	-> SpectrumParams
-{
-	let octaves = max_freq.log2() - min_freq.log2();
-	let samples = (samples_per_octave as f64 * octaves).round() as usize;
-	// there must be at least two samples, one at min_freq and one at max_freq
-	let samples = samples.max(2);
-	SpectrumParams::exp_spaced(samples, min_freq, max_freq)
 }
 
 fn build_source_type_selectors(controller: &Rc<RefCell<Controller>>) -> Vec<gtk::RadioButton> {

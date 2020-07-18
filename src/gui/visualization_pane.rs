@@ -21,23 +21,24 @@ impl VisualizationPane {
 	pub fn new(controller: Rc<RefCell<Controller>>) -> Self {
 		let area = Rc::new(gtk::DrawingArea::new());
 
-		// let state_clone = state.clone();
-		// area.connect_size_allocate(
-		// 	move |area, alloc| on_size_allocate(&mut state_clone.borrow_mut(), area, alloc)
-		// );
+		let area_clone = area.clone();
+		let graphic_update_subscription = controller.borrow_mut()
+			.pubsub()
+			.subscribe(move |_: &GraphicUpdate| {
+				area_clone.queue_draw();
+			});
 
 		let controller_clone = controller.clone();
 		area.connect_draw(move |area, ctx| {
+			// Though this is a nop, it forces the closure to take ownership of the graphic update
+			// subscription, so that the subscription is live as long as the area is drawable.
+			let _ = &graphic_update_subscription;
+
 			if let Err(err) = on_draw(&mut controller_clone.borrow_mut(), area, ctx) {
 				error!("error drawing to visualization pane: {}", err);
 			}
 			Inhibit(false)
 		});
-
-		let area_clone = area.clone();
-		controller.borrow_mut()
-			.pubsub()
-			.subscribe(move |_: &GraphicUpdate| area_clone.queue_draw());
 
 		VisualizationPane {
 			controller,
@@ -64,8 +65,7 @@ fn on_draw(state: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context
 
 	graphic.with_image_surface(|surface| {
 		ctx.set_source_surface(surface, 0f64, 0f64);
-		ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
-		ctx.fill();
+		ctx.paint();
 
 		// Change the source, releasing the context's reference to the surface.
 		ctx.set_source_rgb(0.0, 0.0, 0.0);

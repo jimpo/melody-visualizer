@@ -51,8 +51,13 @@ enum GraphicProcessingError {
 }
 
 pub trait GraphicGenerator: Debug + Send {
-	fn generate(&mut self, buffer: GraphicBuffer, spectrum_history: &VecDeque<Spectrum>)
-		-> Result<Graphic, Error>;
+	fn generate(
+		&mut self,
+		buffer: GraphicBuffer,
+		params: &Arc<SpectrumParams>,
+		spectrum_history: &VecDeque<Spectrum>,
+	) -> Result<Graphic, Error>;
+
 	fn history_len(&self) -> usize;
 }
 
@@ -60,8 +65,12 @@ pub trait GraphicGenerator: Debug + Send {
 pub struct DefaultGraphicGenerator;
 
 impl GraphicGenerator for DefaultGraphicGenerator {
-	fn generate(&mut self, buffer: GraphicBuffer, _spectrum_history: &VecDeque<Spectrum>)
-		-> Result<Graphic, Error>
+	fn generate(
+		&mut self,
+		buffer: GraphicBuffer,
+		_params: &Arc<SpectrumParams>,
+		_spectrum_history: &VecDeque<Spectrum>
+	) -> Result<Graphic, Error>
 	{
 		let x_max = buffer.width();
 		let y_max = buffer.height();
@@ -97,7 +106,7 @@ impl GraphicRenderer {
 	}
 
 	fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
-		self.generator.generate(buffer, &self.spectrum_history)
+		self.generator.generate(buffer, &self.spectrum_params, &self.spectrum_history)
 	}
 
 	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
@@ -119,6 +128,10 @@ impl GraphicRenderer {
 		SpectrumBuffer::new(self.spectrum_params.clone())
 	}
 
+	fn set_generator(&mut self, generator: Box<dyn GraphicGenerator>) {
+		self.generator = generator;
+	}
+
 	fn set_spectrum_params(&mut self, params: SpectrumParams) {
 		self.spectrum_params = Arc::new(params);
 		self.spectrum_history.clear();
@@ -135,6 +148,7 @@ impl GraphicRenderer {
 
 #[derive(Debug)]
 pub enum GraphicRendererCmd {
+	SetGenerator(Box<dyn GraphicGenerator>),
 	SetSpectrumParams(SpectrumParams),
 }
 
@@ -250,6 +264,10 @@ impl GraphicProcessor {
 		if let Some((cmd, reply_tx)) = request {
 			debug!("graphic rendering thread received command: {:?}", cmd);
 			let result = match cmd {
+				GraphicRendererCmd::SetGenerator(generator) => {
+					self.renderer.set_generator(generator);
+					Box::new(())
+				}
 				GraphicRendererCmd::SetSpectrumParams(params) => {
 					self.renderer.set_spectrum_params(params);
 					Box::new(())

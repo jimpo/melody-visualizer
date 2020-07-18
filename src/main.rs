@@ -11,6 +11,7 @@ mod pubsub;
 mod source;
 mod spectrum;
 mod spectrum_renderer;
+mod spiral;
 
 use gio::prelude::*;
 

@@ -42,8 +42,6 @@ impl Note {
 
 	pub fn log_frequency(&self) -> f64 {
 		const A4: Note = note!(A, 4);
-		let x = (*self - A4) as f64;
-		let y = x / 12.0;
 		440.0f64.log2() + (*self - A4) as f64 / 12.0
 	}
 

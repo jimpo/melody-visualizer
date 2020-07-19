@@ -1,7 +1,7 @@
 use futures::{prelude::*, channel::{mpsc, oneshot}, executor, select};
 use futures_timer::Delay;
 use log::{debug, error};
-use std::any::Any;
+use std::any::{Any, type_name};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::thread;
@@ -59,6 +59,8 @@ pub trait GraphicGenerator: Debug + Send {
 	) -> Result<Graphic, Error>;
 
 	fn history_len(&self) -> usize;
+
+	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send>;
 }
 
 #[derive(Debug)]
@@ -85,6 +87,10 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 
 	fn history_len(&self) -> usize {
 		1
+	}
+
+	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+		Box::new(Error::InvalidCommand { expected_type_name: type_name::<()>() })
 	}
 }
 
@@ -150,6 +156,7 @@ impl GraphicRenderer {
 pub enum GraphicRendererCmd {
 	SetGenerator(Box<dyn GraphicGenerator>),
 	SetSpectrumParams(SpectrumParams),
+	CallGenerator(Box<dyn Any + Send>),
 }
 
 pub fn start(
@@ -272,6 +279,8 @@ impl GraphicProcessor {
 					self.renderer.set_spectrum_params(params);
 					Box::new(())
 				}
+				GraphicRendererCmd::CallGenerator(sub_cmd) =>
+					self.renderer.generator.call_cmd(sub_cmd),
 			};
 			if let Err(err) = reply_tx.send(result) {
 				debug!("RPC response channel disconnected");

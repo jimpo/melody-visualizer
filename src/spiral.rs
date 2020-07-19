@@ -1,5 +1,6 @@
 use cairo::{Mesh, MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3}};
 use palette::{encoding::Srgb, IntoColor, Hsv, RgbHue};
+use std::any::{Any, type_name};
 use std::cmp;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
@@ -15,11 +16,16 @@ use crate::spectrum::{Spectrum, SpectrumParams};
 pub struct SpiralGenerator {
 	x_max: i32,
 	y_max: i32,
-	outer_pad: f64,
-	center_pad: f64,
-	key: PitchClass,
+	config: Config,
 	params: Arc<SpectrumParams>,
 	edges: Vec<SegmentEdge>,
+}
+
+#[derive(Debug)]
+pub struct Config {
+	pub outer_pad: f64,
+	pub center_pad: f64,
+	pub key_log_freq: f64,
 }
 
 #[derive(Debug)]
@@ -35,24 +41,18 @@ struct SegmentEdge {
 }
 
 impl SpiralGenerator {
-	pub fn new(outer_pad: f64, center_pad: f64, key: PitchClass) -> Self {
+	pub fn new(config: Config) -> Self {
 		SpiralGenerator {
 			x_max: 0,
 			y_max: 0,
-			outer_pad,
-			center_pad,
-			key,
+			config,
 			params: Arc::new(SpectrumParams::default()),
 			edges: Vec::new(),
 		}
 	}
 
-	fn regenerate(&mut self, params: &Arc<SpectrumParams>, x_max: i32, y_max: i32) {
-		self.x_max = x_max;
-		self.y_max = y_max;
-		self.params = params.clone();
-
-		if params.log_frequencies().is_empty() {
+	fn regenerate(&mut self) {
+		if self.params.log_frequencies().is_empty() {
 			self.edges.clear();
 			return;
 		}
@@ -61,20 +61,20 @@ impl SpiralGenerator {
 			.expect("params.log_frequencies() is not empty");
 		let max_log_freq = self.params.max_log_freq()
 			.expect("params.log_frequencies() is not empty");
-		let key_log_freq = Note { octave: 0, pitch_class: self.key }.log_frequency();
 
 		self.edges.clear();
-		self.edges.reserve(params.log_frequencies().len());
+		self.edges.reserve(self.params.log_frequencies().len());
 
-		let r_min = self.center_pad;
-		let r_max = (cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.outer_pad).max(r_min);
+		let r_min = self.config.center_pad;
+		let r_max = (cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.config.outer_pad)
+			.max(r_min);
 		let r_scale = (r_max - r_min) / (max_log_freq - min_log_freq);
 		let x_origin = self.x_max as f64 / 2.0;
 		let y_origin = self.y_max as f64 / 2.0;
 
-		for log_freq in params.log_frequencies().iter().cloned() {
+		for log_freq in self.params.log_frequencies().iter().cloned() {
 			// Compute the fraction of an octave away from the key frequency on a log scale.
-			let log_freq_delta = log_freq - key_log_freq;
+			let log_freq_delta = log_freq - self.config.key_log_freq;
 			let log_freq_delta_norm = log_freq_delta - log_freq_delta.floor();
 
 			let r = r_min + r_scale * (log_freq - min_log_freq);
@@ -86,14 +86,26 @@ impl SpiralGenerator {
 			self.edges.push(SegmentEdge {
 				hue: RgbHue::from_radians(theta),
 				saturation: 0.80,
-				x_inner:  x_origin + sin_theta * (r - thickness),
-				y_inner:  y_origin - cos_theta * (r - thickness),
+				x_inner: x_origin + sin_theta * (r - thickness),
+				y_inner: y_origin - cos_theta * (r - thickness),
 				x_center: x_origin + sin_theta * r,
 				y_center: y_origin - cos_theta * r,
-				x_outer:  x_origin + sin_theta * (r + thickness),
-				y_outer:  y_origin - cos_theta * (r + thickness),
+				x_outer: x_origin + sin_theta * (r + thickness),
+				y_outer: y_origin - cos_theta * (r + thickness),
 			});
 		}
+	}
+
+	fn handle_cmd(&mut self, req: Box<dyn Any + Send>) -> Result<(), Error> {
+		let cmd: SpiralCmd = *req.downcast()
+			.map_err(|_| Error::InvalidCommand { expected_type_name: type_name::<()>() })?;
+		match cmd {
+			SpiralCmd::SetConfig(config) => {
+				self.config = config;
+				self.regenerate();
+			}
+		}
+		Ok(())
 	}
 }
 
@@ -109,7 +121,10 @@ impl GraphicGenerator for SpiralGenerator {
 		let y_max = buffer.height();
 
 		if !(Arc::ptr_eq(&self.params, params) && x_max == self.x_max && y_max == self.y_max) {
-			self.regenerate(params, x_max, y_max);
+			self.x_max = x_max;
+			self.y_max = y_max;
+			self.params = params.clone();
+			self.regenerate();
 		}
 
 		buffer.draw(|ctx| {
@@ -166,4 +181,12 @@ impl GraphicGenerator for SpiralGenerator {
 	fn history_len(&self) -> usize {
 		1
 	}
+
+	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
+		Box::new(self.handle_cmd(req))
+	}
+}
+
+pub enum SpiralCmd {
+	SetConfig(Config),
 }

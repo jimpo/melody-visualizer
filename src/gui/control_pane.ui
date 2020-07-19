@@ -56,6 +56,11 @@
 								<property name="draw-value">False</property>
 							</object>
 						</child>
+						<child>
+                        	<object class="GtkScale" id="key_freq_scale">
+                        		<property name="draw-value">False</property>
+                        	</object>
+                        </child>
 					</object>
 				</child>
 			</object>

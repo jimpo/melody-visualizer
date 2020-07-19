@@ -13,7 +13,7 @@ use crate::graphic_renderer::GraphicRendererCmd;
 use crate::note::{Note, PitchClass};
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
-use crate::spiral::SpiralGenerator;
+use crate::spiral::{self, SpiralGenerator};
 use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
@@ -27,7 +27,7 @@ const MAX_NOTE: Note = note!(C, 8);
 const DEFAULT_MIN_FREQ: f64 = 200.0; // Hz
 const DEFAULT_MAX_FREQ: f64 = 2000.0; // Hz
 const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
-const DEFAULT_SPIRAL_KEY: PitchClass = PitchClass::C;
+const DEFAULT_SPIRAL_KEY_FREQ: f64 = 263.74; // C
 const DEFAULT_SPIRAL_OUTER_PAD: f64 = 20.0;
 const DEFAULT_SPIRAL_INNER_PAD: f64 = 50.0;
 
@@ -47,6 +47,7 @@ impl ControlPane {
 		let port_view: gtk::TreeView = builder.get_object("port_list").unwrap();
 		let min_freq_scale: gtk::Scale = builder.get_object("min_freq_scale").unwrap();
 		let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
+		let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
 
 		// Style the control pane.
 		let style_provider = gtk::CssProvider::new();
@@ -76,6 +77,14 @@ impl ControlPane {
 			0.0,
 			0.0
 		));
+		key_freq_scale.set_adjustment(&gtk::Adjustment::new(
+			note!(C, 3).log_frequency(),
+			note!(C, 3).log_frequency(),
+			note!(C, 4).log_frequency(),
+			1.0 / 12.0,
+			0.0,
+			0.0
+		));
 
 		let controller_clone = local_controller.clone();
 		min_freq_scale.connect_change_value(
@@ -87,10 +96,16 @@ impl ControlPane {
 			move |_scale, _, value| on_max_freq_change(&controller_clone, value)
 		);
 
+		let controller_clone = local_controller.clone();
+		key_freq_scale.connect_change_value(
+			move |_scale, _, value| on_key_freq_change(&controller_clone, value)
+		);
+
 		{
 			let controller = local_controller.borrow();
 			min_freq_scale.set_value(controller.min_log_freq);
 			max_freq_scale.set_value(controller.max_log_freq);
+			key_freq_scale.set_value(controller.key_log_freq);
 		}
 
 		let selection = port_view.get_selection();
@@ -194,10 +209,27 @@ fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value
 	Inhibit(false)
 }
 
+
+fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+	let mut controller = controller_ref.borrow_mut();
+
+	controller.key_log_freq = value;
+	let async_update = controller.update_spiral_config();
+
+	let main_context = glib::MainContext::default();
+	main_context.spawn_local(async move {
+		// TODO: Handle errors better
+		async_update.await.unwrap();
+	});
+
+	Inhibit(false)
+}
+
 struct ControlPaneController {
 	port_store: gtk::ListStore,
 	min_log_freq: f64,
 	max_log_freq: f64,
+	key_log_freq: f64,
 	samples_per_octave: usize,
 	graphic_renderer: AsyncProcessor<GraphicRendererCmd>,
 }
@@ -214,39 +246,50 @@ impl ControlPaneController {
 			port_store,
 			min_log_freq: DEFAULT_MIN_FREQ.log2(),
 			max_log_freq: DEFAULT_MAX_FREQ.log2(),
+			key_log_freq: DEFAULT_SPIRAL_KEY_FREQ.log2(),
 			samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
 			graphic_renderer,
 		}));
 
 		{
 			let mut controller = controller_ref.borrow_mut();
-			let async_params_update = controller.update_spectrum_params();
+			let async_spectrum_params_update = controller.update_spectrum_params();
 			let async_generator_update = controller.update_graphic_generator();
+			let async_spiral_config_update = controller.update_spectrum_params();
 
 			let main_context = glib::MainContext::default();
 			main_context.spawn_local(async move {
 				// TODO: Handle errors better
-				async_params_update.await.unwrap();
+				async_spectrum_params_update.await.unwrap();
 				async_generator_update.await.unwrap();
+				async_spiral_config_update.await.unwrap();
 			});
 		}
 
 		controller_ref
 	}
 
-	fn update_spectrum_params(&mut self) -> impl Future<Output=Result<(), Error>> {
+	// TODO: Move this to an architecture overview or something.
+	//
+	// We have to be very careful about RefCells in async code. So borrowing a controller from a
+	// RefCell then yielding with await is a big problem.
+	fn update_spectrum_params(&self) -> impl Future<Output=Result<(), Error>> {
 		let spectrum_params = self.build_spectrum_params();
 		self.graphic_renderer.call_cloned::<()>(
 			GraphicRendererCmd::SetSpectrumParams(spectrum_params)
 		)
 	}
 
-	fn update_graphic_generator(&mut self) -> impl Future<Output=Result<(), Error>> {
-		let spiral = SpiralGenerator::new(
-			DEFAULT_SPIRAL_OUTER_PAD,
-			DEFAULT_SPIRAL_INNER_PAD,
-			DEFAULT_SPIRAL_KEY
-		);
+	fn update_spiral_config(&self) -> impl Future<Output=Result<(), Error>> {
+		let config = self.build_spiral_config();
+		self.graphic_renderer.call_cloned::<Result<(), Error>>(
+			GraphicRendererCmd::CallGenerator(Box::new(spiral::SpiralCmd::SetConfig(config)))
+		)
+			.map(|result| result.unwrap())
+	}
+
+	fn update_graphic_generator(&self) -> impl Future<Output=Result<(), Error>> {
+		let spiral = SpiralGenerator::new(self.build_spiral_config());
 		self.graphic_renderer.call_cloned::<()>(
 			GraphicRendererCmd::SetGenerator(Box::new(spiral))
 		)
@@ -304,6 +347,14 @@ impl ControlPaneController {
 		// there must be at least two samples, one at min_freq and one at max_freq
 		let samples = samples.max(2);
 		SpectrumParams::exp_spaced(samples, self.min_log_freq.exp2(), self.max_log_freq.exp2())
+	}
+
+	fn build_spiral_config(&self) -> spiral::Config {
+		spiral::Config {
+			outer_pad: DEFAULT_SPIRAL_OUTER_PAD,
+			center_pad: DEFAULT_SPIRAL_INNER_PAD,
+			key_log_freq: self.key_log_freq
+		}
 	}
 }
 

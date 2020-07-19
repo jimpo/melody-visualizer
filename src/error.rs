@@ -1,4 +1,5 @@
 use futures::channel::mpsc;
+use std::any::TypeId;
 use std::io;
 
 #[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
@@ -21,4 +22,7 @@ pub enum Error {
 	#[from(ignore)]
 	ProcessingControlError(mpsc::SendError),
 	AsyncCallFailure,
+	#[display(fmt = "invalid async command, expected type {}", expected_type_name)]
+	#[from(ignore)]
+	InvalidCommand { expected_type_name: &'static str },
 }

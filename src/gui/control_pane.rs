@@ -1,6 +1,7 @@
 use futures::prelude::*;
 use glib::Type;
 use gtk::{prelude::*, TreeSelection, TreeIter};
+use jack::{PortFlags, AudioOut, PortSpec};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,7 +14,6 @@ use crate::note::Note;
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
 use crate::spiral::{self, SpiralGenerator};
-use jack::{PortFlags, AudioOut, PortSpec};
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
 const UI_DEF: &str = include_str!("control_pane.ui");
@@ -274,24 +274,27 @@ impl ControlPaneController {
 	// RefCell then yielding with await is a big problem.
 	fn update_spectrum_params(&self) -> impl Future<Output=Result<(), Error>> {
 		let spectrum_params = self.build_spectrum_params();
-		self.graphic_renderer.call_cloned::<()>(
-			GraphicRendererCmd::SetSpectrumParams(spectrum_params)
-		)
+		self.graphic_renderer.exec_cloned(move |renderer| {
+			renderer.set_spectrum_params(spectrum_params);
+		})
 	}
 
 	fn update_spiral_config(&self) -> impl Future<Output=Result<(), Error>> {
 		let config = self.build_spiral_config();
-		self.graphic_renderer.call_cloned::<Result<(), Error>>(
-			GraphicRendererCmd::CallGenerator(Box::new(spiral::SpiralCmd::SetConfig(config)))
-		)
-			.map(|result| result.unwrap())
+		self.graphic_renderer.exec_cloned(move |renderer| {
+			let spiral: &mut SpiralGenerator = renderer.generator_mut()
+				.upcast_any_mut()
+				.downcast_mut()
+				.expect("update_spiral_config called when generator is not a SpiralGenerator");
+			spiral.set_config(config);
+		})
 	}
 
 	fn update_graphic_generator(&self) -> impl Future<Output=Result<(), Error>> {
-		let spiral = SpiralGenerator::new(self.build_spiral_config());
-		self.graphic_renderer.call_cloned::<()>(
-			GraphicRendererCmd::SetGenerator(Box::new(spiral))
-		)
+		let generator = Box::new(SpiralGenerator::new(self.build_spiral_config()));
+		self.graphic_renderer.exec_cloned(move |renderer| {
+			renderer.set_generator(generator);
+		})
 	}
 
 	fn port_store(&self) -> &gtk::ListStore {

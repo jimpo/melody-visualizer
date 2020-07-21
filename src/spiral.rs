@@ -99,12 +99,14 @@ impl SpiralGenerator {
 		let cmd: SpiralCmd = *req.downcast()
 			.map_err(|_| Error::InvalidCommand { expected_type_name: type_name::<()>() })?;
 		match cmd {
-			SpiralCmd::SetConfig(config) => {
-				self.config = config;
-				self.regenerate();
-			}
+			SpiralCmd::SetConfig(config) => self.set_config(config),
 		}
 		Ok(())
+	}
+
+	pub fn set_config(&mut self, config: Config) {
+		self.config = config;
+		self.regenerate();
 	}
 }
 
@@ -183,6 +185,14 @@ impl GraphicGenerator for SpiralGenerator {
 
 	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
 		Box::new(self.handle_cmd(req))
+	}
+
+	fn upcast_any_ref(&self) -> &dyn Any {
+		self
+	}
+
+	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+		self
 	}
 }
 

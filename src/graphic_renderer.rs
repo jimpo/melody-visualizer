@@ -61,6 +61,9 @@ pub trait GraphicGenerator: Debug + Send {
 	fn history_len(&self) -> usize;
 
 	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send>;
+
+	fn upcast_any_ref(&self) -> &dyn Any;
+	fn upcast_any_mut(&mut self) -> &mut dyn Any;
 }
 
 #[derive(Debug)]
@@ -91,6 +94,14 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 
 	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
 		Box::new(Error::InvalidCommand { expected_type_name: type_name::<()>() })
+	}
+
+	fn upcast_any_ref(&self) -> &dyn Any {
+		self
+	}
+
+	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+		self
 	}
 }
 

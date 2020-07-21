@@ -130,8 +130,11 @@ impl Controller {
 
 		let mut spectrum_renderer = self.spectrum_renderer.clone();
 		MainContext::default().spawn_local(async move {
-			let _  = spectrum_renderer.call::<()>(SpectrumRendererCmd::SetGenerator(new_generator))
+			let result = spectrum_renderer
+				.exec(move |renderer| renderer.set_generator(new_generator))
 				.await;
+			// TODO: Error handling.
+			result.unwrap();
 		});
 
 		Ok(())

@@ -1,7 +1,6 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
 use futures_timer::Delay;
 use log::{debug, error};
-use std::any::Any;
 use std::fmt::Debug;
 use std::thread;
 use std::time::{Duration, Instant};

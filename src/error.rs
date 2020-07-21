@@ -1,5 +1,6 @@
-use futures::channel::mpsc;
 use std::io;
+
+use crate::async_processor::CommunicationError;
 
 #[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
 pub enum Error {
@@ -17,10 +18,8 @@ pub enum Error {
 	#[display(fmt = "failed to spawn a new thread: {}", _0)]
 	ThreadSpawnFailure(io::Error),
 	GraphicDrawClonesSurface,
-	#[display(fmt = "failed to send control command to processing thread: {}", _0)]
-	#[from(ignore)]
-	ProcessingControlError(mpsc::SendError),
-	AsyncCallFailure,
+	#[display(fmt = "communication error with background processor: {}", _0)]
+	Communication(CommunicationError),
 	#[display(fmt = "invalid async command, expected type {}", expected_type_name)]
 	#[from(ignore)]
 	InvalidCommand { expected_type_name: &'static str },

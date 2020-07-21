@@ -18,8 +18,6 @@ use crate::spectrum_renderer::{self, SpectrumRenderer};
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 const DEFAULT_DFT_WINDOW_SIZE: jack::Frames = 2048;
 
-// TODO: Wait for rendering threads on Drop.
-
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	pubsub: PubSub,

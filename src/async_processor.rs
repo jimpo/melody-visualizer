@@ -1,7 +1,13 @@
 use futures::{prelude::*, channel::{mpsc, oneshot}};
 use std::any::Any;
 
-use crate::error::Error;
+#[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
+pub enum CommunicationError {
+	#[display(fmt = "failed to send message to processor: {}", _0)]
+	DeliveryFailure(mpsc::SendError),
+	#[display(fmt = "processor failed to send response")]
+	ResponseFailure,
+}
 
 pub struct AsyncProcessor<T: ?Sized> {
 	exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>,
@@ -14,7 +20,7 @@ impl<T: ?Sized> AsyncProcessor<T> {
 		}
 	}
 
-	pub async fn exec<R, F>(&mut self, f: F) -> Result<R, Error>
+	pub async fn exec<R, F>(&mut self, f: F) -> Result<R, CommunicationError>
 		where
 			R: Any + Send,
 			F: FnOnce(&mut T) -> R + Send + 'static,
@@ -26,14 +32,13 @@ impl<T: ?Sized> AsyncProcessor<T> {
 				// Error indicates that the exec caller dropped the returned Future. Ignore this.
 				let _ = response_tx.send(result);
 			}))
-			.await
-			.map_err(Error::ProcessingControlError)?;
+			.await?;
 
 		response_rx.await
-			.map_err(|_| Error::AsyncCallFailure)
+			.map_err(|_| CommunicationError::ResponseFailure)
 	}
 
-	pub fn exec_cloned<R, F>(&self, f: F) -> impl Future<Output=Result<R, Error>>
+	pub fn exec_cloned<R, F>(&self, f: F) -> impl Future<Output=Result<R, CommunicationError>>
 		where
 			R: Any + Send,
 			F: FnOnce(&mut T) -> R + Send + 'static,
@@ -42,10 +47,10 @@ impl<T: ?Sized> AsyncProcessor<T> {
 		async move { self_clone.exec(f).await }
 	}
 
-	pub async fn stop(&mut self) -> Result<(), Error> {
+	pub async fn stop(&mut self) -> Result<(), CommunicationError> {
 		if let Err(err) = self.exec_tx.close().await {
 			if !err.is_disconnected() {
-				return Err(Error::ProcessingControlError(err));
+				return Err(err.into());
 			}
 		}
 		Ok(())

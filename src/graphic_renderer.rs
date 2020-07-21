@@ -1,7 +1,7 @@
-use futures::{prelude::*, channel::{mpsc, oneshot}, executor, select};
+use futures::{prelude::*, channel::mpsc, executor, select};
 use futures_timer::Delay;
 use log::{debug, error};
-use std::any::{Any, type_name};
+use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::thread;
@@ -60,8 +60,6 @@ pub trait GraphicGenerator: Debug + Send {
 
 	fn history_len(&self) -> usize;
 
-	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send>;
-
 	fn upcast_any_ref(&self) -> &dyn Any;
 	fn upcast_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -90,10 +88,6 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 
 	fn history_len(&self) -> usize {
 		1
-	}
-
-	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-		Box::new(Error::InvalidCommand { expected_type_name: type_name::<()>() })
 	}
 
 	fn upcast_any_ref(&self) -> &dyn Any {
@@ -175,19 +169,12 @@ impl GraphicRenderer {
 	}
 }
 
-#[derive(Debug)]
-pub enum GraphicRendererCmd {
-	SetGenerator(Box<dyn GraphicGenerator>),
-	SetSpectrumParams(SpectrumParams),
-	CallGenerator(Box<dyn Any + Send>),
-}
-
 pub fn start(
 	graphic_input: mpsc::Receiver<GraphicBuffer>,
 	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
-) -> Result<AsyncProcessor<GraphicRendererCmd, GraphicRenderer>, Error>
+) -> Result<AsyncProcessor<GraphicRenderer>, Error>
 {
 	start_with_thread_name(
 		"GraphicProcessor".into(),
@@ -204,13 +191,11 @@ pub fn start_with_thread_name(
 	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
-) -> Result<AsyncProcessor<GraphicRendererCmd, GraphicRenderer>, Error>
+) -> Result<AsyncProcessor<GraphicRenderer>, Error>
 {
-	let (control_tx, control_rx) = mpsc::channel(0);
 	let (exec_tx, exec_rx) = mpsc::channel(0);
 	let mut processor = GraphicProcessor::new(
 		exec_rx,
-		control_rx,
 		graphic_input,
 		graphic_output,
 		spectrum_input,
@@ -219,11 +204,11 @@ pub fn start_with_thread_name(
 	let _ = thread::Builder::new()
 		.name(name)
 		.spawn(move || executor::block_on(processor.process_loop()))?;
-	Ok(AsyncProcessor::new(control_tx, exec_tx))
+	Ok(AsyncProcessor::new(exec_tx))
 }
 
 struct GraphicProcessor {
-	control_rx: mpsc::Receiver<(GraphicRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
+	exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
 	graphic_input: mpsc::Receiver<GraphicBuffer>,
 	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
@@ -236,14 +221,13 @@ struct GraphicProcessor {
 impl GraphicProcessor {
 	fn new(
 		exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
-		control_rx: mpsc::Receiver<(GraphicRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 		graphic_input: mpsc::Receiver<GraphicBuffer>,
 		graphic_output: mpsc::Sender<Graphic>,
 		spectrum_input: mpsc::Receiver<Spectrum>,
 		spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	) -> Self {
 		GraphicProcessor {
-			control_rx,
+			exec_rx,
 			graphic_input,
 			graphic_output,
 			spectrum_input,
@@ -274,7 +258,7 @@ impl GraphicProcessor {
 		loop {
 			let tick_delay = self.next_tick_time.saturating_duration_since(Instant::now());
 			let result = select! {
-				cmd = self.control_rx.next() => self.handle_cmd(cmd).await,
+				exec = self.exec_rx.next() => self.handle_exec(exec),
 				new_buffer = self.graphic_input.next() => self.handle_new_buffer(new_buffer).await,
 				new_spectrum = self.spectrum_input.next() =>
 					self.handle_new_spectrum(new_spectrum).await,
@@ -289,28 +273,11 @@ impl GraphicProcessor {
 		debug!("Exiting graphic rendering thread");
 	}
 
-	async fn handle_cmd(
-		&mut self,
-		request: Option<(GraphicRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
-	) -> Result<bool, GraphicProcessingError>
+	fn handle_exec(&mut self, exec: Option<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>)
+		-> Result<bool, GraphicProcessingError>
 	{
-		if let Some((cmd, reply_tx)) = request {
-			debug!("graphic rendering thread received command: {:?}", cmd);
-			let result = match cmd {
-				GraphicRendererCmd::SetGenerator(generator) => {
-					self.renderer.set_generator(generator);
-					Box::new(())
-				}
-				GraphicRendererCmd::SetSpectrumParams(params) => {
-					self.renderer.set_spectrum_params(params);
-					Box::new(())
-				}
-				GraphicRendererCmd::CallGenerator(sub_cmd) =>
-					self.renderer.generator.call_cmd(sub_cmd),
-			};
-			if let Err(err) = reply_tx.send(result) {
-				debug!("RPC response channel disconnected");
-			}
+		if let Some(exec) = exec {
+			exec(&mut self.renderer);
 			Ok(true)
 		} else {
 			debug!("graphic control channel disconnected, stopping graphic processing");

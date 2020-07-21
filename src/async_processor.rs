@@ -3,18 +3,13 @@ use std::any::Any;
 
 use crate::error::Error;
 
-pub struct AsyncProcessor<Cmd: Send, T: ?Sized> {
-	control_tx: mpsc::Sender<(Cmd, oneshot::Sender<Box<dyn Any + Send>>)>,
+pub struct AsyncProcessor<T: ?Sized> {
 	exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>,
 }
 
-impl<Cmd: Send, T: ?Sized> AsyncProcessor<Cmd, T> {
-	pub fn new(
-		control_tx: mpsc::Sender<(Cmd, oneshot::Sender<Box<dyn Any + Send>>)>,
-		exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>,
-	) -> Self {
+impl<T: ?Sized> AsyncProcessor<T> {
+	pub fn new(exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>) -> Self {
 		AsyncProcessor {
-			control_tx,
 			exec_tx,
 		}
 	}
@@ -48,7 +43,7 @@ impl<Cmd: Send, T: ?Sized> AsyncProcessor<Cmd, T> {
 	}
 
 	pub async fn stop(&mut self) -> Result<(), Error> {
-		if let Err(err) = self.control_tx.close().await {
+		if let Err(err) = self.exec_tx.close().await {
 			if !err.is_disconnected() {
 				return Err(Error::ProcessingControlError(err));
 			}
@@ -57,10 +52,9 @@ impl<Cmd: Send, T: ?Sized> AsyncProcessor<Cmd, T> {
 	}
 }
 
-impl<Cmd: Send, T: ?Sized> Clone for AsyncProcessor<Cmd, T> {
+impl<T: ?Sized> Clone for AsyncProcessor<T> {
 	fn clone(&self) -> Self {
 		AsyncProcessor {
-			control_tx: self.control_tx.clone(),
 			exec_tx: self.exec_tx.clone(),
 		}
 	}

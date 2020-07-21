@@ -1,4 +1,4 @@
-use futures::{prelude::*, channel::{mpsc, oneshot}, executor, select};
+use futures::{prelude::*, channel::mpsc, executor, select};
 use futures_timer::Delay;
 use log::{debug, error};
 use std::any::Any;
@@ -72,7 +72,6 @@ struct SpectrumProcessor {
 	renderer: SpectrumRenderer,
 	current_buffer: Option<SpectrumBuffer>,
 	exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>,
-	control_rx: mpsc::Receiver<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
 	next_tick_time: Instant,
@@ -81,7 +80,6 @@ struct SpectrumProcessor {
 impl SpectrumProcessor {
 	fn new(
 		exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>,
-		control_rx: mpsc::Receiver<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 		spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 		spectrum_output: mpsc::Sender<Spectrum>,
 	) -> Self {
@@ -89,7 +87,6 @@ impl SpectrumProcessor {
 			renderer: SpectrumRenderer::new(),
 			current_buffer: None,
 			exec_rx,
-			control_rx,
 			spectrum_input,
 			spectrum_output,
 			next_tick_time: Instant::now(),
@@ -103,7 +100,7 @@ impl SpectrumProcessor {
 		loop {
 			let tick_delay = self.next_tick_time.saturating_duration_since(Instant::now());
 			let result = select! {
-				cmd = self.control_rx.next() => self.handle_cmd(cmd).await,
+				exec = self.exec_rx.next() => self.handle_exec(exec),
 				new_buffer = self.spectrum_input.next() =>
 					self.handle_new_buffer(new_buffer).await,
 				_ = Delay::new(tick_delay).fuse() => self.handle_tick().await,
@@ -117,22 +114,11 @@ impl SpectrumProcessor {
 		debug!("Exiting spectrum rendering thread");
 	}
 
-	async fn handle_cmd(
-		&mut self,
-		request: Option<(SpectrumRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>
-	) -> Result<bool, SpectrumProcessingError>
+	fn handle_exec(&mut self, exec: Option<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>)
+		-> Result<bool, SpectrumProcessingError>
 	{
-		if let Some((cmd, reply_tx)) = request {
-			debug!("spectrum rendering thread received command: {:?}", cmd);
-			let result = match cmd {
-				SpectrumRendererCmd::SetGenerator(generator) => {
-					self.renderer.set_generator(generator);
-					Box::new(())
-				}
-			};
-			if let Err(err) = reply_tx.send(result) {
-				debug!("RPC response channel disconnected");
-			}
+		if let Some(exec) = exec {
+			exec(&mut self.renderer);
 			Ok(true)
 		} else {
 			debug!("spectrum control channel disconnected, stopping spectrum processing");
@@ -183,15 +169,10 @@ impl SpectrumProcessor {
 	}
 }
 
-#[derive(Debug)]
-pub enum SpectrumRendererCmd {
-	SetGenerator(Box<dyn SpectrumGenerator>),
-}
-
 pub fn start(
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
-) -> Result<AsyncProcessor<SpectrumRendererCmd, SpectrumRenderer>, Error>
+) -> Result<AsyncProcessor<SpectrumRenderer>, Error>
 {
 	start_with_thread_name("SpectrumProcessor".into(), spectrum_input, spectrum_output)
 }
@@ -200,13 +181,12 @@ pub fn start_with_thread_name(
 	name: String,
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
-) -> Result<AsyncProcessor<SpectrumRendererCmd, SpectrumRenderer>, Error>
+) -> Result<AsyncProcessor<SpectrumRenderer>, Error>
 {
-	let (control_tx, control_rx) = mpsc::channel(0);
 	let (exec_tx, exec_rx) = mpsc::channel(0);
-	let mut processor = SpectrumProcessor::new(exec_rx, control_rx, spectrum_input, spectrum_output);
+	let mut processor = SpectrumProcessor::new(exec_rx, spectrum_input, spectrum_output);
 	let _ = thread::Builder::new()
 		.name(name)
 		.spawn(move || executor::block_on(processor.process_loop()))?;
-	Ok(AsyncProcessor::new(control_tx, exec_tx))
+	Ok(AsyncProcessor::new(exec_tx))
 }

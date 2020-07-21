@@ -9,7 +9,7 @@ use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::application::Controller;
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
-use crate::graphic_renderer::{GraphicRendererCmd, GraphicRenderer};
+use crate::graphic_renderer::GraphicRenderer;
 use crate::note::Note;
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
@@ -230,7 +230,7 @@ struct ControlPaneController {
 	max_log_freq: f64,
 	key_log_freq: f64,
 	samples_per_octave: usize,
-	graphic_renderer: AsyncProcessor<GraphicRendererCmd, GraphicRenderer>,
+	graphic_renderer: AsyncProcessor<GraphicRenderer>,
 }
 
 impl ControlPaneController {

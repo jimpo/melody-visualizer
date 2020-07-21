@@ -1,6 +1,6 @@
 use cairo::{Mesh, MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3}};
 use palette::{encoding::Srgb, IntoColor, Hsv, RgbHue};
-use std::any::{Any, type_name};
+use std::any::Any;
 use std::cmp;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
@@ -95,15 +95,6 @@ impl SpiralGenerator {
 		}
 	}
 
-	fn handle_cmd(&mut self, req: Box<dyn Any + Send>) -> Result<(), Error> {
-		let cmd: SpiralCmd = *req.downcast()
-			.map_err(|_| Error::InvalidCommand { expected_type_name: type_name::<()>() })?;
-		match cmd {
-			SpiralCmd::SetConfig(config) => self.set_config(config),
-		}
-		Ok(())
-	}
-
 	pub fn set_config(&mut self, config: Config) {
 		self.config = config;
 		self.regenerate();
@@ -183,10 +174,6 @@ impl GraphicGenerator for SpiralGenerator {
 		1
 	}
 
-	fn call_cmd(&mut self, req: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
-		Box::new(self.handle_cmd(req))
-	}
-
 	fn upcast_any_ref(&self) -> &dyn Any {
 		self
 	}
@@ -194,8 +181,4 @@ impl GraphicGenerator for SpiralGenerator {
 	fn upcast_any_mut(&mut self) -> &mut dyn Any {
 		self
 	}
-}
-
-pub enum SpiralCmd {
-	SetConfig(Config),
 }

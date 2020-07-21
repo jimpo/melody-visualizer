@@ -10,10 +10,10 @@ use crate::audio_spectrum_generator::AudioSpectrumGenerator;
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer};
-use crate::graphic_renderer::{self, GraphicRendererCmd};
+use crate::graphic_renderer::{self, GraphicRendererCmd, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
-use crate::spectrum_renderer::{self, SpectrumRendererCmd};
+use crate::spectrum_renderer::{self, SpectrumRendererCmd, SpectrumRenderer};
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 const DEFAULT_DFT_WINDOW_SIZE: jack::Frames = 2048;
@@ -24,8 +24,8 @@ pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	pubsub: PubSub,
 	graphic: Rc<RefCell<Graphic>>,
-	graphic_renderer: AsyncProcessor<GraphicRendererCmd>,
-	spectrum_renderer: AsyncProcessor<SpectrumRendererCmd>,
+	graphic_renderer: AsyncProcessor<GraphicRendererCmd, GraphicRenderer>,
+	spectrum_renderer: AsyncProcessor<SpectrumRendererCmd, SpectrumRenderer>,
 }
 
 impl Controller {
@@ -98,7 +98,7 @@ impl Controller {
 		self.source.as_ref().map(|source| source.source_type())
 	}
 
-	pub fn graphic_renderer(&self) -> &AsyncProcessor<GraphicRendererCmd> {
+	pub fn graphic_renderer(&self) -> &AsyncProcessor<GraphicRendererCmd, GraphicRenderer> {
 		&self.graphic_renderer
 	}
 

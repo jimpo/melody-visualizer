@@ -94,7 +94,7 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 	}
 }
 
-struct GraphicRenderer {
+pub struct GraphicRenderer {
 	generator: Box<dyn GraphicGenerator>,
 	spectrum_history: VecDeque<Spectrum>,
 	interval: Duration,
@@ -109,10 +109,6 @@ impl GraphicRenderer {
 			interval: Duration::from_millis(40),
 			spectrum_params: Arc::new(SpectrumParams::default()),
 		}
-	}
-
-	fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
-		self.generator.generate(buffer, &self.spectrum_params, &self.spectrum_history)
 	}
 
 	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
@@ -134,21 +130,37 @@ impl GraphicRenderer {
 		SpectrumBuffer::new(self.spectrum_params.clone())
 	}
 
-	fn set_generator(&mut self, generator: Box<dyn GraphicGenerator>) {
-		self.generator = generator;
-	}
-
-	fn set_spectrum_params(&mut self, params: SpectrumParams) {
-		self.spectrum_params = Arc::new(params);
-		self.spectrum_history.clear();
-	}
-
 	fn frame_interval(&self) -> Duration {
 		self.interval
 	}
 
 	fn set_frame_interval(&mut self, interval: Duration) {
 		self.interval = interval;
+	}
+
+	pub fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
+		self.generator.generate(buffer, &self.spectrum_params, &self.spectrum_history)
+	}
+
+	pub fn generator(&self) -> &dyn GraphicGenerator {
+		&*self.generator
+	}
+
+	pub fn generator_mut(&mut self) -> &mut dyn GraphicGenerator {
+		&mut *self.generator
+	}
+
+	pub fn set_generator(&mut self, generator: Box<dyn GraphicGenerator>) {
+		self.generator = generator;
+	}
+
+	pub fn spectrum_params(&self) -> &Arc<SpectrumParams> {
+		&self.spectrum_params
+	}
+
+	pub fn set_spectrum_params(&mut self, params: SpectrumParams) {
+		self.spectrum_params = Arc::new(params);
+		self.spectrum_history.clear();
 	}
 }
 
@@ -164,7 +176,7 @@ pub fn start(
 	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
-) -> Result<AsyncProcessor<GraphicRendererCmd>, Error>
+) -> Result<AsyncProcessor<GraphicRendererCmd, GraphicRenderer>, Error>
 {
 	start_with_thread_name(
 		"GraphicProcessor".into(),
@@ -181,10 +193,12 @@ pub fn start_with_thread_name(
 	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
-) -> Result<AsyncProcessor<GraphicRendererCmd>, Error>
+) -> Result<AsyncProcessor<GraphicRendererCmd, GraphicRenderer>, Error>
 {
 	let (control_tx, control_rx) = mpsc::channel(0);
+	let (exec_tx, exec_rx) = mpsc::channel(0);
 	let mut processor = GraphicProcessor::new(
+		exec_rx,
 		control_rx,
 		graphic_input,
 		graphic_output,
@@ -194,7 +208,7 @@ pub fn start_with_thread_name(
 	let _ = thread::Builder::new()
 		.name(name)
 		.spawn(move || executor::block_on(processor.process_loop()))?;
-	Ok(AsyncProcessor::new(control_tx))
+	Ok(AsyncProcessor::new(control_tx, exec_tx))
 }
 
 struct GraphicProcessor {
@@ -210,6 +224,7 @@ struct GraphicProcessor {
 
 impl GraphicProcessor {
 	fn new(
+		exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
 		control_rx: mpsc::Receiver<(GraphicRendererCmd, oneshot::Sender<Box<dyn Any + Send>>)>,
 		graphic_input: mpsc::Receiver<GraphicBuffer>,
 		graphic_output: mpsc::Sender<Graphic>,

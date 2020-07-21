@@ -118,7 +118,7 @@ pub struct SubscriptionHandle(Rc<Box<dyn Fn(&(dyn Any + Send))>>);
 mod tests {
 	use super::*;
 	use futures::{prelude::*, channel::mpsc};
-	use glib::{Continue, MainContext, MainLoop};
+	use glib::MainLoop;
 	use std::cell::RefCell;
 	use std::sync::Arc;
 	use std::thread_local;

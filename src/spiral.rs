@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use crate::graphic_renderer::GraphicGenerator;
 use crate::graphic::{GraphicBuffer, Graphic};
-use crate::note::{Note, PitchClass};
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumParams};
 

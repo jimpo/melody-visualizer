@@ -1,7 +1,6 @@
 use futures::prelude::*;
 use glib::Type;
-use gtk::{prelude::*, Orientation, TreeSelection, TreeIter};
-use log::{debug, error};
+use gtk::{prelude::*, TreeSelection, TreeIter};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -9,8 +8,8 @@ use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::application::Controller;
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
-use crate::graphic_renderer::GraphicRendererCmd;
-use crate::note::{Note, PitchClass};
+use crate::graphic_renderer::{GraphicRendererCmd, GraphicRenderer};
+use crate::note::Note;
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
 use crate::spiral::{self, SpiralGenerator};
@@ -169,7 +168,7 @@ fn on_source_type_toggled(
 
 	let mut controller = controller.borrow_mut();
 	if let Err(err) = controller.set_source_type(source_type) {
-		error!("failed to change source type: {}", err);
+		log::error!("failed to change source type: {}", err);
 	}
 }
 
@@ -231,7 +230,7 @@ struct ControlPaneController {
 	max_log_freq: f64,
 	key_log_freq: f64,
 	samples_per_octave: usize,
-	graphic_renderer: AsyncProcessor<GraphicRendererCmd>,
+	graphic_renderer: AsyncProcessor<GraphicRendererCmd, GraphicRenderer>,
 }
 
 impl ControlPaneController {

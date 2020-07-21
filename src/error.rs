@@ -1,5 +1,4 @@
 use futures::channel::mpsc;
-use std::any::TypeId;
 use std::io;
 
 #[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]

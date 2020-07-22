@@ -5,7 +5,7 @@ use jack::{PortFlags, AudioOut, PortSpec};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::application::Controller;
+use crate::application::{Controller as AppController};
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
 use crate::graphic_renderer::GraphicRenderer;
@@ -31,250 +31,18 @@ const DEFAULT_SPIRAL_KEY_FREQ: f64 = 263.74; // C
 const DEFAULT_SPIRAL_OUTER_PAD: f64 = 20.0;
 const DEFAULT_SPIRAL_INNER_PAD: f64 = 50.0;
 
-pub struct ControlPane {
-	app_controller: Rc<RefCell<Controller>>,
-	local_controller: Rc<RefCell<ControlPaneController>>,
-	view: gtk::Box,
-}
-
-impl ControlPane {
-	pub fn new(app_controller: Rc<RefCell<Controller>>) -> Result<Self, Error> {
-		let local_controller = ControlPaneController::new(app_controller.clone());
-
-		let builder = gtk::Builder::from_string(UI_DEF);
-		let view: gtk::Box = builder.get_object("control_pane").unwrap();
-		let source_type_selection: gtk::Box = builder.get_object("source_type_selection").unwrap();
-		let port_view: gtk::TreeView = builder.get_object("port_list").unwrap();
-		let min_freq_scale: gtk::Scale = builder.get_object("min_freq_scale").unwrap();
-		let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
-		let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
-
-		// Style the control pane.
-		let style_provider = gtk::CssProvider::new();
-		style_provider.load_from_data(STYLE)
-			.map_err(Error::Glib)?;
-
-		// Populate source selection radio buttons.
-		for selector in build_source_type_selectors(&app_controller) {
-			source_type_selection.add(&selector);
-		}
-
-		port_view.set_model(Some(local_controller.borrow().port_store()));
-
-		min_freq_scale.set_adjustment(&gtk::Adjustment::new(
-			MIN_NOTE.log_frequency(),
-			MIN_NOTE.log_frequency(),
-			MAX_NOTE.log_frequency(),
-			1.0 / 12.0,
-			0.0,
-			0.0
-		));
-		max_freq_scale.set_adjustment(&gtk::Adjustment::new(
-			MIN_NOTE.log_frequency(),
-			MIN_NOTE.log_frequency(),
-			MAX_NOTE.log_frequency(),
-			1.0 / 12.0,
-			0.0,
-			0.0
-		));
-		key_freq_scale.set_adjustment(&gtk::Adjustment::new(
-			note!(C, 3).log_frequency(),
-			note!(C, 3).log_frequency(),
-			note!(C, 4).log_frequency(),
-			1.0 / 12.0,
-			0.0,
-			0.0
-		));
-
-		let controller_clone = local_controller.clone();
-		min_freq_scale.connect_change_value(
-			move |_scale, _, value| on_min_freq_change(&controller_clone, value)
-		);
-
-		let controller_clone = local_controller.clone();
-		max_freq_scale.connect_change_value(
-			move |_scale, _, value| on_max_freq_change(&controller_clone, value)
-		);
-
-		let controller_clone = local_controller.clone();
-		key_freq_scale.connect_change_value(
-			move |_scale, _, value| on_key_freq_change(&controller_clone, value)
-		);
-
-		{
-			let controller = local_controller.borrow();
-			min_freq_scale.set_value(controller.min_log_freq);
-			max_freq_scale.set_value(controller.max_log_freq);
-			key_freq_scale.set_value(controller.key_log_freq);
-		}
-
-		let selection = port_view.get_selection();
-		let controller_clone = app_controller.clone();
-		selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
-
-		// Refresh port list when JACK inputs change.
-		let app_controller_clone = app_controller.clone();
-		let local_controller_clone = local_controller.clone();
-		app_controller.borrow()
-			.pubsub()
-			.subscribe(move |_: &InputsChanged| {
-				local_controller_clone.borrow()
-					.refresh_inputs(&app_controller_clone.borrow());
-			});
-
-		// Populate the initial port list.
-		local_controller.borrow()
-			.refresh_inputs(&app_controller.borrow());
-
-		Ok(ControlPane {
-			app_controller,
-			local_controller,
-			view,
-		})
-	}
-
-	// TODO: Make this Deref<Target = gtk::Box>
-	pub fn widget(&self) -> &gtk::Box {
-		&self.view
-	}
-}
-
-fn build_port_view(port_store: &gtk::ListStore) -> gtk::TreeView {
-	let renderer = gtk::CellRendererText::new();
-	let column = gtk::TreeViewColumn::new();
-	column.pack_start(&renderer, true);
-	column.set_title("Port");
-	column.add_attribute(&renderer, "text", PORT_NAME_COL);
-
-	let port_view = gtk::TreeView::with_model(port_store);
-	port_view.append_column(&column);
-	port_view
-}
-
-fn on_port_selected(controller: &RefCell<Controller>, selection: &TreeSelection) {
-	let port_name = selection.get_selected()
-		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
-	let mut controller = controller.borrow_mut();
-	controller.connect_port(port_name);
-}
-
-fn on_source_type_toggled(
-	controller: &RefCell<Controller>,
-	selector: &gtk::RadioButton,
-	source_type: SourceType
-) {
-	if !selector.get_active() {
-		return;
-	}
-
-	let mut controller = controller.borrow_mut();
-	if let Err(err) = controller.set_source_type(source_type) {
-		log::error!("failed to change source type: {}", err);
-	}
-}
-
-fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
-	let mut controller = controller_ref.borrow_mut();
-	if value > controller.max_log_freq {
-		return Inhibit(true);
-	}
-
-	controller.min_log_freq = value;
-	let async_update = controller.update_spectrum_params();
-
-	let main_context = glib::MainContext::default();
-	main_context.spawn_local(async move {
-		match async_update.await {
-			Ok(()) => {}
-			Err(err) => error_dialog(err),
-		}
-	});
-
-	Inhibit(false)
-}
-
-fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
-	let mut controller = controller_ref.borrow_mut();
-	if value < controller.min_log_freq {
-		return Inhibit(true);
-	}
-
-	controller.max_log_freq = value;
-	let async_update = controller.update_spectrum_params();
-
-	let main_context = glib::MainContext::default();
-	main_context.spawn_local(async move {
-		match async_update.await {
-			Ok(()) => {}
-			Err(err) => error_dialog(err),
-		}
-	});
-
-	Inhibit(false)
-}
-
-
-fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
-	let mut controller = controller_ref.borrow_mut();
-
-	controller.key_log_freq = value;
-	let async_update = controller.update_spiral_config();
-
-	let main_context = glib::MainContext::default();
-	main_context.spawn_local(async move {
-		match async_update.await {
-			Ok(()) => {}
-			Err(err) => error_dialog(err),
-		}
-	});
-
-	Inhibit(false)
-}
-
-struct ControlPaneController {
+pub struct Controller {
+	app_controller: Rc<RefCell<AppController>>,
 	port_store: gtk::ListStore,
 	min_log_freq: f64,
 	max_log_freq: f64,
 	key_log_freq: f64,
 	samples_per_octave: usize,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
+	view_builder: gtk::Builder,
 }
 
-impl ControlPaneController {
-	fn new(app_controller: Rc<RefCell<Controller>>) -> Rc<RefCell<Self>> {
-		let column_types = [Type::String];
-		let port_store = gtk::ListStore::new(&column_types[..]);
-
-		let app_controller = app_controller.borrow();
-		let graphic_renderer = app_controller.graphic_renderer().clone();
-
-		let controller_ref = Rc::new(RefCell::new(ControlPaneController {
-			port_store,
-			min_log_freq: DEFAULT_MIN_FREQ.log2(),
-			max_log_freq: DEFAULT_MAX_FREQ.log2(),
-			key_log_freq: DEFAULT_SPIRAL_KEY_FREQ.log2(),
-			samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
-			graphic_renderer,
-		}));
-
-		{
-			let controller = controller_ref.borrow_mut();
-			let async_spectrum_params_update = controller.update_spectrum_params();
-			let async_generator_update = controller.update_graphic_generator();
-			let async_spiral_config_update = controller.update_spectrum_params();
-
-			let main_context = glib::MainContext::default();
-			main_context.spawn_local(async move {
-				// TODO: Handle errors better
-				async_spectrum_params_update.await.unwrap();
-				async_generator_update.await.unwrap();
-				async_spiral_config_update.await.unwrap();
-			});
-		}
-
-		controller_ref
-	}
-
+impl Controller {
 	// TODO: Move this to an architecture overview or something.
 	//
 	// We have to be very careful about RefCells in async code. So borrowing a controller from a
@@ -310,14 +78,11 @@ impl ControlPaneController {
 			.map_err(Error::Communication)
 	}
 
-	fn port_store(&self) -> &gtk::ListStore {
-		&self.port_store
-	}
-
-	fn refresh_inputs(&self, controller: &Controller) {
+	fn refresh_inputs(&self) {
 		let port_store = &self.port_store;
 
-		let ports = controller.jack_client()
+		let ports = self.app_controller.borrow()
+			.jack_client()
 			.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
 			.unwrap_or_default();
 
@@ -373,6 +138,228 @@ impl ControlPaneController {
 	}
 }
 
+pub fn new(app_controller: Rc<RefCell<AppController>>)
+	-> Result<(Rc<RefCell<Controller>>, gtk::Box), Error>
+{
+	let column_types = [Type::String];
+	let port_store = gtk::ListStore::new(&column_types[..]);
+
+	let graphic_renderer = app_controller.borrow().graphic_renderer().clone();
+
+	let view_builder = gtk::Builder::from_string(UI_DEF);
+
+	let controller = Rc::new(RefCell::new(Controller {
+		app_controller: app_controller.clone(),
+		port_store,
+		min_log_freq: DEFAULT_MIN_FREQ.log2(),
+		max_log_freq: DEFAULT_MAX_FREQ.log2(),
+		key_log_freq: DEFAULT_SPIRAL_KEY_FREQ.log2(),
+		samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
+		graphic_renderer,
+		view_builder,
+	}));
+
+	let view = init_view(&controller);
+
+	// Update background processors with default control settings.
+	{
+		let controller = controller.borrow_mut();
+
+		// Populate the initial port list.
+		controller.refresh_inputs();
+
+		let async_spectrum_params_update = controller.update_spectrum_params();
+		let async_generator_update = controller.update_graphic_generator();
+		let async_spiral_config_update = controller.update_spectrum_params();
+
+		glib::MainContext::default().spawn_local(async move {
+			// TODO: Handle errors better
+			async_spectrum_params_update.await.unwrap();
+			async_generator_update.await.unwrap();
+			async_spiral_config_update.await.unwrap();
+		});
+	}
+
+	Ok((controller, view))
+}
+
+fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
+	let builder = controller.borrow().view_builder.clone();
+	let view: gtk::Box = builder.get_object("control_pane").unwrap();
+	let source_type_selection: gtk::Box = builder.get_object("source_type_selection").unwrap();
+	let port_view: gtk::TreeView = builder.get_object("port_list").unwrap();
+	let min_freq_scale: gtk::Scale = builder.get_object("min_freq_scale").unwrap();
+	let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
+	let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
+
+	// Style the control pane.
+	let style_provider = gtk::CssProvider::new();
+	style_provider.load_from_data(STYLE).unwrap();
+
+	// Populate source selection radio buttons.
+	let app_controller = controller.borrow().app_controller.clone();
+	for selector in build_source_type_selectors(&app_controller) {
+		source_type_selection.add(&selector);
+	}
+
+	port_view.set_model(Some(&controller.borrow().port_store));
+
+	min_freq_scale.set_adjustment(&gtk::Adjustment::new(
+		MIN_NOTE.log_frequency(),
+		MIN_NOTE.log_frequency(),
+		MAX_NOTE.log_frequency(),
+		1.0 / 12.0,
+		0.0,
+		0.0
+	));
+	max_freq_scale.set_adjustment(&gtk::Adjustment::new(
+		MIN_NOTE.log_frequency(),
+		MIN_NOTE.log_frequency(),
+		MAX_NOTE.log_frequency(),
+		1.0 / 12.0,
+		0.0,
+		0.0
+	));
+	key_freq_scale.set_adjustment(&gtk::Adjustment::new(
+		note!(C, 3).log_frequency(),
+		note!(C, 3).log_frequency(),
+		note!(C, 4).log_frequency(),
+		1.0 / 12.0,
+		0.0,
+		0.0
+	));
+
+	// Connect signal handler functions.
+	let controller_clone = controller.clone();
+	min_freq_scale.connect_change_value(
+		move |_scale, _, value| on_min_freq_change(&controller_clone, value)
+	);
+
+	let controller_clone = controller.clone();
+	max_freq_scale.connect_change_value(
+		move |_scale, _, value| on_max_freq_change(&controller_clone, value)
+	);
+
+	let controller_clone = controller.clone();
+	key_freq_scale.connect_change_value(
+		move |_scale, _, value| on_key_freq_change(&controller_clone, value)
+	);
+
+	let selection = port_view.get_selection();
+	let controller_clone = app_controller.clone();
+	selection.connect_changed(move |selection| on_port_selected(&*controller_clone, selection));
+
+	// Refresh port list when JACK inputs change.
+	let controller_clone = controller.clone();
+	controller.borrow()
+		.app_controller.borrow()
+		.pubsub()
+		.subscribe(move |_: &InputsChanged| {
+			controller_clone.borrow().refresh_inputs()
+		});
+
+	// Set initial control values.
+	{
+		let controller = controller.borrow();
+		min_freq_scale.set_value(controller.min_log_freq);
+		max_freq_scale.set_value(controller.max_log_freq);
+		key_freq_scale.set_value(controller.key_log_freq);
+	}
+
+	view
+}
+
+fn build_port_view(port_store: &gtk::ListStore) -> gtk::TreeView {
+	let renderer = gtk::CellRendererText::new();
+	let column = gtk::TreeViewColumn::new();
+	column.pack_start(&renderer, true);
+	column.set_title("Port");
+	column.add_attribute(&renderer, "text", PORT_NAME_COL);
+
+	let port_view = gtk::TreeView::with_model(port_store);
+	port_view.append_column(&column);
+	port_view
+}
+
+fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
+	let port_name = selection.get_selected()
+		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
+	let mut app_controller = app_controller.borrow_mut();
+	app_controller.connect_port(port_name);
+}
+
+fn on_source_type_toggled(
+	app_controller: &RefCell<AppController>,
+	selector: &gtk::RadioButton,
+	source_type: SourceType
+) {
+	if !selector.get_active() {
+		return;
+	}
+
+	let mut app_controller = app_controller.borrow_mut();
+	if let Err(err) = app_controller.set_source_type(source_type) {
+		log::error!("failed to change source type: {}", err);
+	}
+}
+
+fn on_min_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
+	let mut controller = controller_ref.borrow_mut();
+	if value > controller.max_log_freq {
+		return Inhibit(true);
+	}
+
+	controller.min_log_freq = value;
+	let async_update = controller.update_spectrum_params();
+
+	let main_context = glib::MainContext::default();
+	main_context.spawn_local(async move {
+		match async_update.await {
+			Ok(()) => {}
+			Err(err) => error_dialog(err),
+		}
+	});
+
+	Inhibit(false)
+}
+
+fn on_max_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
+	let mut controller = controller_ref.borrow_mut();
+	if value < controller.min_log_freq {
+		return Inhibit(true);
+	}
+
+	controller.max_log_freq = value;
+	let async_update = controller.update_spectrum_params();
+
+	let main_context = glib::MainContext::default();
+	main_context.spawn_local(async move {
+		match async_update.await {
+			Ok(()) => {}
+			Err(err) => error_dialog(err),
+		}
+	});
+
+	Inhibit(false)
+}
+
+fn on_key_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
+	let mut controller = controller_ref.borrow_mut();
+
+	controller.key_log_freq = value;
+	let async_update = controller.update_spiral_config();
+
+	let main_context = glib::MainContext::default();
+	main_context.spawn_local(async move {
+		match async_update.await {
+			Ok(()) => {}
+			Err(err) => error_dialog(err),
+		}
+	});
+
+	Inhibit(false)
+}
+
 fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 	port_store
 		.get_value(&iter, PORT_NAME_COL)
@@ -381,8 +368,10 @@ fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 		.expect("port names cannot be None")
 }
 
-fn build_source_type_selectors(controller: &Rc<RefCell<Controller>>) -> Vec<gtk::RadioButton> {
-	let active_source_type = controller.borrow().get_source_type();
+fn build_source_type_selectors(app_controller: &Rc<RefCell<AppController>>)
+	-> Vec<gtk::RadioButton>
+{
+	let active_source_type = app_controller.borrow().get_source_type();
 
 	let mut selectors = Vec::new();
 	for source_type in [SourceType::Audio, SourceType::MIDI].iter() {
@@ -394,7 +383,7 @@ fn build_source_type_selectors(controller: &Rc<RefCell<Controller>>) -> Vec<gtk:
 
 		selector.set_active(active_source_type == Some(*source_type));
 
-		let controller_clone = controller.clone();
+		let controller_clone = app_controller.clone();
 		selector.connect_toggled(
 			move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
 		);

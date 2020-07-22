@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use crate::error::Error;
-use crate::gui::control_pane::ControlPane;
+use crate::gui::control_pane;
 use crate::gui::visualization;
 use crate::application::Controller;
 
@@ -22,8 +22,9 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 		visualization::new(controller.clone());
 	panes.add1(&visualization_widget);
 
-	let control = ControlPane::new(controller.clone())?;
-	panes.add2(control.widget());
+	let (control_pane_controller, control_pane_widget) =
+		control_pane::new(controller.clone())?;
+	panes.add2(&control_pane_widget);
 
 	window.set_application(Some(app));
 	window.show_all();

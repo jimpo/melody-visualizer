@@ -9,6 +9,7 @@ use crate::application::Controller;
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
 use crate::graphic_renderer::GraphicRenderer;
+use crate::gui::error_dialog;
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
 use crate::spectrum::SpectrumParams;
@@ -257,7 +258,7 @@ impl ControlPaneController {
 		}));
 
 		{
-			let mut controller = controller_ref.borrow_mut();
+			let controller = controller_ref.borrow_mut();
 			let async_spectrum_params_update = controller.update_spectrum_params();
 			let async_generator_update = controller.update_graphic_generator();
 			let async_spiral_config_update = controller.update_spectrum_params();
@@ -401,15 +402,4 @@ fn build_source_type_selectors(controller: &Rc<RefCell<Controller>>) -> Vec<gtk:
 		selectors.push(selector);
 	}
 	selectors
-}
-
-fn error_dialog(err: Error) {
-	let dialog = gtk::MessageDialogBuilder::new()
-		.message_type(gtk::MessageType::Error)
-		.text("An unexpected system error occurred:")
-		.secondary_text(&err.to_string())
-		.buttons(gtk::ButtonsType::Close)
-		.build();
-	dialog.run();
-	unsafe { dialog.destroy(); }
 }

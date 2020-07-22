@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 use crate::error::Error;
 use crate::gui::control_pane::ControlPane;
-use crate::gui::visualization_pane::VisualizationPane;
+use crate::gui::visualization;
 use crate::application::Controller;
 
 const UI_DEF: &str = include_str!("window.ui");
@@ -18,8 +18,9 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	let window: gtk::ApplicationWindow = builder.get_object("main_window").unwrap();
 	let panes: gtk::Paned = builder.get_object("main_panes").unwrap();
 
-	let visualization = VisualizationPane::new(controller.clone());
-	panes.add1(visualization.widget());
+	let (visualization_controller, visualization_widget) =
+		visualization::new(controller.clone());
+	panes.add1(&visualization_widget);
 
 	let control = ControlPane::new(controller.clone())?;
 	panes.add2(control.widget());

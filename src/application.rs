@@ -21,7 +21,6 @@ const DEFAULT_DFT_WINDOW_SIZE: jack::Frames = 2048;
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	pubsub: PubSub,
-	graphic: Rc<RefCell<Graphic>>,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
 	spectrum_renderer: AsyncProcessor<SpectrumRenderer>,
 }
@@ -75,7 +74,6 @@ impl Controller {
 
 		let mut controller = Controller {
 			source: None,
-			graphic,
 			pubsub,
 			graphic_renderer,
 			spectrum_renderer,
@@ -86,10 +84,6 @@ impl Controller {
 
 	pub fn pubsub(&self) -> &PubSub {
 		&self.pubsub
-	}
-
-	pub fn graphic_mut(&mut self) -> RefMut<Graphic> {
-		self.graphic.borrow_mut()
 	}
 
 	pub fn get_source_type(&self) -> Option<SourceType> {

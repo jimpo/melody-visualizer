@@ -29,20 +29,6 @@ impl Controller {
 	pub fn new() -> Result<Self, Error> {
 		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
 
-		// Create graphical rendering thread.
-
-		// Create spectral rendering thread.
-		// - Channel<Spectrum> in
-		// - Command SpectrumPipeline
-		// - Channel<Spectrum> out
-
-		let graphic = Rc::new(RefCell::new(Graphic::default()));
-
-		// Channel sending the graphic surface from the main thread to the graphic rendering thread.
-		let (main_graphic_tx, main_graphic_rx) = mpsc::channel(0);
-		// Channel sending the graphic surface from the graphic rendering thread to the main thread.
-		let (graphic_main_tx, graphic_main_rx) = mpsc::channel(0);
-
 		// Channel sending the spectrum from the spectrum rendering thread to the graphic rendering
 		// thread.
 		let (spectrum_graphic_tx, spectrum_graphic_rx) = mpsc::channel(0);
@@ -52,8 +38,6 @@ impl Controller {
 
 		// Start the graphic rendering background thread.
 		let graphic_renderer = graphic_renderer::start(
-			main_graphic_rx,
-			graphic_main_tx,
 			spectrum_graphic_rx,
 			graphic_spectrum_tx,
 		)?;
@@ -63,14 +47,6 @@ impl Controller {
 			graphic_spectrum_rx,
 			spectrum_graphic_tx,
 		)?;
-
-		let main_context = glib::MainContext::default();
-		main_context.spawn_local(process_graphic_updates(
-			graphic.clone(),
-			pubsub.notifier(),
-			graphic_main_rx,
-			main_graphic_tx,
-		));
 
 		let mut controller = Controller {
 			source: None,

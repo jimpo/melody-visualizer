@@ -59,6 +59,8 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		Inhibit(false)
 	});
 
+	start_render_timer(&controller);
+
 	(controller, drawing_area)
 }
 
@@ -153,7 +155,11 @@ fn start_render(controller: &mut Controller, controller_ref: Weak<RefCell<Contro
 				if let Some(controller) = controller_ref.upgrade() {
 					let mut controller = controller.borrow_mut();
 					let old_graphic = match result {
-						Ok(graphic) => mem::replace(&mut controller.graphic, graphic),
+						Ok(graphic) => {
+							let old_graphic = mem::replace(&mut controller.graphic, graphic);
+							controller.drawing_area.queue_draw();
+							old_graphic
+						}
 						Err(err) => {
 							log::error!("error rendering frame: {}", err);
 							controller.graphic.clone()

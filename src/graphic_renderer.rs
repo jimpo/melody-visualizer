@@ -170,16 +170,12 @@ impl GraphicRenderer {
 }
 
 pub fn start(
-	graphic_input: mpsc::Receiver<GraphicBuffer>,
-	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
 ) -> Result<AsyncProcessor<GraphicRenderer>, Error>
 {
 	start_with_thread_name(
 		"GraphicProcessor".into(),
-		graphic_input,
-		graphic_output,
 		spectrum_input,
 		spectrum_output,
 	)
@@ -187,8 +183,6 @@ pub fn start(
 
 pub fn start_with_thread_name(
 	name: String,
-	graphic_input: mpsc::Receiver<GraphicBuffer>,
-	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
 ) -> Result<AsyncProcessor<GraphicRenderer>, Error>
@@ -196,8 +190,6 @@ pub fn start_with_thread_name(
 	let (exec_tx, exec_rx) = mpsc::channel(0);
 	let mut processor = GraphicProcessor::new(
 		exec_rx,
-		graphic_input,
-		graphic_output,
 		spectrum_input,
 		spectrum_output,
 	);
@@ -209,31 +201,23 @@ pub fn start_with_thread_name(
 
 struct GraphicProcessor {
 	exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
-	graphic_input: mpsc::Receiver<GraphicBuffer>,
-	graphic_output: mpsc::Sender<Graphic>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	current_buffer: Option<GraphicBuffer>,
-	next_tick_time: Instant,
 	renderer: GraphicRenderer,
 }
 
 impl GraphicProcessor {
 	fn new(
 		exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
-		graphic_input: mpsc::Receiver<GraphicBuffer>,
-		graphic_output: mpsc::Sender<Graphic>,
 		spectrum_input: mpsc::Receiver<Spectrum>,
 		spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	) -> Self {
 		GraphicProcessor {
 			exec_rx,
-			graphic_input,
-			graphic_output,
 			spectrum_input,
 			spectrum_output,
 			current_buffer: None,
-			next_tick_time: Instant::now(),
 			renderer: GraphicRenderer::new(),
 		}
 	}
@@ -241,7 +225,6 @@ impl GraphicProcessor {
 	async fn process_loop(&mut self) {
 		debug!("Starting graphic rendering thread");
 		self.current_buffer = Some(GraphicBuffer::default());
-		self.next_tick_time = Instant::now();
 
 		// Kick off the spectrum generation loop.
 		match self.send_spectrum_buffer(self.renderer.new_spectrum_buffer()).await {
@@ -256,13 +239,10 @@ impl GraphicProcessor {
 		}
 
 		loop {
-			let tick_delay = self.next_tick_time.saturating_duration_since(Instant::now());
 			let result = select! {
 				exec = self.exec_rx.next() => self.handle_exec(exec),
-				new_buffer = self.graphic_input.next() => self.handle_new_buffer(new_buffer).await,
 				new_spectrum = self.spectrum_input.next() =>
 					self.handle_new_spectrum(new_spectrum).await,
-				_ = Delay::new(tick_delay).fuse() => self.handle_tick().await,
 			};
 			match result {
 				Ok(true) => {},
@@ -309,40 +289,5 @@ impl GraphicProcessor {
 			};
 		}
 		Ok(true)
-	}
-
-	async fn handle_new_buffer(&mut self, new_buffer: Option<GraphicBuffer>)
-		-> Result<bool, GraphicProcessingError>
-	{
-		if let Some(new_buffer) = new_buffer {
-			if self.current_buffer.is_some() {
-				Err(GraphicProcessingError::ReceivedUnexpectedBuffer)
-			} else {
-				self.current_buffer = Some(new_buffer);
-				Ok(true)
-			}
-		} else {
-			debug!("graphic input channel closed, stopping graphic processing");
-			Ok(false)
-		}
-	}
-
-	async fn handle_tick(&mut self) -> Result<bool, GraphicProcessingError> {
-		self.next_tick_time += self.renderer.frame_interval();
-
-		if let Some(buffer) = self.current_buffer.take() {
-			let graphic = self.renderer.render(buffer)?;
-			if let Err(err) = self.graphic_output.send(graphic).await {
-				return if err.is_disconnected() {
-					debug!("graphic output channel disconnected, stopping graphic processing");
-					Ok(false)
-				} else {
-					Err(err.into())
-				};
-			}
-			Ok(true)
-		} else {
-			Err(GraphicProcessingError::NoBuffer)
-		}
 	}
 }

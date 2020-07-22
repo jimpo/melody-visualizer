@@ -119,6 +119,9 @@ impl GraphicGenerator for SpiralGenerator {
 			self.regenerate();
 		}
 
+		let spectrum = spectrum_history.front()
+			.map(|spectrum| spectrum.values());
+
 		buffer.draw(|ctx| {
 			ctx.set_source_rgb(0.0, 0.0, 0.0);
 			ctx.rectangle(0.0, 0.0, self.x_max as f64, self.y_max as f64);
@@ -134,10 +137,12 @@ impl GraphicGenerator for SpiralGenerator {
 				let edge1 = &self.edges[i - 1];
 				let edge2 = &self.edges[i];
 
-				let value = 0.9;
-				let color1 = <Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value)
+				let value1 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i - 1]);
+				let value2 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i]);
+
+				let color1 = <Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1)
 					.into_rgb::<Srgb>();
-				let color2 = <Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value)
+				let color2 = <Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value2)
 					.into_rgb::<Srgb>();
 
 				mesh.begin_patch();

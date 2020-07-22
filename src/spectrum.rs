@@ -42,6 +42,7 @@ impl Spectrum {
 		self.buffer
 	}
 
+	pub fn values(&self) -> &[f64] { &self.buffer.data }
 	pub fn params(&self) -> &Arc<SpectrumParams> {
 		self.buffer.params()
 	}

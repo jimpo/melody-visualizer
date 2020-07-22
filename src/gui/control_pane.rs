@@ -12,6 +12,7 @@ use crate::graphic_renderer::GraphicRenderer;
 use crate::gui::error_dialog;
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
+use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
 use crate::spiral::{self, SpiralGenerator};
@@ -39,6 +40,7 @@ pub struct Controller {
 	key_log_freq: f64,
 	samples_per_octave: usize,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
+	inputs_changed_subscription: Option<SubscriptionHandle>,
 	view_builder: gtk::Builder,
 }
 
@@ -156,6 +158,7 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		key_log_freq: DEFAULT_SPIRAL_KEY_FREQ.log2(),
 		samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
 		graphic_renderer,
+		inputs_changed_subscription: None,
 		view_builder,
 	}));
 
@@ -253,16 +256,17 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 
 	// Refresh port list when JACK inputs change.
 	let controller_clone = controller.clone();
-	controller.borrow()
-		.app_controller.borrow()
+	let subscription = app_controller.borrow()
 		.pubsub()
 		.subscribe(move |_: &InputsChanged| {
 			controller_clone.borrow().refresh_inputs()
 		});
 
-	// Set initial control values.
 	{
-		let controller = controller.borrow();
+		let mut controller = controller.borrow_mut();
+		controller.inputs_changed_subscription = Some(subscription);
+
+		// Set initial control values.
 		min_freq_scale.set_value(controller.min_log_freq);
 		max_freq_scale.set_value(controller.max_log_freq);
 		key_freq_scale.set_value(controller.key_log_freq);

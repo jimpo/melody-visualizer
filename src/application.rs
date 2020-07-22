@@ -16,7 +16,7 @@ use crate::source::{JackSource, SourceType};
 use crate::spectrum_renderer::{self, SpectrumRenderer};
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
-const DEFAULT_DFT_WINDOW_SIZE: jack::Frames = 2048;
+const DEFAULT_DFT_WINDOW_SIZE: usize = 2048;
 
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,

@@ -3,6 +3,7 @@ use log::debug;
 use itertools::Itertools;
 use rustfft::{num_complex::Complex64, num_traits::Zero, FFTplanner, FFT};
 use std::{
+	f64::consts::PI,
 	fmt::{self, Debug},
 	sync::Arc,
 	time::Duration,
@@ -20,6 +21,7 @@ pub struct AudioSpectrumGenerator {
 	dft: Arc<dyn FFT<f64>>,
 	dft_window: Vec<Complex64>,
 	dft_output: Vec<Complex64>,
+	windowing: Vec<f64>,
 }
 
 impl Debug for AudioSpectrumGenerator {
@@ -31,19 +33,30 @@ impl Debug for AudioSpectrumGenerator {
 }
 
 impl AudioSpectrumGenerator {
-	pub fn new(audio_buffer: RingBufferReader, sample_rate: Frames, dft_window_size: Frames)
+	pub fn new(audio_buffer: RingBufferReader, sample_rate: Frames, dft_window_size: usize)
 		-> Self
 	{
-		let dft = FFTplanner::new(false).plan_fft(dft_window_size as usize);
-		let dft_window = vec![Complex64::zero(); dft_window_size as usize];
-		let dft_output = vec![Complex64::zero(); dft_window_size as usize];
-		AudioSpectrumGenerator {
+		let mut generator = AudioSpectrumGenerator {
 			audio_buffer,
 			sample_rate,
-			dft,
-			dft_window,
-			dft_output,
-		}
+			dft: FFTplanner::new(false).plan_fft(0),
+			dft_window: Vec::new(),
+			dft_output: Vec::new(),
+			windowing: Vec::new(),
+		};
+		generator.set_window_size(dft_window_size);
+		generator
+	}
+
+	pub fn set_window_size(&mut self, dft_window_size: usize) {
+		self.dft = FFTplanner::new(false).plan_fft(dft_window_size);
+		self.dft_window = vec![Complex64::zero(); dft_window_size];
+		self.dft_output = vec![Complex64::zero(); dft_window_size];
+		self.windowing = hann_window(dft_window_size);
+	}
+
+	fn dft_out_to_val(&self, dft_out: &Complex64, n: usize) -> f64 {
+		(dft_out / n as f64).norm()
 	}
 }
 
@@ -67,15 +80,15 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 			.tuples::<(_, _, _, _)>()
 			.map(|(&b1, &b2, &b3, &b4)| f32::from_ne_bytes([b1, b2, b3, b4]) as f64);
 
-		for (sample, dst) in samples.zip(self.dft_window.iter_mut()) {
+		let windowed_samples = samples
+			.zip(self.windowing.iter())
+			.map(|(a, &b)| a * b);
+
+		for (sample, dst) in windowed_samples.zip(self.dft_window.iter_mut()) {
 			*dst = Complex64::new(sample, 0.0);
 		}
 
-		// TODO: Apply Hann window.
-
 		self.dft.process(&mut self.dft_window, &mut self.dft_output);
-
-		// TODO: Take norms and divide by N.
 
 		buffer.fill(|spectrum, spectrum_params| {
 			let log_freqs = spectrum_params.log_frequencies();
@@ -102,7 +115,7 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 					}
 				}
 
-				let dft_out_val = self.dft_out_to_val(&self.dft_output[j]);
+				let dft_out_val = self.dft_out_to_val(&self.dft_output[j], n);
 				let interp_ratio =
 					(dft_out_log_freq - log_freqs[i - 1]) / (log_freqs[i] - log_freqs[i - 1]);
 				spectrum[i - 1] += (1.0 - interp_ratio) * dft_out_val;
@@ -120,8 +133,10 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 	}
 }
 
-impl AudioSpectrumGenerator {
-	fn dft_out_to_val(&self, dft_out: &Complex64) -> f64 {
-		dft_out.norm()
+fn hann_window(size: usize) -> Vec<f64> {
+	let mut window = vec![0.0; size];
+	for i in 0..size {
+		window[i] = (PI * i as f64 / (size - 1) as f64).sin().powi(2);
 	}
+	window
 }

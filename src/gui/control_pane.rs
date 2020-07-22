@@ -204,6 +204,8 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 
 	port_view.set_model(Some(&controller.borrow().port_store));
 
+	// TODO: Maybe bound min/max frequency using window size.
+
 	min_freq_scale.set_adjustment(&gtk::Adjustment::new(
 		MIN_NOTE.log_frequency(),
 		MIN_NOTE.log_frequency(),

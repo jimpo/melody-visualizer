@@ -67,16 +67,22 @@ impl NotificationHandler for AudioNotificationHandler {
 		Control::Continue
 	}
 
-	fn port_registration(&mut self, _client: &Client, port_id: PortId, _is_registered: bool) {
-		if let Err(err) = self.notifier.send(events::InputsChanged(port_id)) {
+	fn port_registration(&mut self, client: &Client, port_id: PortId, is_registered: bool) {
+		let notification = if is_registered {
+			events::InputsChanged::Registered(port_id)
+		} else {
+			events::InputsChanged::Unregistered(port_id)
+		};
+		if let Err(err) = self.notifier.send(notification) {
 			error!("failed to notify of JACK input change: {}", err);
 		}
 	}
 
-	fn port_rename(&mut self, _: &Client, port_id: PortId, _old_name: &str, _new_name: &str)
+	fn port_rename(&mut self, _: &Client, port_id: PortId, _old_name: &str, new_name: &str)
 		-> Control
 	{
-		if let Err(err) = self.notifier.send(events::InputsChanged(port_id)) {
+		let notification = events::InputsChanged::Renamed(port_id, new_name.into());
+		if let Err(err) = self.notifier.send(notification) {
 			error!("failed to notify of JACK input change: {}", err);
 		}
 		Control::Continue

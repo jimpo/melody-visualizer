@@ -1,7 +1,7 @@
 use futures::prelude::*;
 use glib::Type;
 use gtk::{prelude::*, TreeSelection, TreeIter};
-use jack::{PortFlags, AudioOut, PortSpec};
+use jack::{AudioOut, PortFlags, PortId, PortSpec};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -88,11 +88,14 @@ impl Controller {
 			.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
 			.unwrap_or_default();
 
+		log::debug!("refreshing inputs: {:?}", ports);
+
 		// Remove rows from ListStore.
 		if let Some(iter) = port_store.get_iter_first() {
 			loop {
 				let found = ports.contains(&get_port_name(port_store, &iter));
 				let iter_invalid = if !found {
+					log::debug!("attempting to remove port");
 					port_store.remove(&iter)
 				} else {
 					port_store.iter_next(&iter)
@@ -258,7 +261,8 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	let controller_clone = controller.clone();
 	let subscription = app_controller.borrow()
 		.pubsub()
-		.subscribe(move |_: &InputsChanged| {
+		.subscribe(move |notification: &InputsChanged| {
+			on_input_ports_changed(&controller_clone, notification.clone());
 			controller_clone.borrow().refresh_inputs()
 		});
 
@@ -307,6 +311,51 @@ fn on_source_type_toggled(
 	if let Err(err) = app_controller.set_source_type(source_type) {
 		log::error!("failed to change source type: {}", err);
 	}
+}
+
+fn on_input_ports_changed(controller_ref: &Rc<RefCell<Controller>>, update: InputsChanged) {
+	// TODO: Unfortunately, we need to poll until port_update is reflected.
+	// https://github.com/jackaudio/jack2/issues/617
+	let controller = controller_ref.clone();
+	gtk::timeout_add(10, move || {
+		if is_inputs_update_pending(&*controller.borrow(), update.clone()) {
+			glib::Continue(true)
+		} else {
+			controller.borrow().refresh_inputs();
+			glib::Continue(false)
+		}
+	});
+}
+
+fn is_inputs_update_pending(controller: &Controller, update: InputsChanged) -> bool {
+	controller
+		.app_controller.borrow()
+		.jack_client()
+		.map(move |client| {
+			match update {
+				// https://github.com/jackaudio/jack2/issues/617
+				InputsChanged::Unregistered(port_id) => {
+					if let Some(port) = client.port_by_id(port_id) {
+						match port.name() {
+							Ok(name) =>
+								client
+									.ports(None, None, PortFlags::empty())
+									.contains(&name),
+							Err(err) => {
+								log::warn!("JACK port {} has no name", port_id);
+								// Whatever, let's just say it's updated.
+								false
+							}
+						}
+					} else {
+						false
+					}
+				}
+				// I don't think we need to double-check any other cases.
+				_ => false,
+			}
+		})
+		.unwrap_or(false)
 }
 
 fn on_min_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {

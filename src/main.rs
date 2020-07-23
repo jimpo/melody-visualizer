@@ -12,6 +12,7 @@ mod source;
 mod spectrum;
 mod spectrum_renderer;
 mod spiral;
+mod volume_normalizer;
 
 use gio::prelude::*;
 

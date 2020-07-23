@@ -70,6 +70,10 @@ impl Controller {
 		&self.graphic_renderer
 	}
 
+	pub fn spectrum_renderer(&self) -> &AsyncProcessor<SpectrumRenderer> {
+		&self.spectrum_renderer
+	}
+
 	pub fn set_source_type(&mut self, source_type: SourceType) -> Result<(), Error> {
 		if Some(source_type) == self.get_source_type() {
 			return Ok(());

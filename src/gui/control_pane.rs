@@ -16,6 +16,7 @@ use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
 use crate::spiral::{self, SpiralGenerator};
+use crate::volume_normalizer::VolumeNormalizer;
 
 const STYLE: &[u8] = include_bytes!("control_pane.css");
 const UI_DEF: &str = include_str!("control_pane.ui");
@@ -178,11 +179,21 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		let async_generator_update = controller.update_graphic_generator();
 		let async_spiral_config_update = controller.update_spectrum_params();
 
+		let volume_normalizer_init = controller
+			.app_controller.borrow()
+			.spectrum_renderer()
+			.exec_cloned(|renderer| {
+				renderer
+					.transforms_mut()
+					.push(Box::new(VolumeNormalizer::new(0.1)));
+			});
+
 		glib::MainContext::default().spawn_local(async move {
 			// TODO: Handle errors better
 			async_spectrum_params_update.await.unwrap();
 			async_generator_update.await.unwrap();
 			async_spiral_config_update.await.unwrap();
+			volume_normalizer_init.await.unwrap();
 		});
 	}
 

@@ -91,6 +91,10 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 		self.dft.process(&mut self.dft_window, &mut self.dft_output);
 
 		buffer.fill(|spectrum, spectrum_params| {
+			// Use slice::fill when stable.
+			// https://github.com/rust-lang/rust/issues/70758
+			spectrum.iter_mut().for_each(|val| *val = 0.0);
+
 			let log_freqs = spectrum_params.log_frequencies();
 			let mut i = 1; // i indexes into spectrum
 
@@ -108,7 +112,7 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 				}
 
 				// Advance i until dft_out_log_freq < log_freqs[i].
-				while dft_out_freq >= log_freqs[i] {
+				while dft_out_log_freq >= log_freqs[i] {
 					i += 1;
 					if i >= log_freqs.len() {
 						return;

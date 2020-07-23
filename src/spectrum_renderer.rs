@@ -65,6 +65,10 @@ impl SpectrumRenderer {
 	pub fn set_generator(&mut self, generator: Box<dyn SpectrumGenerator>) {
 		self.generator = generator;
 	}
+
+	pub fn transforms_mut(&mut self) -> &mut Vec<Box<dyn SpectrumTransform>> {
+		&mut self.transforms
+	}
 }
 
 struct SpectrumProcessor {

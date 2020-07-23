@@ -137,8 +137,8 @@ impl GraphicGenerator for SpiralGenerator {
 				let edge1 = &self.edges[i - 1];
 				let edge2 = &self.edges[i];
 
-				let value1 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i - 1]);
-				let value2 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i]);
+				let value1 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i - 1].min(1.0));
+				let value2 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i].min(1.0));
 
 				let color1 = <Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1)
 					.into_rgb::<Srgb>();

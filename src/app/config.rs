@@ -40,8 +40,8 @@ pub enum SpectrumTransformConfig {
 impl Default for Config {
 	fn default() -> Self {
 		Config {
-			min_freq: 200.0f64.log2(), // Low-end of human hearing
-			max_freq: 20000.0f64.log2(), // High-end of human hearing
+			min_freq: 200.0, // Low-end of human hearing
+			max_freq: 20000.0, // High-end of human hearing
 			samples_per_octave: 180,
 			spectrum_generator: SpectrumGeneratorConfig::Audio(audio_spectrum_generator::Config {
 				dft_window_size: 2048,
@@ -50,10 +50,20 @@ impl Default for Config {
 				SpectrumTransformConfig::VolumeNormalizer,
 			],
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
-				key_log_freq: 263.74f64.log2(), // C
+				key_log_freq: 263.74, // C
 				outer_pad: 20.0,
 				center_pad: 50.0,
 			}),
 		}
+	}
+}
+
+impl Config {
+	pub fn spectrum_params(&self) -> SpectrumParams {
+		let octaves = self.max_freq.log2() - self.min_freq.log2();
+		let samples = (self.samples_per_octave as f64 * octaves).round() as usize;
+		// there must be at least two samples, one at min_freq and one at max_freq
+		let samples = samples.max(2);
+		SpectrumParams::exp_spaced(samples, self.min_freq, self.max_freq)
 	}
 }

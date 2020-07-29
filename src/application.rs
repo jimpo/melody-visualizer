@@ -1,4 +1,4 @@
-use futures::{prelude::*, channel::mpsc, future::Either};
+use futures::{prelude::*, channel::mpsc, future::Either, join};
 use glib::MainContext;
 use log::{debug, error};
 use std::{
@@ -8,7 +8,7 @@ use std::{
 	rc::Rc,
 };
 
-use crate::app::config::{Config, SpectrumGeneratorConfig};
+use crate::app::config::{Config, GraphicGeneratorConfig, SpectrumGeneratorConfig};
 use crate::audio::AudioSourceController;
 use crate::audio_spectrum_generator::AudioSpectrumGenerator;
 use crate::async_processor::AsyncProcessor;
@@ -18,13 +18,14 @@ use crate::graphic_renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
 use crate::spectrum_renderer::{self, SpectrumRenderer};
+use crate::spiral::SpiralGenerator;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
 pub struct Controller {
+	pub config: Config,
 	source: Option<Box<dyn JackSource>>,
 	source_port_name: Option<String>,
-	config: Config,
 	pubsub: PubSub,
 	notifier: Notifier,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
@@ -56,15 +57,20 @@ impl Controller {
 		)?;
 
 		let mut controller = Controller {
+			config: Config::default(),
 			source: None,
 			source_port_name: None,
-			config: Config::default(),
 			pubsub,
 			notifier,
 			graphic_renderer,
 			spectrum_renderer,
 		};
-		controller.activate_source().await?;
+		let (result1, result2) = join!(
+			controller.activate_source(),
+			controller.update_graphic_generator(),
+		);
+		result1?;
+		result2?;
 		Ok(Rc::new(RefCell::new(controller)))
 	}
 
@@ -103,7 +109,7 @@ impl Controller {
 						);
 						(Box::new(source), Box::new(generator))
 					}
-					Err(err) => return Either::Left(future::ready(Err(err))),
+					Err(err) => return Either::Left(future::err(err)),
 				}
 			}
 		};
@@ -116,8 +122,25 @@ impl Controller {
 		)
 	}
 
-	pub fn config(&self) -> &Config {
-		&self.config
+	pub fn update_graphic_generator(&self) -> impl Future<Output=Result<(), Error>> {
+		let config = self.config.graphic_generator.clone();
+		self.graphic_renderer
+			.exec_cloned(move |renderer| {
+				match config {
+					GraphicGeneratorConfig::Spiral(config) => {
+						match renderer
+							.generator_mut()
+							.upcast_any_mut()
+							.downcast_mut::<SpiralGenerator>()
+						{
+							Some(spiral) => spiral.set_config(config),
+							None => renderer.set_generator(Box::new(SpiralGenerator::new(config))),
+						}
+					}
+
+				}
+			})
+			.map_err(Error::Communication)
 	}
 
 	pub fn jack_client(&self) -> Option<&jack::Client> {

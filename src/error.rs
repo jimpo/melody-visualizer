@@ -22,9 +22,6 @@ pub enum Error {
 	GraphicDrawClonesSurface,
 	#[display(fmt = "communication error with background processor: {}", _0)]
 	Communication(CommunicationError),
-	#[display(fmt = "invalid async command, expected type {}", expected_type_name)]
-	#[from(ignore)]
-	InvalidCommand { expected_type_name: &'static str },
 	#[display(fmt = "the JACK client is not active")]
 	NoJackSource,
 	#[display(fmt = "failed to publish notification: {:?}", _0)]

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::application::{events::SourcePortChanged, Controller as AppController};
 use crate::async_processor::AsyncProcessor;
-use crate::app::config::SpectrumGeneratorConfig;
+use crate::app::config::{SpectrumGeneratorConfig, GraphicGeneratorConfig};
 use crate::error::Error;
 use crate::graphic_renderer::GraphicRenderer;
 use crate::gui::error_dialog;
@@ -29,9 +29,6 @@ const MAX_NOTE: Note = note!(C, 8);
 const DEFAULT_MIN_FREQ: f64 = 200.0; // Hz
 const DEFAULT_MAX_FREQ: f64 = 2000.0; // Hz
 const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
-const DEFAULT_SPIRAL_KEY_FREQ: f64 = 263.74; // C
-const DEFAULT_SPIRAL_OUTER_PAD: f64 = 20.0;
-const DEFAULT_SPIRAL_INNER_PAD: f64 = 50.0;
 
 // Configure
 // - Audio Source (Audio or MIDI & Port)
@@ -46,7 +43,6 @@ pub struct Controller {
 	port_store: gtk::ListStore,
 	min_log_freq: f64,
 	max_log_freq: f64,
-	key_log_freq: f64,
 	samples_per_octave: usize,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
 	inputs_changed_subscription: Option<SubscriptionHandle>,
@@ -63,28 +59,6 @@ impl Controller {
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
 				renderer.set_spectrum_params(spectrum_params);
-			})
-			.map_err(Error::Communication)
-	}
-
-	fn update_spiral_config(&self) -> impl Future<Output=Result<(), Error>> {
-		let config = self.build_spiral_config();
-		self.graphic_renderer
-			.exec_cloned(move |renderer| {
-				let spiral: &mut SpiralGenerator = renderer.generator_mut()
-					.upcast_any_mut()
-					.downcast_mut()
-					.expect("update_spiral_config called when generator is not a SpiralGenerator");
-				spiral.set_config(config);
-			})
-			.map_err(Error::Communication)
-	}
-
-	fn update_graphic_generator(&self) -> impl Future<Output=Result<(), Error>> {
-		let generator = Box::new(SpiralGenerator::new(self.build_spiral_config()));
-		self.graphic_renderer
-			.exec_cloned(move |renderer| {
-				renderer.set_generator(generator);
 			})
 			.map_err(Error::Communication)
 	}
@@ -142,14 +116,6 @@ impl Controller {
 		let samples = samples.max(2);
 		SpectrumParams::exp_spaced(samples, self.min_log_freq.exp2(), self.max_log_freq.exp2())
 	}
-
-	fn build_spiral_config(&self) -> spiral::Config {
-		spiral::Config {
-			outer_pad: DEFAULT_SPIRAL_OUTER_PAD,
-			center_pad: DEFAULT_SPIRAL_INNER_PAD,
-			key_log_freq: self.key_log_freq
-		}
-	}
 }
 
 pub fn new(app_controller: Rc<RefCell<AppController>>)
@@ -167,7 +133,6 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		port_store,
 		min_log_freq: DEFAULT_MIN_FREQ.log2(),
 		max_log_freq: DEFAULT_MAX_FREQ.log2(),
-		key_log_freq: DEFAULT_SPIRAL_KEY_FREQ.log2(),
 		samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
 		graphic_renderer,
 		inputs_changed_subscription: None,
@@ -184,8 +149,6 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		controller.refresh_inputs();
 
 		let async_spectrum_params_update = controller.update_spectrum_params();
-		let async_generator_update = controller.update_graphic_generator();
-		let async_spiral_config_update = controller.update_spectrum_params();
 
 		let volume_normalizer_init = controller
 			.app_controller.borrow()
@@ -199,8 +162,6 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		glib::MainContext::default().spawn_local(async move {
 			// TODO: Handle errors better
 			async_spectrum_params_update.await.unwrap();
-			async_generator_update.await.unwrap();
-			async_spiral_config_update.await.unwrap();
 			volume_normalizer_init.await.unwrap();
 		});
 	}
@@ -286,11 +247,14 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	{
 		let mut controller = controller.borrow_mut();
 		controller.inputs_changed_subscription = Some(subscription);
+	}
 
+	{
 		// Set initial control values.
-		min_freq_scale.set_value(controller.min_log_freq);
-		max_freq_scale.set_value(controller.max_log_freq);
-		key_freq_scale.set_value(controller.key_log_freq);
+		let app_controller = app_controller.borrow();
+		min_freq_scale.set_value(app_controller.config.min_freq.log2());
+		max_freq_scale.set_value(app_controller.config.max_freq.log2());
+		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
 	}
 
 	view
@@ -316,11 +280,13 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	let source_name: gtk::Label = builder.get_object("source_name").unwrap();
 	let spectrum_generator_name: gtk::Label =
 		builder.get_object("spectrum_generator_name").unwrap();
+	let visualization_name: gtk::Label = builder.get_object("visualization_name").unwrap();
 
 	// Initialize menu labels.
 	let app_controller = app_controller_ref.borrow();
 	source_name.set_label(get_source_name(&*app_controller));
 	spectrum_generator_name.set_label(get_spectrum_generator_name(&*app_controller));
+	visualization_name.set_label(get_visualization_name(&*app_controller));
 
 	// Subscribe to update menu labels on updates.
 	let app_controller_clone = app_controller_ref.clone();
@@ -508,19 +474,29 @@ fn on_max_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> I
 }
 
 fn on_key_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
-	let mut controller = controller_ref.borrow_mut();
+	let async_update = {
+		let mut controller = controller_ref.borrow_mut();
+		let mut app_controller = controller.app_controller.borrow_mut();
+		match &mut app_controller.config.graphic_generator {
+			GraphicGeneratorConfig::Spiral(config) => {
+				config.key_log_freq = value.log2();
+				app_controller.update_graphic_generator()
+			}
+			config => {
+				log::error!(
+					"spiral control signal fired when other graphic generator is configured: {:?}",
+					config
+				);
+				return Inhibit(false);
+			}
+		}
+	};
 
-	controller.key_log_freq = value;
-	let async_update = controller.update_spiral_config();
-
-	let main_context = glib::MainContext::default();
-	main_context.spawn_local(async move {
-		match async_update.await {
-			Ok(()) => {}
-			Err(err) => error_dialog(err),
+	glib::MainContext::default().spawn_local(async move {
+		if let Err(err) = async_update.await {
+			error_dialog(err);
 		}
 	});
-
 	Inhibit(false)
 }
 
@@ -562,7 +538,13 @@ fn get_source_name(app_controller: &AppController) -> &str {
 }
 
 fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
-	match app_controller.config().spectrum_generator {
+	match app_controller.config.spectrum_generator {
 		SpectrumGeneratorConfig::Audio(_) => "Default Audio Analyzer",
+	}
+}
+
+fn get_visualization_name(app_controller: &AppController) -> &str {
+	match app_controller.config.graphic_generator {
+		GraphicGeneratorConfig::Spiral(_) => "Spiral",
 	}
 }

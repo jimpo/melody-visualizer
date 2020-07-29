@@ -195,7 +195,7 @@
 								</child>
 								<child>
 									<object class="GtkLabel" id="visualization_name">
-										<property name="label">Spiral</property>
+										<property name="label"></property>
 									</object>
 									<packing>
 										<property name="left_attach">1</property>

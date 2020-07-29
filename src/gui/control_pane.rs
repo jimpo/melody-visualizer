@@ -5,7 +5,7 @@ use jack::{AudioOut, PortFlags, PortId, PortSpec};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::application::{Controller as AppController};
+use crate::application::{events::SourcePortChanged, Controller as AppController};
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
 use crate::graphic_renderer::GraphicRenderer;
@@ -216,10 +216,10 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
 	let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
 
-	init_menu(&builder);
+	let app_controller = controller.borrow().app_controller.clone();
+	init_menu(&app_controller, &builder);
 
 	// Populate source selection radio buttons.
-	let app_controller = controller.borrow().app_controller.clone();
 	for selector in build_source_type_selectors(&app_controller) {
 		source_type_selection.add(&selector);
 	}
@@ -295,7 +295,7 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	view
 }
 
-fn init_menu(builder: &gtk::Builder) {
+fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Builder) {
 	let menu: gtk::ListBox = builder.get_object("control_menu").unwrap();
 
 	let control_stack: gtk::Stack = builder.get_object("control_stack").unwrap();
@@ -316,7 +316,19 @@ fn init_menu(builder: &gtk::Builder) {
 	let spectrum_generator_name: gtk::Label =
 		builder.get_object("spectrum_generator_name").unwrap();
 
-	menu.add(&build_transform_row("test"));
+	// Initialize menu labels.
+	let app_controller = app_controller_ref.borrow();
+	source_name.set_label(app_controller.source_port_name().unwrap_or("None"));
+
+	// Subscribe to update menu labels on updates.
+	let app_controller_clone = app_controller_ref.clone();
+	let source_name_clone = source_name.clone();
+	let source_name_subscription = app_controller
+		.pubsub()
+		.subscribe(move |_: &SourcePortChanged| {
+			let app_controller = app_controller_clone.borrow();
+			source_name_clone.set_label(app_controller.source_port_name().unwrap_or("None"));
+		});
 
 	menu.connect_row_activated(move |_, row| {
 		let child = if row == &source_row {
@@ -332,6 +344,11 @@ fn init_menu(builder: &gtk::Builder) {
 			return;
 		};
 		control_stack.set_visible_child(child);
+	});
+
+	// Keep subscriptions alive until view is destroyed.
+	menu.connect_destroy(move |_| {
+		let _ = &source_name_subscription;
 	});
 }
 
@@ -383,7 +400,9 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 	let port_name = selection.get_selected()
 		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
 	let mut app_controller = app_controller.borrow_mut();
-	app_controller.connect_port(port_name);
+	if let Err(err) = app_controller.connect_port(port_name) {
+		error_dialog(err);
+	}
 }
 
 fn on_source_type_toggled(

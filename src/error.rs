@@ -1,4 +1,6 @@
+use std::any::Any;
 use std::io;
+use std::sync::mpsc::SendError;
 
 use crate::async_processor::CommunicationError;
 
@@ -23,4 +25,9 @@ pub enum Error {
 	#[display(fmt = "invalid async command, expected type {}", expected_type_name)]
 	#[from(ignore)]
 	InvalidCommand { expected_type_name: &'static str },
+	#[display(fmt = "the JACK client is not active")]
+	NoJackSource,
+	#[display(fmt = "failed to publish notification: {:?}", _0)]
+	#[from(ignore)]
+	PubSub(SendError<Box<dyn Any + Send>>),
 }

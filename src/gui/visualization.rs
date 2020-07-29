@@ -7,7 +7,7 @@ use std::{
 	time::Duration,
 };
 
-use crate::application::{events::GraphicUpdate, Controller as AppController};
+use crate::application::{Controller as AppController};
 use crate::async_processor::AsyncProcessor;
 use crate::gui::error_dialog;
 use crate::error::Error;

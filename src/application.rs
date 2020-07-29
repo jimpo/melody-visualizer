@@ -1,9 +1,12 @@
 use futures::{prelude::*, channel::mpsc};
 use glib::MainContext;
 use log::{debug, error};
-use std::cell::{RefCell, RefMut};
-use std::mem;
-use std::rc::Rc;
+use std::{
+	any::Any,
+	cell::{RefCell, RefMut},
+	mem,
+	rc::Rc,
+};
 
 use crate::audio::AudioSourceController;
 use crate::audio_spectrum_generator::AudioSpectrumGenerator;
@@ -20,7 +23,9 @@ const DEFAULT_DFT_WINDOW_SIZE: usize = 2048;
 
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
+	source_port_name: Option<String>,
 	pubsub: PubSub,
+	notifier: Notifier,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
 	spectrum_renderer: AsyncProcessor<SpectrumRenderer>,
 }
@@ -28,6 +33,7 @@ pub struct Controller {
 impl Controller {
 	pub fn new() -> Result<Self, Error> {
 		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
+		let notifier = pubsub.notifier();
 
 		// Channel sending the spectrum from the spectrum rendering thread to the graphic rendering
 		// thread.
@@ -50,7 +56,9 @@ impl Controller {
 
 		let mut controller = Controller {
 			source: None,
+			source_port_name: None,
 			pubsub,
+			notifier,
 			graphic_renderer,
 			spectrum_renderer,
 		};
@@ -116,14 +124,40 @@ impl Controller {
 		self.source.as_ref().map(|source| source.client())
 	}
 
-	pub fn connect_port(&mut self, output_port: Option<String>) {
-		match self.source {
-			Some(ref source) => {
-				if let Err(err) = connect_port(&**source, output_port) {
-					error!("connect_port: {}", err);
-				}
+	pub fn source_port_name(&self) -> Option<&str> {
+		self.source_port_name.as_ref().map(AsRef::as_ref)
+	}
+
+	pub fn connect_port(&mut self, output_port: Option<String>) -> Result<(), Error> {
+		if let Some(ref source) = self.source {
+			let client = source.client();
+			let input_port = source.input_port();
+
+			client.disconnect(input_port)?;
+			self.source_port_name = None;
+			self.notify_and_log_err(events::SourcePortChanged);
+
+			if let Some(output_port_name) = output_port {
+				client.connect_ports_by_name(
+					&output_port_name,
+					&input_port.name()?
+				)?;
+				debug!("Connected port {}", output_port_name);
+				self.source_port_name = Some(output_port_name);
+				self.notify_and_log_err(events::SourcePortChanged);
+			} else {
+				debug!("Disconnected all ports");
 			}
-			None => error!("connect_port called with empty source"),
+
+			Ok(())
+		} else {
+			Err(Error::NoJackSource)
+		}
+	}
+
+	fn notify_and_log_err<T: Any + Send>(&self, notification: T) {
+		if let Err(err) = self.notifier.send(notification) {
+			log::error!("{}", Error::PubSub(err));
 		}
 	}
 
@@ -135,50 +169,6 @@ impl Controller {
 	}
 }
 
-fn connect_port(source: &dyn JackSource, output_port: Option<String>) -> Result<(), Error> {
-	let client = source.client();
-	let input_port = source.input_port();
-	client.disconnect(input_port)?;
-	if let Some(output_port_name) = output_port {
-		client.connect_ports_by_name(
-			&output_port_name,
-			&input_port.name()?
-		)?;
-		debug!("Connected port {}", output_port_name);
-	} else {
-		debug!("Disconnected all ports");
-	}
-	Ok(())
-}
-
-async fn process_graphic_updates(
-	graphic: Rc<RefCell<Graphic>>,
-	notifier: Notifier,
-	mut graphic_rx: mpsc::Receiver<Graphic>,
-	mut graphic_tx: mpsc::Sender<GraphicBuffer>,
-) {
-	while let Some(new_graphic) = graphic_rx.next().await {
-		// Update the stored graphic.
-		let old_graphic = mem::replace(&mut *graphic.borrow_mut(), new_graphic);
-
-		// Notify subscribers that graphic has been updated. This triggers a redraw on the
-		// visualization pane.
-		if let Err(err) = notifier.send(events::GraphicUpdate) {
-			error!("failed to notify of graphic update: {}", err);
-		}
-
-		// Recycle the old graphic and send empty buffer to renderer.
-		if let Err(err) = graphic_tx.send(old_graphic.into_buffer()).await {
-			if err.is_disconnected() {
-				debug!("graphic output channel disconnected, stopping main thread handler");
-				break;
-			} else {
-				error!("error sending graphic buffer to processing thread");
-			}
-		}
-	}
-}
-
 pub mod events {
-	pub struct GraphicUpdate;
+	pub struct SourcePortChanged;
 }

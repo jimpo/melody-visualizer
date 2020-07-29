@@ -9,6 +9,7 @@ use crate::gui::control_pane;
 use crate::gui::visualization;
 use crate::application::Controller;
 
+const STYLE: &[u8] = include_bytes!("style.css");
 const UI_DEF: &str = include_str!("window.ui");
 
 pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
@@ -40,6 +41,15 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 			}
 		});
 	});
+
+	// Apply the CSS style.
+	let style_provider = gtk::CssProvider::new();
+	style_provider.load_from_data(STYLE).unwrap();
+	gtk::StyleContext::add_provider_for_screen(
+		&gdk::Screen::get_default().unwrap(),
+		&style_provider,
+		gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+	);
 
 	Ok(())
 }

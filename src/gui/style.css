@@ -1,0 +1,11 @@
+list#control_menu > row {
+    padding: 10px 0;
+}
+
+#control_stack {
+    padding: 10px;
+}
+
+#control_stack > frame {
+    margin: 10px;
+}

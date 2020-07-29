@@ -1,6 +1,6 @@
 use futures::prelude::*;
 use glib::Type;
-use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt};
+use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt, WidgetExt};
 use jack::{AudioOut, PortFlags, PortId, PortSpec};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,7 +18,6 @@ use crate::source::{events::InputsChanged, SourceType};
 use crate::spiral::{self, SpiralGenerator};
 use crate::volume_normalizer::VolumeNormalizer;
 
-const STYLE: &[u8] = include_bytes!("control_pane.css");
 const UI_DEF: &str = include_str!("control_pane.ui");
 
 const PORT_NAME_COL: i32 = 0;
@@ -219,10 +218,6 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 
 	init_menu(&builder);
 
-	// Style the control pane.
-	let style_provider = gtk::CssProvider::new();
-	style_provider.load_from_data(STYLE).unwrap();
-
 	// Populate source selection radio buttons.
 	let app_controller = controller.borrow().app_controller.clone();
 	for selector in build_source_type_selectors(&app_controller) {
@@ -305,24 +300,71 @@ fn init_menu(builder: &gtk::Builder) {
 
 	let control_stack: gtk::Stack = builder.get_object("control_stack").unwrap();
 	let source_control: gtk::Frame = builder.get_object("source_control").unwrap();
+	let spectrum_generator_control: gtk::Frame =
+		builder.get_object("spectrum_generator_control").unwrap();
 	let visualization_control: gtk::Frame = builder.get_object("visualization_control").unwrap();
+	let add_transform_control: gtk::Frame = builder.get_object("add_transform_control").unwrap();
 
 	let source_row: gtk::ListBoxRow = builder.get_object("source_row").unwrap();
 	let spectrum_generator_row: gtk::ListBoxRow =
 		builder.get_object("spectrum_generator_row").unwrap();
 	let visualization_row: gtk::ListBoxRow =
 		builder.get_object("visualization_row").unwrap();
+	let add_transform_row: gtk::ListBoxRow = builder.get_object("add_transform_row").unwrap();
+
+	let source_name: gtk::Label = builder.get_object("source_name").unwrap();
+	let spectrum_generator_name: gtk::Label =
+		builder.get_object("spectrum_generator_name").unwrap();
+
+	menu.add(&build_transform_row("test"));
 
 	menu.connect_row_activated(move |_, row| {
-		if row == &source_row {
-			control_stack.set_visible_child(&source_control);
+		let child = if row == &source_row {
+			&source_control
 		} else if row == &spectrum_generator_row {
+			&spectrum_generator_control
+		} else if row == &add_transform_row {
+			&add_transform_control
 		} else if row == &visualization_row {
-			control_stack.set_visible_child(&visualization_control);
+			&visualization_control
 		} else {
 			log::error!("unknown control menu row activated");
-		}
+			return;
+		};
+		control_stack.set_visible_child(child);
 	});
+}
+
+fn build_transform_row(name: &str) -> gtk::ListBoxRow {
+	let row = gtk::ListBoxRow::new();
+
+	let grid = gtk::GridBuilder::new()
+		.row_homogeneous(true)
+		.column_homogeneous(true)
+		.build();
+	row.add(&grid);
+
+	let button_box = gtk::ButtonBoxBuilder::new()
+		.orientation(gtk::Orientation::Horizontal)
+		.layout_style(gtk::ButtonBoxStyle::Center)
+		.build();
+	grid.attach(&button_box, 0, 0, 1, 1);
+
+	let up_icon = gtk::Image::from_icon_name(Some("up"), gtk::IconSize::Button);
+	let down_icon = gtk::Image::from_icon_name(Some("down"), gtk::IconSize::Button);
+	let remove_icon = gtk::Image::from_icon_name(Some("remove"), gtk::IconSize::Button);
+
+	let up_button = gtk::ButtonBuilder::new().image(&up_icon).build();
+	let down_button = gtk::ButtonBuilder::new().image(&down_icon).build();
+	let remove_button = gtk::ButtonBuilder::new().image(&remove_icon).build();
+	button_box.add(&down_button);
+	button_box.add(&up_button);
+	button_box.add(&remove_button);
+
+	let label = gtk::LabelBuilder::new().label(name).build();
+	grid.attach(&label, 1, 0, 1, 1);
+
+	row
 }
 
 fn build_port_view(port_store: &gtk::ListStore) -> gtk::TreeView {

@@ -1,34 +1,215 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
+	<object class="GtkImage" id="down-icon">
+		<property name="stock">gtk-go-down</property>
+	</object>
+	<object class="GtkImage" id="remove-icon">
+		<property name="stock">gtk-remove</property>
+	</object>
+	<object class="GtkImage" id="up-icon">
+		<property name="stock">gtk-go-up</property>
+	</object>
 	<object class="GtkBox" id="control_pane">
 		<property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+		<property name="spacing">20</property>
 		<child>
-			<object class="GtkFrame">
-				<child type="label">
-					<object class="GtkLabel">
-						<property name="label">Input Source</property>
+			<object class="GtkListBox" id="control_menu">
+				<property name="activate-on-single-click">True</property>
+				<child>
+					<object class="GtkListBoxRow" id="source_row">
+						<child>
+							<object class="GtkGrid">
+								<property name="margin-top">15</property>
+								<property name="margin-bottom">15</property>
+								<property name="row_homogeneous">True</property>
+								<property name="column_homogeneous">True</property>
+								<child>
+									<object class="GtkLabel">
+										<property name="label">Audio Source</property>
+										<attributes>
+											<attribute name="weight" value="bold"/>
+										</attributes>
+									</object>
+									<packing>
+										<property name="left_attach">0</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
+								<child>
+									<object class="GtkLabel" id="source_name">
+										<property name="label">mplayer[2153]</property>
+									</object>
+									<packing>
+										<property name="left_attach">1</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
+							</object>
+						</child>
 					</object>
 				</child>
 				<child>
-					<object class="GtkBox">
-						<property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+					<object class="GtkListBoxRow" id="spectrum_generator_row">
 						<child>
-							<object class="GtkBox" id="source_type_selection">
-								<property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
+							<object class="GtkGrid">
+								<property name="margin-top">15</property>
+								<property name="margin-bottom">15</property>
+								<property name="row_homogeneous">True</property>
+								<property name="column_homogeneous">True</property>
+								<child>
+									<object class="GtkLabel">
+										<property name="label">Spectrum Analysis</property>
+										<attributes>
+											<attribute name="weight" value="bold"/>
+										</attributes>
+									</object>
+									<packing>
+										<property name="left_attach">0</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
+								<child>
+									<object class="GtkLabel" id="spectrum-analysis-name">
+										<property name="label">Default audio analyzer</property>
+									</object>
+									<packing>
+										<property name="left_attach">1</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
 							</object>
 						</child>
+					</object>
+				</child>
+				<child>
+					<object class="GtkListBoxRow">
 						<child>
-							<object class="GtkTreeView" id="port_list">
+							<object class="GtkGrid">
+								<property name="margin-top">15</property>
+								<property name="margin-bottom">15</property>
+								<property name="row_homogeneous">True</property>
+								<property name="column_homogeneous">True</property>
 								<child>
-									<object class="GtkTreeViewColumn">
-										<property name="title">Port</property>
+									<object class="GtkButtonBox">
+										<property name="orientation">horizontal</property>
+										<property name="layout_style">center</property>
 										<child>
-											<object class="GtkCellRendererText" id="test-renderer"/>
-											<attributes>
-												<attribute name="text">0</attribute>
-											</attributes>
+											<object class="GtkButton">
+												<property name="image">up-icon</property>
+											</object>
+											<packing>
+												<property name="expand">True</property>
+												<property name="fill">True</property>
+												<property name="position">0</property>
+											</packing>
+										</child>
+										<child>
+											<object class="GtkButton">
+												<property name="image">remove-icon</property>
+											</object>
+											<packing>
+												<property name="expand">True</property>
+												<property name="fill">True</property>
+												<property name="position">1</property>
+											</packing>
+										</child>
+										<child>
+											<object class="GtkButton">
+												<property name="image">down-icon</property>
+											</object>
+											<packing>
+												<property name="expand">True</property>
+												<property name="fill">True</property>
+												<property name="position">2</property>
+											</packing>
 										</child>
 									</object>
+									<packing>
+										<property name="left_attach">0</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
+								<child>
+									<object class="GtkLabel">
+										<property name="label">Volume normalizer</property>
+									</object>
+									<packing>
+										<property name="left_attach">1</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
+							</object>
+						</child>
+					</object>
+				</child>
+				<child>
+					<object class="GtkListBoxRow">
+						<child>
+							<object class="GtkBox">
+								<property name="margin-top">15</property>
+								<property name="margin-bottom">15</property>
+								<property name="halign">center</property>
+								<property name="valign">center</property>
+								<child>
+									<object class="GtkBox">
+										<property name="spacing">10</property>
+										<child>
+											<object class="GtkImage">
+												<property name="stock">gtk-add</property>
+											</object>
+											<packing>
+												<property name="expand">False</property>
+												<property name="fill">True</property>
+												<property name="position">0</property>
+											</packing>
+										</child>
+										<child>
+											<object class="GtkLabel">
+												<property name="label">New spectrum transform</property>
+												<attributes>
+													<attribute name="style" value="italic"/>
+												</attributes>
+											</object>
+											<packing>
+												<property name="expand">False</property>
+												<property name="fill">True</property>
+												<property name="position">1</property>
+											</packing>
+										</child>
+									</object>
+								</child>
+							</object>
+						</child>
+					</object>
+				</child>
+				<child>
+					<object class="GtkListBoxRow" id="visualization_row">
+						<child>
+							<object class="GtkGrid">
+								<property name="margin-top">15</property>
+								<property name="margin-bottom">15</property>
+								<property name="row_homogeneous">True</property>
+								<property name="column_homogeneous">True</property>
+								<child>
+									<object class="GtkLabel">
+										<property name="label">Visualization</property>
+										<attributes>
+											<attribute name="weight" value="bold"/>
+										</attributes>
+									</object>
+									<packing>
+										<property name="left_attach">0</property>
+										<property name="top_attach">0</property>
+									</packing>
+								</child>
+								<child>
+									<object class="GtkLabel" id="visualization_name">
+										<property name="label">Spiral</property>
+									</object>
+									<packing>
+										<property name="left_attach">1</property>
+										<property name="top_attach">0</property>
+									</packing>
 								</child>
 							</object>
 						</child>
@@ -37,30 +218,68 @@
 			</object>
 		</child>
 		<child>
-			<object class="GtkFrame">
-				<child type="label">
-					<object class="GtkLabel">
-						<property name="label">Visualization</property>
+			<object class="GtkStack" id="control_stack">
+				<child>
+					<object class="GtkFrame" id="source_control">
+						<child type="label">
+							<object class="GtkLabel">
+								<property name="label">Input Source</property>
+							</object>
+						</child>
+						<child>
+							<object class="GtkBox">
+								<property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+								<child>
+									<object class="GtkBox" id="source_type_selection">
+										<property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
+									</object>
+								</child>
+								<child>
+									<object class="GtkTreeView" id="port_list">
+										<child>
+											<object class="GtkTreeViewColumn">
+												<property name="title">Port</property>
+												<child>
+													<object class="GtkCellRendererText"/>
+													<attributes>
+														<attribute name="text">0</attribute>
+													</attributes>
+												</child>
+											</object>
+										</child>
+									</object>
+								</child>
+							</object>
+						</child>
 					</object>
 				</child>
 				<child>
-					<object class="GtkBox">
-						<property name="orientation">GTK_ORIENTATION_VERTICAL</property>
-						<child>
-							<object class="GtkScale" id="min_freq_scale">
-								<property name="draw-value">False</property>
+					<object class="GtkFrame" id="visualization_control">
+						<child type="label">
+							<object class="GtkLabel">
+								<property name="label">Visualization</property>
 							</object>
 						</child>
 						<child>
-							<object class="GtkScale" id="max_freq_scale">
-								<property name="draw-value">False</property>
+							<object class="GtkBox">
+								<property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+								<child>
+									<object class="GtkScale" id="min_freq_scale">
+										<property name="draw-value">False</property>
+									</object>
+								</child>
+								<child>
+									<object class="GtkScale" id="max_freq_scale">
+										<property name="draw-value">False</property>
+									</object>
+								</child>
+								<child>
+									<object class="GtkScale" id="key_freq_scale">
+										<property name="draw-value">False</property>
+									</object>
+								</child>
 							</object>
 						</child>
-						<child>
-                        	<object class="GtkScale" id="key_freq_scale">
-                        		<property name="draw-value">False</property>
-                        	</object>
-                        </child>
 					</object>
 				</child>
 			</object>

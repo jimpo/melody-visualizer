@@ -1,6 +1,6 @@
 use futures::prelude::*;
 use glib::Type;
-use gtk::{prelude::*, TreeSelection, TreeIter};
+use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt};
 use jack::{AudioOut, PortFlags, PortId, PortSpec};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -32,6 +32,14 @@ const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
 const DEFAULT_SPIRAL_KEY_FREQ: f64 = 263.74; // C
 const DEFAULT_SPIRAL_OUTER_PAD: f64 = 20.0;
 const DEFAULT_SPIRAL_INNER_PAD: f64 = 50.0;
+
+// Configure
+// - Audio Source (Audio or MIDI & Port)
+// - Spectrum Analysis
+//   Spectrum Transform
+// - Visualization
+
+// Ideas: Maybe have a StatusBar at the box for async updates.
 
 pub struct Controller {
 	app_controller: Rc<RefCell<AppController>>,
@@ -209,6 +217,8 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
 	let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
 
+	init_menu(&builder);
+
 	// Style the control pane.
 	let style_provider = gtk::CssProvider::new();
 	style_provider.load_from_data(STYLE).unwrap();
@@ -288,6 +298,31 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	}
 
 	view
+}
+
+fn init_menu(builder: &gtk::Builder) {
+	let menu: gtk::ListBox = builder.get_object("control_menu").unwrap();
+
+	let control_stack: gtk::Stack = builder.get_object("control_stack").unwrap();
+	let source_control: gtk::Frame = builder.get_object("source_control").unwrap();
+	let visualization_control: gtk::Frame = builder.get_object("visualization_control").unwrap();
+
+	let source_row: gtk::ListBoxRow = builder.get_object("source_row").unwrap();
+	let spectrum_generator_row: gtk::ListBoxRow =
+		builder.get_object("spectrum_generator_row").unwrap();
+	let visualization_row: gtk::ListBoxRow =
+		builder.get_object("visualization_row").unwrap();
+
+	menu.connect_row_activated(move |_, row| {
+		if row == &source_row {
+			control_stack.set_visible_child(&source_control);
+		} else if row == &spectrum_generator_row {
+		} else if row == &visualization_row {
+			control_stack.set_visible_child(&visualization_control);
+		} else {
+			log::error!("unknown control menu row activated");
+		}
+	});
 }
 
 fn build_port_view(port_store: &gtk::ListStore) -> gtk::TreeView {

@@ -79,65 +79,6 @@
 					</object>
 				</child>
 				<child>
-					<object class="GtkListBoxRow">
-						<child>
-							<object class="GtkGrid">
-								<property name="row_homogeneous">True</property>
-								<property name="column_homogeneous">True</property>
-								<child>
-									<object class="GtkButtonBox">
-										<property name="orientation">horizontal</property>
-										<property name="layout_style">center</property>
-										<child>
-											<object class="GtkButton">
-												<property name="image">up-icon</property>
-											</object>
-											<packing>
-												<property name="expand">True</property>
-												<property name="fill">True</property>
-												<property name="position">0</property>
-											</packing>
-										</child>
-										<child>
-											<object class="GtkButton">
-												<property name="image">remove-icon</property>
-											</object>
-											<packing>
-												<property name="expand">True</property>
-												<property name="fill">True</property>
-												<property name="position">1</property>
-											</packing>
-										</child>
-										<child>
-											<object class="GtkButton">
-												<property name="image">down-icon</property>
-											</object>
-											<packing>
-												<property name="expand">True</property>
-												<property name="fill">True</property>
-												<property name="position">2</property>
-											</packing>
-										</child>
-									</object>
-									<packing>
-										<property name="left_attach">0</property>
-										<property name="top_attach">0</property>
-									</packing>
-								</child>
-								<child>
-									<object class="GtkLabel">
-										<property name="label">Volume normalizer</property>
-									</object>
-									<packing>
-										<property name="left_attach">1</property>
-										<property name="top_attach">0</property>
-									</packing>
-								</child>
-							</object>
-						</child>
-					</object>
-				</child>
-				<child>
 					<object class="GtkListBoxRow" id="add_transform_row">
 						<child>
 							<object class="GtkBox">
@@ -259,6 +200,11 @@
 						<child type="label">
 							<object class="GtkLabel">
 								<property name="label">New Spectrum Transform</property>
+							</object>
+						</child>
+						<child>
+							<object class="GtkComboBoxText" id="add_transform_type_selector">
+								<property name="valign">start</property>
 							</object>
 						</child>
 					</object>

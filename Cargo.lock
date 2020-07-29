@@ -569,6 +569,7 @@ dependencies = [
  "gtk",
  "itertools",
  "jack",
+ "lazy_static",
  "log",
  "palette",
  "rustfft",

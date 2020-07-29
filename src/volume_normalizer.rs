@@ -3,16 +3,21 @@ use std::cmp::Ordering;
 use crate::spectrum_renderer::SpectrumTransform;
 use crate::spectrum::Spectrum;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+	pub rate: f64,
+}
+
 #[derive(Debug)]
 pub struct VolumeNormalizer {
-	rate: f64,
+	config: Config,
 	max_value: f64,
 }
 
 impl VolumeNormalizer {
-	pub fn new(rate: f64) -> Self {
+	pub fn new(config: Config) -> Self {
 		VolumeNormalizer {
-			rate,
+			config,
 			max_value: 0.0,
 		}
 	}
@@ -25,7 +30,8 @@ impl SpectrumTransform for VolumeNormalizer {
 		}
 
 		let spectrum_max = spectrum_max_value(&mut spectrum);
-		self.max_value = (1.0 - self.rate) * self.max_value + self.rate * spectrum_max;
+		let rate = self.config.rate;
+		self.max_value = (1.0 - rate) * self.max_value + rate * spectrum_max;
 
 		if spectrum_max != 0.0 {
 			for value in spectrum.values_mut().iter_mut() {

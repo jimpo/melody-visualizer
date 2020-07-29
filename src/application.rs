@@ -1,24 +1,23 @@
 use futures::{prelude::*, channel::mpsc, future::Either, join};
-use glib::MainContext;
-use log::{debug, error};
 use std::{
 	any::Any,
-	cell::{RefCell, RefMut},
-	mem,
+	cell::RefCell,
 	rc::Rc,
 };
 
-use crate::app::config::{Config, GraphicGeneratorConfig, SpectrumGeneratorConfig};
+use crate::app::config::{
+	Config, GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
+};
 use crate::audio::AudioSourceController;
 use crate::audio_spectrum_generator::AudioSpectrumGenerator;
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
-use crate::graphic::{Graphic, GraphicBuffer};
 use crate::graphic_renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
 use crate::spectrum_renderer::{self, SpectrumRenderer};
 use crate::spiral::SpiralGenerator;
+use crate::volume_normalizer::VolumeNormalizer;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
@@ -102,7 +101,7 @@ impl Controller {
 			SpectrumGeneratorConfig::Audio(ref config) => {
 				match AudioSourceController::new(BUFFER_SIZE, self.pubsub.notifier()) {
 					Ok((source, reader)) => {
-						debug!("Audio source activated");
+						log::debug!("Audio source activated");
 						let sample_rate = source.client().sample_rate() as jack::Frames;
 						let generator = AudioSpectrumGenerator::new(
 							config.clone(), reader, sample_rate
@@ -165,17 +164,36 @@ impl Controller {
 					&output_port_name,
 					&input_port.name()?
 				)?;
-				debug!("Connected port {}", output_port_name);
+				log::debug!("Connected port {}", output_port_name);
 				self.source_port_name = Some(output_port_name);
 				self.notify_and_log_err(events::SourcePortChanged);
 			} else {
-				debug!("Disconnected all ports");
+				log::debug!("Disconnected all ports");
 			}
 
 			Ok(())
 		} else {
 			Err(Error::NoJackSource)
 		}
+	}
+
+	pub fn insert_spectrum_transform(&mut self, transform_config: SpectrumTransformConfig)
+		-> impl Future<Output=Result<(), Error>>
+	{
+		self.config.spectrum_transforms.push(transform_config.clone());
+		let index = self.config.spectrum_transforms.len() - 1;
+		log::debug!("inserted new transform {}", index);
+		self.notify_and_log_err(events::InsertSpectrumTransform { index });
+
+		self.spectrum_renderer
+			.exec_cloned(move |renderer| {
+				let transform = match transform_config {
+					SpectrumTransformConfig::VolumeNormalizer(config) =>
+						VolumeNormalizer::new(config),
+				};
+				renderer.transforms_mut().push(Box::new(transform));
+			})
+			.map_err(Error::Communication)
 	}
 
 	fn notify_and_log_err<T: Any + Send>(&self, notification: T) {
@@ -194,4 +212,9 @@ impl Controller {
 
 pub mod events {
 	pub struct SourcePortChanged;
+
+	#[derive(Debug, Clone)]
+	pub struct InsertSpectrumTransform {
+		pub index: usize,
+	}
 }

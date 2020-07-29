@@ -2,12 +2,19 @@ use futures::prelude::*;
 use glib::Type;
 use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt, WidgetExt};
 use jack::{AudioOut, PortFlags, PortId, PortSpec};
-use std::cell::RefCell;
-use std::rc::Rc;
+use lazy_static::lazy_static;
+use std::{
+	cell::RefCell,
+	collections::HashMap,
+	rc::Rc,
+};
 
-use crate::application::{events::SourcePortChanged, Controller as AppController};
+use crate::application::{
+	events::{SourcePortChanged, InsertSpectrumTransform},
+	Controller as AppController,
+};
 use crate::async_processor::AsyncProcessor;
-use crate::app::config::{SpectrumGeneratorConfig, GraphicGeneratorConfig};
+use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::error::Error;
 use crate::graphic_renderer::GraphicRenderer;
 use crate::gui::error_dialog;
@@ -17,7 +24,7 @@ use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::SpectrumParams;
 use crate::source::{events::InputsChanged, SourceType};
 use crate::spiral::{self, SpiralGenerator};
-use crate::volume_normalizer::VolumeNormalizer;
+use crate::volume_normalizer::{self, VolumeNormalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui");
 
@@ -50,7 +57,7 @@ pub struct Controller {
 }
 
 impl Controller {
-	// TODO: Move this to an architecture overview or something.
+	// TODO: Move this comment to an architecture overview or something.
 	//
 	// We have to be very careful about RefCells in async code. So borrowing a controller from a
 	// RefCell then yielding with await is a big problem.
@@ -70,8 +77,6 @@ impl Controller {
 			.jack_client()
 			.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
 			.unwrap_or_default();
-
-		log::debug!("refreshing inputs: {:?}", ports);
 
 		// Remove rows from ListStore.
 		if let Some(iter) = port_store.get_iter_first() {
@@ -150,19 +155,9 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 
 		let async_spectrum_params_update = controller.update_spectrum_params();
 
-		let volume_normalizer_init = controller
-			.app_controller.borrow()
-			.spectrum_renderer()
-			.exec_cloned(|renderer| {
-				renderer
-					.transforms_mut()
-					.push(Box::new(VolumeNormalizer::new(0.1)));
-			});
-
 		glib::MainContext::default().spawn_local(async move {
 			// TODO: Handle errors better
 			async_spectrum_params_update.await.unwrap();
-			volume_normalizer_init.await.unwrap();
 		});
 	}
 
@@ -177,9 +172,28 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	let min_freq_scale: gtk::Scale = builder.get_object("min_freq_scale").unwrap();
 	let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
 	let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
+	let add_transform_type_selector: gtk::ComboBoxText =
+		builder.get_object("add_transform_type_selector").unwrap();
 
 	let app_controller = controller.borrow().app_controller.clone();
 	init_menu(&app_controller, &builder);
+
+	// Transform type selector options.
+	for (id, config) in get_transform_type_map().iter() {
+		add_transform_type_selector.append(Some(id), get_spectrum_transform_name(config));
+	}
+	let app_controller_clone = app_controller.clone();
+	add_transform_type_selector.connect_changed(move |selector| {
+		if let Some(id) = selector.get_active_id() {
+			selector.set_active_id(None);
+			if let Some(config) = get_transform_type_map().get(id.as_str()) {
+				let mut app_controller = app_controller_clone.borrow_mut();
+				handle_async_err(app_controller.insert_spectrum_transform(config.clone()));
+			} else {
+				log::error!("unknown transform type selected: {}", id);
+			}
+		}
+	});
 
 	// Populate source selection radio buttons.
 	for selector in build_source_type_selectors(&app_controller) {
@@ -288,6 +302,12 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	spectrum_generator_name.set_label(get_spectrum_generator_name(&*app_controller));
 	visualization_name.set_label(get_visualization_name(&*app_controller));
 
+	// Initialize transform rows.
+	for (index, config) in app_controller.config.spectrum_transforms.iter().enumerate() {
+		let new_row = build_transform_row(get_spectrum_transform_name(config));
+		menu.insert(&new_row, 2 + index as i32);
+	}
+
 	// Subscribe to update menu labels on updates.
 	let app_controller_clone = app_controller_ref.clone();
 	let source_name_clone = source_name.clone();
@@ -298,6 +318,7 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 			source_name_clone.set_label(get_source_name(&*app_controller));
 		});
 
+	let add_transform_row_clone = add_transform_row.clone();
 	menu.connect_row_activated(move |_, row| {
 		let child = if row == &source_row {
 			&source_control
@@ -314,9 +335,30 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 		control_stack.set_visible_child(child);
 	});
 
+
+	let app_controller_clone = app_controller_ref.clone();
+	let menu_clone = menu.clone();
+	let insert_transform_subscription = app_controller
+		.pubsub()
+		.subscribe(move |notification: &InsertSpectrumTransform| {
+			// TODO: Make this less brittle
+			let InsertSpectrumTransform { index } = notification.clone();
+			let app_controller = app_controller_clone.borrow();
+			if let Some(ref config) = app_controller.config.spectrum_transforms.get(index) {
+				let new_row = build_transform_row(get_spectrum_transform_name(config));
+				menu_clone.insert(&new_row, 2 + index as i32);
+				new_row.show_all();
+
+				if menu_clone.get_selected_row() == Some(add_transform_row_clone.clone()) {
+					menu_clone.select_row(Some(&new_row));
+				}
+			}
+		});
+
 	// Keep subscriptions alive until view is destroyed.
 	menu.connect_destroy(move |_| {
 		let _ = &source_name_subscription;
+		let _ = &insert_transform_subscription;
 	});
 }
 
@@ -440,16 +482,7 @@ fn on_min_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> I
 	}
 
 	controller.min_log_freq = value;
-	let async_update = controller.update_spectrum_params();
-
-	let main_context = glib::MainContext::default();
-	main_context.spawn_local(async move {
-		match async_update.await {
-			Ok(()) => {}
-			Err(err) => error_dialog(err),
-		}
-	});
-
+	handle_async_err(controller.update_spectrum_params());
 	Inhibit(false)
 }
 
@@ -460,16 +493,7 @@ fn on_max_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> I
 	}
 
 	controller.max_log_freq = value;
-	let async_update = controller.update_spectrum_params();
-
-	let main_context = glib::MainContext::default();
-	main_context.spawn_local(async move {
-		match async_update.await {
-			Ok(()) => {}
-			Err(err) => error_dialog(err),
-		}
-	});
-
+	handle_async_err(controller.update_spectrum_params());
 	Inhibit(false)
 }
 
@@ -492,11 +516,7 @@ fn on_key_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> I
 		}
 	};
 
-	glib::MainContext::default().spawn_local(async move {
-		if let Err(err) = async_update.await {
-			error_dialog(err);
-		}
-	});
+	handle_async_err(async_update);
 	Inhibit(false)
 }
 
@@ -543,8 +563,39 @@ fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
 	}
 }
 
+fn get_spectrum_transform_name(config: &SpectrumTransformConfig) -> &str {
+	match config {
+		SpectrumTransformConfig::VolumeNormalizer(_) => "Volume Normalizer",
+	}
+}
+
 fn get_visualization_name(app_controller: &AppController) -> &str {
 	match app_controller.config.graphic_generator {
 		GraphicGeneratorConfig::Spiral(_) => "Spiral",
 	}
+}
+
+fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformConfig> {
+	lazy_static! {
+    	static ref MAP: HashMap<&'static str, SpectrumTransformConfig> =
+			vec![
+				(
+					"VolumeNormalizer",
+					 SpectrumTransformConfig::VolumeNormalizer(
+					 	volume_normalizer::Config { rate: 0.1 }
+					 )
+				),
+			]
+				.into_iter()
+				.collect();
+	}
+	&*MAP
+}
+
+fn handle_async_err(fut: impl Future<Output=Result<(), Error>> + 'static) {
+	glib::MainContext::default().spawn_local(async move {
+		if let Err(err) = fut.await {
+			error_dialog(err);
+		}
+	});
 }

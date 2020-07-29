@@ -13,5 +13,5 @@ pub fn error_dialog(err: Error) {
 		.buttons(gtk::ButtonsType::Close)
 		.build();
 	dialog.run();
-	unsafe { dialog.destroy(); }
+	dialog.close();
 }

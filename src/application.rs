@@ -1,4 +1,4 @@
-use futures::{prelude::*, channel::mpsc};
+use futures::{prelude::*, channel::mpsc, future::Either};
 use glib::MainContext;
 use log::{debug, error};
 use std::{
@@ -8,6 +8,7 @@ use std::{
 	rc::Rc,
 };
 
+use crate::app::config::{Config, SpectrumGeneratorConfig};
 use crate::audio::AudioSourceController;
 use crate::audio_spectrum_generator::AudioSpectrumGenerator;
 use crate::async_processor::AsyncProcessor;
@@ -19,11 +20,11 @@ use crate::source::{JackSource, SourceType};
 use crate::spectrum_renderer::{self, SpectrumRenderer};
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
-const DEFAULT_DFT_WINDOW_SIZE: usize = 2048;
 
 pub struct Controller {
 	source: Option<Box<dyn JackSource>>,
 	source_port_name: Option<String>,
+	config: Config,
 	pubsub: PubSub,
 	notifier: Notifier,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
@@ -31,7 +32,7 @@ pub struct Controller {
 }
 
 impl Controller {
-	pub fn new() -> Result<Self, Error> {
+	pub async fn new() -> Result<Rc<RefCell<Self>>, Error> {
 		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
 		let notifier = pubsub.notifier();
 
@@ -57,13 +58,14 @@ impl Controller {
 		let mut controller = Controller {
 			source: None,
 			source_port_name: None,
+			config: Config::default(),
 			pubsub,
 			notifier,
 			graphic_renderer,
 			spectrum_renderer,
 		};
-		controller.set_source_type(SourceType::Audio)?;
-		Ok(controller)
+		controller.activate_source().await?;
+		Ok(Rc::new(RefCell::new(controller)))
 	}
 
 	pub fn pubsub(&self) -> &PubSub {
@@ -82,42 +84,40 @@ impl Controller {
 		&self.spectrum_renderer
 	}
 
-	pub fn set_source_type(&mut self, source_type: SourceType) -> Result<(), Error> {
-		if Some(source_type) == self.get_source_type() {
-			return Ok(());
-		}
-		debug!("Source type \"{}\" activated", source_type);
-
+	fn activate_source(&mut self) -> impl Future<Output=Result<(), Error>> {
 		// Drop old source first in case new source cannot be constructed.
 		self.source = None;
+		if self.source_port_name.is_some() {
+			self.source_port_name = None;
+			self.notify_and_log_err(events::SourcePortChanged);
+		}
 
-		let (new_source, new_generator) = match source_type {
-			SourceType::Audio => {
-				let (source, reader) = AudioSourceController::new(
-					BUFFER_SIZE, self.pubsub.notifier()
-				)?;
-				let sample_rate = source.client().sample_rate() as jack::Frames;
-				let generator = AudioSpectrumGenerator::new(
-					reader,
-					sample_rate,
-					DEFAULT_DFT_WINDOW_SIZE,
-				);
-				(Box::new(source), Box::new(generator))
+		let (new_source, new_generator) = match self.config.spectrum_generator {
+			SpectrumGeneratorConfig::Audio(ref config) => {
+				match AudioSourceController::new(BUFFER_SIZE, self.pubsub.notifier()) {
+					Ok((source, reader)) => {
+						debug!("Audio source activated");
+						let sample_rate = source.client().sample_rate() as jack::Frames;
+						let generator = AudioSpectrumGenerator::new(
+							config.clone(), reader, sample_rate
+						);
+						(Box::new(source), Box::new(generator))
+					}
+					Err(err) => return Either::Left(future::ready(Err(err))),
+				}
 			}
-			SourceType::MIDI => unimplemented!("MIDI source is not yet implemented"),
 		};
 		self.source = Some(new_source);
 
-		let mut spectrum_renderer = self.spectrum_renderer.clone();
-		MainContext::default().spawn_local(async move {
-			let result = spectrum_renderer
-				.exec(move |renderer| renderer.set_generator(new_generator))
-				.await;
-			// TODO: Error handling.
-			result.unwrap();
-		});
+		Either::Right(
+			self.spectrum_renderer
+				.exec_cloned(move |renderer| renderer.set_generator(new_generator))
+				.map_err(Error::Communication)
+		)
+	}
 
-		Ok(())
+	pub fn config(&self) -> &Config {
+		&self.config
 	}
 
 	pub fn jack_client(&self) -> Option<&jack::Client> {

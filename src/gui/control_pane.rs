@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use crate::application::{events::SourcePortChanged, Controller as AppController};
 use crate::async_processor::AsyncProcessor;
+use crate::app::config::SpectrumGeneratorConfig;
 use crate::error::Error;
 use crate::graphic_renderer::GraphicRenderer;
 use crate::gui::error_dialog;
@@ -318,7 +319,8 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 
 	// Initialize menu labels.
 	let app_controller = app_controller_ref.borrow();
-	source_name.set_label(app_controller.source_port_name().unwrap_or("None"));
+	source_name.set_label(get_source_name(&*app_controller));
+	spectrum_generator_name.set_label(get_spectrum_generator_name(&*app_controller));
 
 	// Subscribe to update menu labels on updates.
 	let app_controller_clone = app_controller_ref.clone();
@@ -327,7 +329,7 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 		.pubsub()
 		.subscribe(move |_: &SourcePortChanged| {
 			let app_controller = app_controller_clone.borrow();
-			source_name_clone.set_label(app_controller.source_port_name().unwrap_or("None"));
+			source_name_clone.set_label(get_source_name(&*app_controller));
 		});
 
 	menu.connect_row_activated(move |_, row| {
@@ -405,20 +407,20 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 	}
 }
 
-fn on_source_type_toggled(
-	app_controller: &RefCell<AppController>,
-	selector: &gtk::RadioButton,
-	source_type: SourceType
-) {
-	if !selector.get_active() {
-		return;
-	}
-
-	let mut app_controller = app_controller.borrow_mut();
-	if let Err(err) = app_controller.set_source_type(source_type) {
-		log::error!("failed to change source type: {}", err);
-	}
-}
+// fn on_source_type_toggled(
+// 	app_controller: &RefCell<AppController>,
+// 	selector: &gtk::RadioButton,
+// 	source_type: SourceType
+// ) {
+// 	if !selector.get_active() {
+// 		return;
+// 	}
+//
+// 	let mut app_controller = app_controller.borrow_mut();
+// 	if let Err(err) = app_controller.set_source_type(source_type) {
+// 		log::error!("failed to change source type: {}", err);
+// 	}
+// }
 
 fn on_input_ports_changed(controller_ref: &Rc<RefCell<Controller>>, update: InputsChanged) {
 	// TODO: Unfortunately, we need to poll until port_update is reflected.
@@ -545,12 +547,22 @@ fn build_source_type_selectors(app_controller: &Rc<RefCell<AppController>>)
 
 		selector.set_active(active_source_type == Some(*source_type));
 
-		let controller_clone = app_controller.clone();
-		selector.connect_toggled(
-			move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
-		);
+		// let controller_clone = app_controller.clone();
+		// selector.connect_toggled(
+		// 	move |selector| on_source_type_toggled(&controller_clone, selector, *source_type)
+		// );
 
 		selectors.push(selector);
 	}
 	selectors
+}
+
+fn get_source_name(app_controller: &AppController) -> &str {
+	app_controller.source_port_name().unwrap_or("None")
+}
+
+fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
+	match app_controller.config().spectrum_generator {
+		SpectrumGeneratorConfig::Audio(_) => "Default Audio Analyzer",
+	}
 }

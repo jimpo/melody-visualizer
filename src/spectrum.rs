@@ -1,6 +1,9 @@
 use std::fmt;
 use std::sync::Arc;
 
+pub type Hz = f64;
+pub type LogHz = f64;
+
 #[derive(Clone)]
 pub struct SpectrumBuffer {
 	params: Arc<SpectrumParams>,

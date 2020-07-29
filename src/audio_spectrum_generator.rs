@@ -15,6 +15,11 @@ use crate::spectrum::{SpectrumBuffer, Spectrum};
 // Half of the DFT window should overlap with the previous.
 const TARGET_OVERLAP: (u64, u64) = (1, 2);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+	pub dft_window_size: usize,
+}
+
 pub struct AudioSpectrumGenerator {
 	audio_buffer: RingBufferReader,
 	sample_rate: Frames,
@@ -33,9 +38,7 @@ impl Debug for AudioSpectrumGenerator {
 }
 
 impl AudioSpectrumGenerator {
-	pub fn new(audio_buffer: RingBufferReader, sample_rate: Frames, dft_window_size: usize)
-		-> Self
-	{
+	pub fn new(config: Config, audio_buffer: RingBufferReader, sample_rate: Frames) -> Self {
 		let mut generator = AudioSpectrumGenerator {
 			audio_buffer,
 			sample_rate,
@@ -44,7 +47,7 @@ impl AudioSpectrumGenerator {
 			dft_output: Vec::new(),
 			windowing: Vec::new(),
 		};
-		generator.set_window_size(dft_window_size);
+		generator.set_window_size(config.dft_window_size);
 		generator
 	}
 

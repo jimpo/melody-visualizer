@@ -20,7 +20,7 @@ pub struct SpiralGenerator {
 	edges: Vec<SegmentEdge>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
 	pub outer_pad: f64,
 	pub center_pad: f64,

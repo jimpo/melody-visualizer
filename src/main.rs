@@ -1,3 +1,4 @@
+mod app;
 mod application;
 mod async_processor;
 mod audio;

@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use gtk::Application;
+use futures::executor;
 use log::error;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -13,7 +14,7 @@ const STYLE: &[u8] = include_bytes!("style.css");
 const UI_DEF: &str = include_str!("window.ui");
 
 pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
-	let controller = Rc::new(RefCell::new(Controller::new()?));
+	let controller = executor::block_on(Controller::new())?;
 
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let window: gtk::ApplicationWindow = builder.get_object("main_window").unwrap();

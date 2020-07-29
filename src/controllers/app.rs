@@ -15,7 +15,7 @@ use crate::error::Error;
 use crate::graphic_renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
-use crate::spectrum_renderer::{self, SpectrumRenderer};
+use crate::spectrum_renderer::{self, SpectrumRenderer, SpectrumTransform};
 use crate::spiral::SpiralGenerator;
 use crate::volume_normalizer::VolumeNormalizer;
 
@@ -65,6 +65,7 @@ impl AppController {
 			spectrum_renderer,
 		};
 		controller.activate_source().await?;
+		controller.sync_spectrum_transforms().await?;
 		controller.update_spectrum_params().await?;
 		controller.update_graphic_generator().await?;
 		Ok(Rc::new(RefCell::new(controller)))
@@ -183,12 +184,28 @@ impl AppController {
 		}
 	}
 
+	pub fn sync_spectrum_transforms(&self) -> impl Future<Output=Result<(), Error>> {
+		let transform_configs = self.config.spectrum_transforms.clone();
+		self.spectrum_renderer
+			.exec_cloned(move |renderer| {
+				*renderer.transforms_mut() = transform_configs
+					.into_iter()
+					.map(|config| -> Box<dyn SpectrumTransform> {
+						match config {
+							SpectrumTransformConfig::VolumeNormalizer(config) =>
+								Box::new(VolumeNormalizer::new(config)),
+						}
+					})
+					.collect();
+			})
+			.map_err(Error::Communication)
+	}
+
 	pub fn insert_spectrum_transform(&mut self, transform_config: SpectrumTransformConfig)
 		-> impl Future<Output=Result<(), Error>>
 	{
 		self.config.spectrum_transforms.push(transform_config.clone());
 		let index = self.config.spectrum_transforms.len() - 1;
-		log::debug!("inserted new transform {}", index);
 		self.notify_and_log_err(events::InsertSpectrumTransform { index });
 
 		self.spectrum_renderer

@@ -33,6 +33,7 @@ impl SpectrumTransform for VolumeNormalizer {
 		let rate = self.config.rate;
 		self.max_value = (1.0 - rate) * self.max_value + rate * spectrum_max;
 
+		log::debug!("max_value = {}", self.max_value);
 		if spectrum_max != 0.0 {
 			for value in spectrum.values_mut().iter_mut() {
 				*value /= self.max_value;

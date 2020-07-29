@@ -1,5 +1,4 @@
 use jack::{Frames, RingBufferReader};
-use log::debug;
 use itertools::Itertools;
 use rustfft::{num_complex::Complex64, num_traits::Zero, FFTplanner, FFT};
 use std::{

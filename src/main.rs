@@ -1,5 +1,5 @@
 mod app;
-mod application;
+mod controllers;
 mod async_processor;
 mod audio;
 mod audio_spectrum_generator;

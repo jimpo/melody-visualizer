@@ -1,11 +1,10 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
-use futures_timer::Delay;
 use log::{debug, error};
 use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::sync::Arc;
 
 use crate::async_processor::AsyncProcessor;

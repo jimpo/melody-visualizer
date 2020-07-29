@@ -1,55 +1,21 @@
-use futures::{prelude::*, future::LocalBoxFuture};
 use gtk::prelude::*;
 use std::{
 	cell::RefCell,
 	mem,
-	rc::{Rc, Weak},
-	time::Duration,
+	rc::Rc,
 };
 
-use crate::application::{Controller as AppController};
-use crate::async_processor::AsyncProcessor;
-use crate::gui::error_dialog;
+use crate::controllers::VisualizationController;
 use crate::error::Error;
-use crate::graphic::{Graphic, GraphicBuffer};
-use crate::graphic_renderer::GraphicRenderer;
+use crate::graphic::Graphic;
 
-const DEFAULT_FRAME_INTERVAL: u32 = 40;
-
-enum RenderingState {
-	Running,
-	Idle(GraphicBuffer),
-}
-
-pub struct Controller {
-	app_controller: Rc<RefCell<AppController>>,
-	graphic: Graphic,
-	renderer: AsyncProcessor<GraphicRenderer>,
-	rendinging_state: RenderingState,
-	frame_interval_ms: u32,
-	drawing_area: gtk::DrawingArea,
-}
-
-impl Controller {
-	pub fn set_frame_interval(&mut self, interval: Duration) {
-		self.frame_interval_ms = interval.as_millis() as u32;
-	}
-}
-
-pub fn new(app_controller: Rc<RefCell<AppController>>)
-	-> (Rc<RefCell<Controller>>, gtk::DrawingArea)
-{
+pub fn new(controller: &Rc<RefCell<VisualizationController>>) -> gtk::DrawingArea {
 	let drawing_area = gtk::DrawingArea::new();
-	let renderer = app_controller.borrow().graphic_renderer().clone();
 
-	let controller = Rc::new(RefCell::new(Controller {
-		app_controller: app_controller.clone(),
-		graphic: Graphic::default(),
-		rendinging_state: RenderingState::Idle(GraphicBuffer::default()),
-		renderer,
-		frame_interval_ms: DEFAULT_FRAME_INTERVAL,
-		drawing_area: drawing_area.clone(),
-	}));
+	let drawing_area_clone = drawing_area.clone();
+	let subscription = controller
+		.borrow()
+		.subscribe_graphic_updates(move || drawing_area_clone.queue_draw());
 
 	let controller_clone = controller.clone();
 	drawing_area.connect_draw(move |area, ctx| {
@@ -59,17 +25,19 @@ pub fn new(app_controller: Rc<RefCell<AppController>>)
 		Inhibit(false)
 	});
 
-	start_render_timer(&controller);
+	drawing_area.connect_destroy(move |_| {
+		let _ = &subscription;
+	});
 
-	(controller, drawing_area)
+	drawing_area
 }
 
-fn on_draw(controller: &mut Controller, area: &gtk::DrawingArea, ctx: &cairo::Context)
+fn on_draw(controller: &mut VisualizationController, area: &gtk::DrawingArea, ctx: &cairo::Context)
 	-> Result<(), Error>
 {
 	let x_max = area.get_allocated_width();
 	let y_max = area.get_allocated_height();
-	let graphic = &mut controller.graphic;
+	let graphic = controller.graphic_mut();
 
 	// Resize the graphic if it is the wrong size.
 	if graphic.width() != x_max || graphic.height() != y_max {
@@ -102,75 +70,4 @@ fn resize_surface(graphic: &mut Graphic, x_max: i32, y_max: i32) -> Result<(), E
 		})?;
 	*graphic = new_graphic;
 	Ok(())
-}
-
-fn start_render_timer(controller: &Rc<RefCell<Controller>>) {
-	// Pass a weak ref into the timeout closure so that timeout doesn't keep controller alive
-	// unnecessarily.
-	let controller_ref = Rc::downgrade(controller);
-	let old_frame_rate = controller.borrow().frame_interval_ms;
-	gtk::timeout_add(old_frame_rate, move || {
-		if let Some(controller) = controller_ref.clone().upgrade() {
-			let new_frame_rate;
-			{
-				let mut controller = controller.borrow_mut();
-				new_frame_rate = controller.frame_interval_ms;
-				if !start_render(&mut *controller, controller_ref.clone()) {
-					log::debug!("skipping frame because last frame is still rendering");
-				}
-			};
-
-			// If frame rate has changed, start a new timer.
-			if old_frame_rate == new_frame_rate {
-				Continue(true)
-			} else {
-				start_render_timer(&controller);
-				Continue(false)
-			}
-		} else {
-			Continue(false)
-		}
-	});
-}
-
-fn start_render(controller: &mut Controller, controller_ref: Weak<RefCell<Controller>>) -> bool {
-	let rendering_state = mem::replace(
-		&mut controller.rendinging_state,
-		RenderingState::Running
-	);
-	match rendering_state {
-		RenderingState::Running => false,
-
-		RenderingState::Idle(buffer) => {
-			let graphic_fut = controller.renderer
-				.exec_cloned(move |renderer| renderer.render(buffer))
-				.map(|result| {
-					result
-						.map_err(Error::Communication)
-						.and_then(|result| result)
-				});
-
-			glib::MainContext::default().spawn_local(async move {
-				let result = graphic_fut.await;
-				if let Some(controller) = controller_ref.upgrade() {
-					let mut controller = controller.borrow_mut();
-					let old_graphic = match result {
-						Ok(graphic) => {
-							let old_graphic = mem::replace(&mut controller.graphic, graphic);
-							controller.drawing_area.queue_draw();
-							old_graphic
-						}
-						Err(err) => {
-							log::error!("error rendering frame: {}", err);
-							controller.graphic.clone()
-						}
-					};
-					assert!(matches!(controller.rendinging_state, RenderingState::Running));
-					controller.rendinging_state = RenderingState::Idle(old_graphic.into_buffer());
-				}
-			});
-
-			true
-		}
-	}
 }

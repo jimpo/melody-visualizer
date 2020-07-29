@@ -1,32 +1,27 @@
 use gtk::prelude::*;
 use gtk::Application;
 use futures::executor;
-use log::error;
-use std::rc::Rc;
-use std::cell::RefCell;
 
 use crate::error::Error;
 use crate::gui::control_pane;
 use crate::gui::visualization;
-use crate::application::Controller;
+use crate::controllers::{AppController, ControlPaneController, VisualizationController};
 
 const STYLE: &[u8] = include_bytes!("style.css");
 const UI_DEF: &str = include_str!("window.ui");
 
 pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
-	let controller = executor::block_on(Controller::new())?;
+	let app_controller = executor::block_on(AppController::new())?;
 
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let window: gtk::ApplicationWindow = builder.get_object("main_window").unwrap();
 	let panes: gtk::Paned = builder.get_object("main_panes").unwrap();
 
-	let (visualization_controller, visualization_widget) =
-		visualization::new(controller.clone());
-	panes.add1(&visualization_widget);
+	let visualization_controller = VisualizationController::new(app_controller.clone());
+	panes.add1(&visualization::new(&visualization_controller));
 
-	let (control_pane_controller, control_pane_widget) =
-		control_pane::new(controller.clone())?;
-	panes.add2(&control_pane_widget);
+	let control_pane_controller = ControlPaneController::new(app_controller.clone());
+	panes.add2(&control_pane::new(&control_pane_controller));
 
 	window.set_application(Some(app));
 	window.show_all();
@@ -35,10 +30,10 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 		// On shutdown we want to wait for the controller to shut down background processing
 		// threads. This must be done asynchronously to avoid deadlocking.
 		let main_context = glib::MainContext::default();
-		let controller_clone = controller.clone();
+		let controller_clone = app_controller.clone();
 		main_context.spawn_local(async move {
 			if let Err(err) = controller_clone.borrow_mut().shutdown().await {
-				error!("error shutting down controller: {}", err);
+				log::error!("error shutting down controller: {}", err);
 			}
 		});
 	});

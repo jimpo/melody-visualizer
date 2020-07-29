@@ -121,7 +121,6 @@ mod tests {
 	use glib::MainLoop;
 	use std::cell::RefCell;
 	use std::sync::Arc;
-	use std::thread_local;
 
 	fn run_in_glib_main_loop<F, U>(f: F)
 		where F: FnOnce(mpsc::Receiver<()>) -> U + Send + 'static,

@@ -1,4 +1,4 @@
-use futures::{prelude::*, channel::mpsc, future::Either, join};
+use futures::{prelude::*, channel::mpsc, future::Either};
 use std::{
 	any::Any,
 	cell::RefCell,
@@ -21,7 +21,7 @@ use crate::volume_normalizer::VolumeNormalizer;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
-pub struct Controller {
+pub struct AppController {
 	pub config: Config,
 	source: Option<Box<dyn JackSource>>,
 	source_port_name: Option<String>,
@@ -31,7 +31,7 @@ pub struct Controller {
 	spectrum_renderer: AsyncProcessor<SpectrumRenderer>,
 }
 
-impl Controller {
+impl AppController {
 	pub async fn new() -> Result<Rc<RefCell<Self>>, Error> {
 		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
 		let notifier = pubsub.notifier();
@@ -55,7 +55,7 @@ impl Controller {
 			spectrum_graphic_tx,
 		)?;
 
-		let mut controller = Controller {
+		let mut controller = AppController {
 			config: Config::default(),
 			source: None,
 			source_port_name: None,
@@ -64,12 +64,9 @@ impl Controller {
 			graphic_renderer,
 			spectrum_renderer,
 		};
-		let (result1, result2) = join!(
-			controller.activate_source(),
-			controller.update_graphic_generator(),
-		);
-		result1?;
-		result2?;
+		controller.activate_source().await?;
+		controller.update_spectrum_params().await?;
+		controller.update_graphic_generator().await?;
 		Ok(Rc::new(RefCell::new(controller)))
 	}
 
@@ -138,6 +135,15 @@ impl Controller {
 					}
 
 				}
+			})
+			.map_err(Error::Communication)
+	}
+
+	pub fn update_spectrum_params(&self) -> impl Future<Output=Result<(), Error>> {
+		let spectrum_params = self.config.spectrum_params();
+		self.graphic_renderer
+			.exec_cloned(move |renderer| {
+				renderer.set_spectrum_params(spectrum_params);
 			})
 			.map_err(Error::Communication)
 	}
@@ -211,6 +217,7 @@ impl Controller {
 }
 
 pub mod events {
+	#[derive(Debug, Clone)]
 	pub struct SourcePortChanged;
 
 	#[derive(Debug, Clone)]

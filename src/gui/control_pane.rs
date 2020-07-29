@@ -1,7 +1,5 @@
 use futures::prelude::*;
-use glib::Type;
 use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt, WidgetExt};
-use jack::{AudioOut, PortFlags, PortId, PortSpec};
 use lazy_static::lazy_static;
 use std::{
 	cell::RefCell,
@@ -9,33 +7,23 @@ use std::{
 	rc::Rc,
 };
 
-use crate::application::{
-	events::{SourcePortChanged, InsertSpectrumTransform},
-	Controller as AppController,
-};
-use crate::async_processor::AsyncProcessor;
 use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
+use crate::controllers::{
+	AppController, ControlPaneController,
+	app::events::{SourcePortChanged, InsertSpectrumTransform},
+	control_pane::PORT_NAME_COL,
+};
 use crate::error::Error;
-use crate::graphic_renderer::GraphicRenderer;
 use crate::gui::error_dialog;
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
-use crate::pubsub::SubscriptionHandle;
-use crate::spectrum::SpectrumParams;
-use crate::source::{events::InputsChanged, SourceType};
-use crate::spiral::{self, SpiralGenerator};
-use crate::volume_normalizer::{self, VolumeNormalizer};
+use crate::source::SourceType;
+use crate::volume_normalizer;
 
 const UI_DEF: &str = include_str!("control_pane.ui");
 
-const PORT_NAME_COL: i32 = 0;
-
 const MIN_NOTE: Note = note!(A, 0);
 const MAX_NOTE: Note = note!(C, 8);
-
-const DEFAULT_MIN_FREQ: f64 = 200.0; // Hz
-const DEFAULT_MAX_FREQ: f64 = 2000.0; // Hz
-const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
 
 // Configure
 // - Audio Source (Audio or MIDI & Port)
@@ -45,127 +33,8 @@ const DEFAULT_SAMPLES_PER_OCTAVE: usize = 180;
 
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
-pub struct Controller {
-	app_controller: Rc<RefCell<AppController>>,
-	port_store: gtk::ListStore,
-	min_log_freq: f64,
-	max_log_freq: f64,
-	samples_per_octave: usize,
-	graphic_renderer: AsyncProcessor<GraphicRenderer>,
-	inputs_changed_subscription: Option<SubscriptionHandle>,
-	view_builder: gtk::Builder,
-}
-
-impl Controller {
-	// TODO: Move this comment to an architecture overview or something.
-	//
-	// We have to be very careful about RefCells in async code. So borrowing a controller from a
-	// RefCell then yielding with await is a big problem.
-	fn update_spectrum_params(&self) -> impl Future<Output=Result<(), Error>> {
-		let spectrum_params = self.build_spectrum_params();
-		self.graphic_renderer
-			.exec_cloned(move |renderer| {
-				renderer.set_spectrum_params(spectrum_params);
-			})
-			.map_err(Error::Communication)
-	}
-
-	fn refresh_inputs(&self) {
-		let port_store = &self.port_store;
-
-		let ports = self.app_controller.borrow()
-			.jack_client()
-			.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
-			.unwrap_or_default();
-
-		// Remove rows from ListStore.
-		if let Some(iter) = port_store.get_iter_first() {
-			loop {
-				let found = ports.contains(&get_port_name(port_store, &iter));
-				let iter_invalid = if !found {
-					log::debug!("attempting to remove port");
-					port_store.remove(&iter)
-				} else {
-					port_store.iter_next(&iter)
-				};
-				if !iter_invalid {
-					break;
-				}
-			}
-		}
-
-		// Add rows to ListStore.
-		for new_port in ports {
-			let found = if let Some(iter) = port_store.get_iter_first() {
-				loop {
-					if new_port == get_port_name(port_store, &iter) {
-						break true;
-					} else if !port_store.iter_next(&iter) {
-						break false;
-					}
-				}
-			} else {
-				false
-			};
-			if !found {
-				let iter = port_store.append();
-				port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.to_value());
-			}
-		}
-	}
-
-	fn build_spectrum_params(&self) -> SpectrumParams {
-		let octaves = self.max_log_freq - self.min_log_freq;
-		let samples = (self.samples_per_octave as f64 * octaves).round() as usize;
-		// there must be at least two samples, one at min_freq and one at max_freq
-		let samples = samples.max(2);
-		SpectrumParams::exp_spaced(samples, self.min_log_freq.exp2(), self.max_log_freq.exp2())
-	}
-}
-
-pub fn new(app_controller: Rc<RefCell<AppController>>)
-	-> Result<(Rc<RefCell<Controller>>, gtk::Box), Error>
-{
-	let column_types = [Type::String];
-	let port_store = gtk::ListStore::new(&column_types[..]);
-
-	let graphic_renderer = app_controller.borrow().graphic_renderer().clone();
-
-	let view_builder = gtk::Builder::from_string(UI_DEF);
-
-	let controller = Rc::new(RefCell::new(Controller {
-		app_controller: app_controller.clone(),
-		port_store,
-		min_log_freq: DEFAULT_MIN_FREQ.log2(),
-		max_log_freq: DEFAULT_MAX_FREQ.log2(),
-		samples_per_octave: DEFAULT_SAMPLES_PER_OCTAVE,
-		graphic_renderer,
-		inputs_changed_subscription: None,
-		view_builder,
-	}));
-
-	let view = init_view(&controller);
-
-	// Update background processors with default control settings.
-	{
-		let controller = controller.borrow_mut();
-
-		// Populate the initial port list.
-		controller.refresh_inputs();
-
-		let async_spectrum_params_update = controller.update_spectrum_params();
-
-		glib::MainContext::default().spawn_local(async move {
-			// TODO: Handle errors better
-			async_spectrum_params_update.await.unwrap();
-		});
-	}
-
-	Ok((controller, view))
-}
-
-fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
-	let builder = controller.borrow().view_builder.clone();
+pub fn new(controller: &Rc<RefCell<ControlPaneController>>) -> gtk::Box {
+	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Box = builder.get_object("control_pane").unwrap();
 	let source_type_selection: gtk::Box = builder.get_object("source_type_selection").unwrap();
 	let port_view: gtk::TreeView = builder.get_object("port_list").unwrap();
@@ -175,7 +44,7 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	let add_transform_type_selector: gtk::ComboBoxText =
 		builder.get_object("add_transform_type_selector").unwrap();
 
-	let app_controller = controller.borrow().app_controller.clone();
+	let app_controller = controller.borrow().app_controller().clone();
 	init_menu(&app_controller, &builder);
 
 	// Transform type selector options.
@@ -200,7 +69,7 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 		source_type_selection.add(&selector);
 	}
 
-	port_view.set_model(Some(&controller.borrow().port_store));
+	port_view.set_model(Some(controller.borrow().port_store()));
 
 	// TODO: Maybe bound min/max frequency using window size.
 
@@ -248,20 +117,6 @@ fn init_view(controller: &Rc<RefCell<Controller>>) -> gtk::Box {
 	let selection = port_view.get_selection();
 	let controller_clone = app_controller.clone();
 	selection.connect_changed(move |selection| on_port_selected(&*controller_clone, selection));
-
-	// Refresh port list when JACK inputs change.
-	let controller_clone = controller.clone();
-	let subscription = app_controller.borrow()
-		.pubsub()
-		.subscribe(move |notification: &InputsChanged| {
-			on_input_ports_changed(&controller_clone, notification.clone());
-			controller_clone.borrow().refresh_inputs()
-		});
-
-	{
-		let mut controller = controller.borrow_mut();
-		controller.inputs_changed_subscription = Some(subscription);
-	}
 
 	{
 		// Set initial control values.
@@ -394,18 +249,6 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 	row
 }
 
-fn build_port_view(port_store: &gtk::ListStore) -> gtk::TreeView {
-	let renderer = gtk::CellRendererText::new();
-	let column = gtk::TreeViewColumn::new();
-	column.pack_start(&renderer, true);
-	column.set_title("Port");
-	column.add_attribute(&renderer, "text", PORT_NAME_COL);
-
-	let port_view = gtk::TreeView::with_model(port_store);
-	port_view.append_column(&column);
-	port_view
-}
-
 fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
 	let port_name = selection.get_selected()
 		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
@@ -413,6 +256,14 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 	if let Err(err) = app_controller.connect_port(port_name) {
 		error_dialog(err);
 	}
+}
+
+fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
+	port_store
+		.get_value(&iter, PORT_NAME_COL)
+		.get::<String>()
+		.expect("values in PORT_NAME_COL are strings")
+		.expect("port names cannot be None")
 }
 
 // fn on_source_type_toggled(
@@ -430,77 +281,39 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 // 	}
 // }
 
-fn on_input_ports_changed(controller_ref: &Rc<RefCell<Controller>>, update: InputsChanged) {
-	// TODO: Unfortunately, we need to poll until port_update is reflected.
-	// https://github.com/jackaudio/jack2/issues/617
-	let controller = controller_ref.clone();
-	gtk::timeout_add(10, move || {
-		if is_inputs_update_pending(&*controller.borrow(), update.clone()) {
-			glib::Continue(true)
-		} else {
-			controller.borrow().refresh_inputs();
-			glib::Continue(false)
-		}
-	});
-}
 
-fn is_inputs_update_pending(controller: &Controller, update: InputsChanged) -> bool {
-	controller
-		.app_controller.borrow()
-		.jack_client()
-		.map(move |client| {
-			match update {
-				// https://github.com/jackaudio/jack2/issues/617
-				InputsChanged::Unregistered(port_id) => {
-					if let Some(port) = client.port_by_id(port_id) {
-						match port.name() {
-							Ok(name) =>
-								client
-									.ports(None, None, PortFlags::empty())
-									.contains(&name),
-							Err(err) => {
-								log::warn!("JACK port {} has no name", port_id);
-								// Whatever, let's just say it's updated.
-								false
-							}
-						}
-					} else {
-						false
-					}
-				}
-				// I don't think we need to double-check any other cases.
-				_ => false,
-			}
-		})
-		.unwrap_or(false)
-}
+fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+	let controller = controller_ref.borrow_mut();
+	let mut app_controller = controller.app_controller().borrow_mut();
 
-fn on_min_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
-	let mut controller = controller_ref.borrow_mut();
-	if value > controller.max_log_freq {
+	let freq = value.exp2();
+	if freq > app_controller.config.max_freq {
 		return Inhibit(true);
 	}
 
-	controller.min_log_freq = value;
-	handle_async_err(controller.update_spectrum_params());
+	app_controller.config.min_freq = freq;
+	handle_async_err(app_controller.update_spectrum_params());
 	Inhibit(false)
 }
 
-fn on_max_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
-	let mut controller = controller_ref.borrow_mut();
-	if value < controller.min_log_freq {
+fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+	let controller = controller_ref.borrow_mut();
+	let mut app_controller = controller.app_controller().borrow_mut();
+
+	let freq = value.exp2();
+	if freq < app_controller.config.min_freq {
 		return Inhibit(true);
 	}
 
-	controller.max_log_freq = value;
-	handle_async_err(controller.update_spectrum_params());
+	app_controller.config.max_freq = freq;
+	handle_async_err(app_controller.update_spectrum_params());
 	Inhibit(false)
 }
 
-fn on_key_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> Inhibit {
+fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
 	let async_update = {
-		let mut controller = controller_ref.borrow_mut();
-		let mut app_controller = controller.app_controller.borrow_mut();
+		let controller = controller_ref.borrow_mut();
+		let mut app_controller = controller.app_controller().borrow_mut();
 		match &mut app_controller.config.graphic_generator {
 			GraphicGeneratorConfig::Spiral(config) => {
 				config.key_log_freq = value.log2();
@@ -518,14 +331,6 @@ fn on_key_freq_change(controller_ref: &Rc<RefCell<Controller>>, value: f64) -> I
 
 	handle_async_err(async_update);
 	Inhibit(false)
-}
-
-fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
-	port_store
-		.get_value(&iter, PORT_NAME_COL)
-		.get::<String>()
-		.expect("values in PORT_NAME_COL are strings")
-		.expect("port names cannot be None")
 }
 
 fn build_source_type_selectors(app_controller: &Rc<RefCell<AppController>>)

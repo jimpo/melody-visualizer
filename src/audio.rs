@@ -67,7 +67,7 @@ impl NotificationHandler for AudioNotificationHandler {
 		Control::Continue
 	}
 
-	fn port_registration(&mut self, client: &Client, port_id: PortId, is_registered: bool) {
+	fn port_registration(&mut self, _client: &Client, port_id: PortId, is_registered: bool) {
 		let notification = if is_registered {
 			events::InputsChanged::Registered(port_id)
 		} else {

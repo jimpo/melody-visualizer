@@ -1,5 +1,12 @@
-use std::fmt;
-use std::sync::Arc;
+pub mod generators;
+pub mod renderer;
+pub mod transforms;
+
+use std::{
+	fmt::{self, Debug},
+	sync::Arc,
+	time::Duration,
+};
 
 pub type Hz = f64;
 pub type LogHz = f64;
@@ -119,4 +126,13 @@ impl fmt::Debug for SpectrumParams {
 			.field("samples", &self.samples())
 			.finish()
 	}
+}
+
+pub trait SpectrumGenerator: Debug + Send {
+	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
+	fn interval(&self) -> Duration;
+}
+
+pub trait SpectrumTransform: Debug + Send {
+	fn transform(&mut self, spectrum: Spectrum) -> Spectrum;
 }

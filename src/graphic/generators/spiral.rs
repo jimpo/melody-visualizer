@@ -6,8 +6,7 @@ use std::collections::VecDeque;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use crate::graphic_renderer::GraphicGenerator;
-use crate::graphic::{GraphicBuffer, Graphic};
+use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumParams};
 

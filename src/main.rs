@@ -2,18 +2,13 @@ mod app;
 mod controllers;
 mod async_processor;
 mod audio;
-mod audio_spectrum_generator;
 mod error;
 mod gui;
 mod graphic;
-mod graphic_renderer;
 mod note;
 mod pubsub;
 mod source;
 mod spectrum;
-mod spectrum_renderer;
-mod spiral;
-mod volume_normalizer;
 
 use gio::prelude::*;
 

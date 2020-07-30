@@ -9,15 +9,18 @@ use crate::app::config::{
 	Config, GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
 };
 use crate::audio::AudioSourceController;
-use crate::audio_spectrum_generator::AudioSpectrumGenerator;
+use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
-use crate::graphic_renderer::{self, GraphicRenderer};
+use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
-use crate::spectrum_renderer::{self, SpectrumRenderer, SpectrumTransform};
-use crate::spiral::SpiralGenerator;
-use crate::volume_normalizer::VolumeNormalizer;
+use crate::spectrum::{
+	renderer::{self as spectrum_processor, SpectrumRenderer},
+	transforms::volume_normalizer::VolumeNormalizer,
+	SpectrumTransform,
+};
+use crate::graphic::generators::spiral::SpiralGenerator;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
@@ -44,13 +47,13 @@ impl AppController {
 		let (graphic_spectrum_tx, graphic_spectrum_rx) = mpsc::channel(0);
 
 		// Start the graphic rendering background thread.
-		let graphic_renderer = graphic_renderer::start(
+		let graphic_renderer = renderer::start(
 			spectrum_graphic_rx,
 			graphic_spectrum_tx,
 		)?;
 
 		// Start the spectrum rendering background thread.
-		let spectrum_renderer = spectrum_renderer::start(
+		let spectrum_renderer = spectrum_processor::start(
 			graphic_spectrum_rx,
 			spectrum_graphic_tx,
 		)?;

@@ -1,8 +1,8 @@
-use crate::audio_spectrum_generator;
+use crate::spectrum::generators::audio;
 use crate::source::SourceType;
 use crate::spectrum::{Hz, SpectrumParams};
-use crate::spiral;
-use crate::volume_normalizer;
+use crate::graphic::generators::spiral;
+use crate::spectrum::transforms::volume_normalizer;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -17,7 +17,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpectrumGeneratorConfig {
-	Audio(audio_spectrum_generator::Config),
+	Audio(audio::Config),
 }
 
 impl SpectrumGeneratorConfig {
@@ -44,7 +44,7 @@ impl Default for Config {
 			min_freq: 200.0, // Low-end of human hearing
 			max_freq: 20000.0, // High-end of human hearing
 			samples_per_octave: 180,
-			spectrum_generator: SpectrumGeneratorConfig::Audio(audio_spectrum_generator::Config {
+			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config {
 				dft_window_size: 2048,
 			}),
 			spectrum_transforms: vec![

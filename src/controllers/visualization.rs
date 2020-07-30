@@ -11,7 +11,7 @@ use std::{
 use crate::async_processor::AsyncProcessor;
 use crate::controllers::app::AppController;
 use crate::graphic::{Graphic, GraphicBuffer};
-use crate::graphic_renderer::GraphicRenderer;
+use crate::graphic::renderer::GraphicRenderer;
 use crate::error::Error;
 use crate::pubsub::{Notifier, SubscriptionHandle};
 

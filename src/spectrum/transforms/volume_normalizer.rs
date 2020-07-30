@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::spectrum_renderer::SpectrumTransform;
-use crate::spectrum::Spectrum;
+use crate::spectrum::{Spectrum, SpectrumTransform};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {

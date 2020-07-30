@@ -18,7 +18,7 @@ use crate::gui::error_dialog;
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
 use crate::source::SourceType;
-use crate::volume_normalizer;
+use crate::spectrum::transforms::volume_normalizer;
 
 const UI_DEF: &str = include_str!("control_pane.ui");
 

@@ -1,14 +1,15 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
 use log::{debug, error};
-use std::any::Any;
-use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::thread;
-use std::time::Duration;
-use std::sync::Arc;
+use std::{
+	any::Any,
+	collections::VecDeque,
+	thread,
+	time::Duration,
+	sync::Arc,
+};
 
 use crate::async_processor::AsyncProcessor;
-use crate::graphic::{Graphic, GraphicBuffer};
+use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
 use crate::error::Error;
 
@@ -47,20 +48,6 @@ enum GraphicProcessingError {
 	#[display(fmt = "received an unexpected buffer while one is already available")]
 	ReceivedUnexpectedBuffer,
 	Other(Error),
-}
-
-pub trait GraphicGenerator: Debug + Send {
-	fn generate(
-		&mut self,
-		buffer: GraphicBuffer,
-		params: &Arc<SpectrumParams>,
-		spectrum_history: &VecDeque<Spectrum>,
-	) -> Result<Graphic, Error>;
-
-	fn history_len(&self) -> usize;
-
-	fn upcast_any_ref(&self) -> &dyn Any;
-	fn upcast_any_mut(&mut self) -> &mut dyn Any;
 }
 
 #[derive(Debug)]

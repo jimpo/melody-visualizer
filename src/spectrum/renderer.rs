@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
-use crate::spectrum::{Spectrum, SpectrumBuffer};
+use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumTransform};
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
@@ -16,15 +16,6 @@ enum SpectrumProcessingError {
 	ReceivedUnexpectedBuffer,
 	#[display(fmt = "skipping tick because no buffer is available")]
 	NoBuffer,
-}
-
-pub trait SpectrumGenerator: Debug + Send {
-	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
-	fn interval(&self) -> Duration;
-}
-
-pub trait SpectrumTransform: Debug + Send {
-	fn transform(&mut self, spectrum: Spectrum) -> Spectrum;
 }
 
 #[derive(Debug)]

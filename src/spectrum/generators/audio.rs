@@ -8,8 +8,7 @@ use std::{
 	time::Duration,
 };
 
-use crate::spectrum_renderer::SpectrumGenerator;
-use crate::spectrum::{SpectrumBuffer, Spectrum};
+use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 
 // Half of the DFT window should overlap with the previous.
 const TARGET_OVERLAP: (u64, u64) = (1, 2);

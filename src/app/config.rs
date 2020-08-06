@@ -2,7 +2,7 @@ use crate::spectrum::generators::audio;
 use crate::source::SourceType;
 use crate::spectrum::{Hz, SpectrumParams};
 use crate::graphic::generators::spiral;
-use crate::spectrum::transforms::volume_normalizer;
+use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -35,6 +35,7 @@ pub enum GraphicGeneratorConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpectrumTransformConfig {
+	Diffuser(diffuser::Config),
 	VolumeNormalizer(volume_normalizer::Config),
 }
 
@@ -48,6 +49,9 @@ impl Default for Config {
 				dft_window_size: 2048,
 			}),
 			spectrum_transforms: vec![
+				SpectrumTransformConfig::Diffuser(diffuser::Config {
+					width: 1.0 / 24.0,
+				}),
 				SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config {
 					rate: 0.1,
 				}),

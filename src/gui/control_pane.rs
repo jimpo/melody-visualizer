@@ -18,7 +18,7 @@ use crate::gui::error_dialog;
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
 use crate::source::SourceType;
-use crate::spectrum::transforms::volume_normalizer;
+use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui");
 
@@ -370,6 +370,7 @@ fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
 
 fn get_spectrum_transform_name(config: &SpectrumTransformConfig) -> &str {
 	match config {
+		SpectrumTransformConfig::Diffuser(_) => "Diffuser",
 		SpectrumTransformConfig::VolumeNormalizer(_) => "Volume Normalizer",
 	}
 }
@@ -384,6 +385,12 @@ fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformC
 	lazy_static! {
     	static ref MAP: HashMap<&'static str, SpectrumTransformConfig> =
 			vec![
+				(
+					"Diffuser",
+					SpectrumTransformConfig::Diffuser(
+						diffuser::Config { width: 1.0 / 24.0 },
+					)
+				),
 				(
 					"VolumeNormalizer",
 					 SpectrumTransformConfig::VolumeNormalizer(

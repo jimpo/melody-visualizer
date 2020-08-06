@@ -17,6 +17,7 @@ use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
 use crate::spectrum::{
 	renderer::{self as spectrum_processor, SpectrumRenderer},
+	transforms::diffuser::Diffuser,
 	transforms::volume_normalizer::VolumeNormalizer,
 	SpectrumTransform,
 };
@@ -197,6 +198,8 @@ impl AppController {
 						match config {
 							SpectrumTransformConfig::VolumeNormalizer(config) =>
 								Box::new(VolumeNormalizer::new(config)),
+							SpectrumTransformConfig::Diffuser(config) =>
+								Box::new(Diffuser::new(config)),
 						}
 					})
 					.collect();
@@ -213,11 +216,13 @@ impl AppController {
 
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
-				let transform = match transform_config {
+				let transform: Box<dyn SpectrumTransform> = match transform_config {
 					SpectrumTransformConfig::VolumeNormalizer(config) =>
-						VolumeNormalizer::new(config),
+						Box::new(VolumeNormalizer::new(config)),
+					SpectrumTransformConfig::Diffuser(config) =>
+						Box::new(Diffuser::new(config)),
 				};
-				renderer.transforms_mut().push(Box::new(transform));
+				renderer.transforms_mut().push(transform);
 			})
 			.map_err(Error::Communication)
 	}

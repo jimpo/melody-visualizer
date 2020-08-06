@@ -7,7 +7,7 @@ use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumParams, SpectrumT
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-	width: LogHz,
+	pub width: LogHz,
 }
 
 // This basically is a convolution of a small triangular window with the spectrum.
@@ -61,13 +61,13 @@ impl Diffuser {
 impl SpectrumTransform for Diffuser {
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum {
 		if !Arc::ptr_eq(self.buffer.params(), spectrum.params()) {
-			self.regenerate_window(self.buffer.params().clone());
+			self.regenerate_window(spectrum.params().clone());
 		}
 		let buffer = mem::replace(&mut self.buffer, SpectrumBuffer::default());
 		let new_spectrum = buffer.fill(|samples, _| {
 			// Window is symmetric around origin and has odd size.
 			let offset = -((self.window.len() / 2) as isize);
-			convolve(samples, &self.window, spectrum.values(), offset);
+			convolve(samples, spectrum.values(), &self.window, offset);
 		});
 		self.buffer = spectrum.into_buffer();
 		new_spectrum

@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumTransform};
+use crate::traits::Configurable;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -19,8 +20,10 @@ pub struct Diffuser {
 	window: Vec<f64>,
 }
 
-impl Diffuser {
-	pub fn new(config: Config) -> Self {
+impl Configurable for Diffuser {
+	type Config = Config;
+
+	fn new(config: Config) -> Self {
 		Diffuser {
 			config,
 			buffer: SpectrumBuffer::default(),
@@ -28,6 +31,13 @@ impl Diffuser {
 		}
 	}
 
+	fn set_config(&mut self, config: Config) {
+		self.config = config;
+		self.regenerate_window();
+	}
+}
+
+impl Diffuser {
 	fn regenerate_window(&mut self) {
 		self.window.clear();
 
@@ -55,11 +65,6 @@ impl Diffuser {
 		}
 
 		normalize(&mut self.window);
-	}
-
-	pub fn set_config(&mut self, config: Config) {
-		self.config = config;
-		self.regenerate_window();
 	}
 }
 

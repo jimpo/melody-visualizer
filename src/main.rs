@@ -9,6 +9,7 @@ mod note;
 mod pubsub;
 mod source;
 mod spectrum;
+mod traits;
 
 use gio::prelude::*;
 

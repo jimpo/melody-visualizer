@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::spectrum::{Spectrum, SpectrumTransform};
+use crate::traits::Configurable;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -16,15 +17,17 @@ pub struct VolumeNormalizer {
 	max_value: f64,
 }
 
-impl VolumeNormalizer {
-	pub fn new(config: Config) -> Self {
+impl Configurable for VolumeNormalizer {
+	type Config = Config;
+
+	fn new(config: Config) -> Self {
 		VolumeNormalizer {
 			config,
 			max_value: 0.0,
 		}
 	}
 
-	pub fn set_config(&mut self, config: Config) {
+	fn set_config(&mut self, config: Config) {
 		self.config = config;
 	}
 }

@@ -205,9 +205,11 @@ pub fn start_with_thread_name(
 ) -> Result<AsyncProcessor<SpectrumRenderer>, Error>
 {
 	let (exec_tx, exec_rx) = mpsc::channel(0);
-	let mut processor = SpectrumProcessor::new(exec_rx, spectrum_input, spectrum_output);
 	let _ = thread::Builder::new()
 		.name(name)
-		.spawn(move || executor::block_on(processor.process_loop()))?;
+		.spawn(move || {
+			let mut processor = SpectrumProcessor::new(exec_rx, spectrum_input, spectrum_output);
+			executor::block_on(processor.process_loop())
+		})?;
 	Ok(AsyncProcessor::new(exec_tx))
 }

@@ -1,11 +1,19 @@
-use std::collections::HashMap;
+use std::{
+	collections::HashMap,
+};
 
 use crate::error::Error;
-use crate::spectrum::generators::audio;
+use crate::graphic::{
+	GraphicGenerator,
+	generators::spiral::{self, SpiralGenerator as Spiral},
+};
 use crate::source::SourceType;
-use crate::spectrum::{Hz, SpectrumParams};
-use crate::graphic::generators::spiral;
-use crate::spectrum::transforms::{diffuser, volume_normalizer};
+use crate::spectrum::{
+	Hz, SpectrumParams, SpectrumTransform,
+	generators::audio,
+	transforms::{diffuser::{self, Diffuser}, volume_normalizer::{self, VolumeNormalizer}},
+};
+use crate::traits::Configurable;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -32,15 +40,77 @@ impl SpectrumGeneratorConfig {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum GraphicGeneratorConfig {
-	Spiral(spiral::Config),
+macro_rules! define_graphic_generator_config {
+	($(#[$attr:meta])* $vis:vis enum $name:ident { $($variant:ident,)+ }) => {
+		$(#[$attr])*
+		$vis enum $name {
+			$(
+				$variant(<$variant as Configurable>::Config),
+			)+
+		}
+
+		impl $name {
+			pub fn update(self, transform: &mut Box<dyn GraphicGenerator>) {
+				match self {
+					$(
+						Self::$variant(config) => {
+							match transform
+								.upcast_any_mut()
+								.downcast_mut::<$variant>()
+							{
+								Some(transform) => transform.set_config(config),
+								None => *transform = Box::new($variant::new(config)),
+							}
+						}
+					)+
+				}
+			}
+		}
+	};
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum SpectrumTransformConfig {
-	Diffuser(diffuser::Config),
-	VolumeNormalizer(volume_normalizer::Config),
+define_graphic_generator_config! {
+	#[derive(Debug, Clone, PartialEq)]
+	pub enum GraphicGeneratorConfig {
+		Spiral,
+	}
+}
+
+macro_rules! define_spectrum_transform_config {
+	($(#[$attr:meta])* $vis:vis enum $name:ident { $($variant:ident,)+ }) => {
+		$(#[$attr])*
+		$vis enum $name {
+			$(
+				$variant(<$variant as Configurable>::Config),
+			)+
+		}
+
+		impl $name {
+			pub fn update(self, transform: &mut Box<dyn SpectrumTransform>) {
+				match self {
+					$(
+						Self::$variant(config) => {
+							match transform
+								.upcast_any_mut()
+								.downcast_mut::<$variant>()
+							{
+								Some(transform) => transform.set_config(config),
+								None => *transform = Box::new($variant::new(config)),
+							}
+						}
+					)+
+				}
+			}
+		}
+	};
+}
+
+define_spectrum_transform_config! {
+ 	#[derive(Debug, Clone, PartialEq)]
+	pub enum SpectrumTransformConfig {
+		Diffuser,
+		VolumeNormalizer,
+	}
 }
 
 impl Default for Config {

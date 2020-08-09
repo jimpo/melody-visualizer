@@ -129,12 +129,12 @@ impl fmt::Debug for SpectrumParams {
 	}
 }
 
-pub trait SpectrumGenerator: Debug + Send {
+pub trait SpectrumGenerator: Debug {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
 	fn interval(&self) -> Duration;
 }
 
-pub trait SpectrumTransform: Debug + Send {
+pub trait SpectrumTransform: Debug {
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum;
 
 	fn upcast_any_ref(&self) -> &dyn Any;

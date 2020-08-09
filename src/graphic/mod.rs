@@ -127,7 +127,7 @@ impl GraphicBuffer {
 	}
 }
 
-pub trait GraphicGenerator: Debug + Send {
+pub trait GraphicGenerator: Debug {
 	fn generate(
 		&mut self,
 		buffer: GraphicBuffer,
@@ -139,4 +139,8 @@ pub trait GraphicGenerator: Debug + Send {
 
 	fn upcast_any_ref(&self) -> &dyn Any;
 	fn upcast_any_mut(&mut self) -> &mut dyn Any;
+}
+
+pub trait ConfigurableGraphicGenerator {
+
 }

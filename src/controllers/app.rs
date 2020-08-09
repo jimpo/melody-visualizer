@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::app::config::{
-	Config, GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
+	Config, SpectrumGeneratorConfig, SpectrumTransformConfig,
 };
 use crate::audio::AudioSourceController;
 use crate::spectrum::generators::audio::AudioSpectrumGenerator;
@@ -21,7 +21,7 @@ use crate::spectrum::{
 	transforms::volume_normalizer::VolumeNormalizer,
 	SpectrumTransform,
 };
-use crate::graphic::generators::spiral::SpiralGenerator;
+use crate::traits::Configurable;
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
@@ -127,19 +127,7 @@ impl AppController {
 		let config = self.config.graphic_generator.clone();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
-				match config {
-					GraphicGeneratorConfig::Spiral(config) => {
-						match renderer
-							.generator_mut()
-							.upcast_any_mut()
-							.downcast_mut::<SpiralGenerator>()
-						{
-							Some(spiral) => spiral.set_config(config),
-							None => renderer.set_generator(Box::new(SpiralGenerator::new(config))),
-						}
-					}
-
-				}
+				config.update(renderer.generator_mut());
 			})
 			.map_err(Error::Communication)
 	}
@@ -160,26 +148,7 @@ impl AppController {
 				.exec_cloned(move |renderer| {
 					let transform = renderer.transforms_mut().get_mut(&id)
 						.ok_or_else(|| Error::MissingTransform { id })?;
-					match config {
-						SpectrumTransformConfig::Diffuser(config) => {
-							match transform
-								.upcast_any_mut()
-								.downcast_mut::<Diffuser>()
-							{
-								Some(transform) => transform.set_config(config),
-								None => *transform = Box::new(Diffuser::new(config)),
-							}
-						}
-						SpectrumTransformConfig::VolumeNormalizer(config) => {
-							match transform
-								.upcast_any_mut()
-								.downcast_mut::<VolumeNormalizer>()
-							{
-								Some(transform) => transform.set_config(config),
-								None => *transform = Box::new(VolumeNormalizer::new(config)),
-							}
-						}
-					}
+					config.update(transform);
 					Ok(())
 				})
 				.map(|result| {

@@ -270,7 +270,7 @@ fn on_control_row_activated(
 	assert!(row_index >= 0, "row was activated, so it must have an index");
 	let row_index = row_index as usize;
 
-	let child = if row_index == 0 {
+	if row_index == 0 {
 		assert_eq!(row, source_row);
 		control_stack.set_visible_child(source_control);
 	} else if row_index == 1 {
@@ -292,7 +292,7 @@ fn on_control_row_activated(
 		control_stack.set_visible_child(visualization_control);
 	} else {
 		log::error!("unknown control menu row activated: index = {}", row_index);
-	};
+	}
 }
 
 fn build_transform_row(name: &str) -> gtk::ListBoxRow {

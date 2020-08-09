@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumParams};
+use crate::traits::Configurable;
 
 #[derive(Debug)]
 pub struct SpiralGenerator {
@@ -38,8 +39,10 @@ struct SegmentEdge {
 	y_outer: f64,
 }
 
-impl SpiralGenerator {
-	pub fn new(config: Config) -> Self {
+impl Configurable for SpiralGenerator {
+	type Config = Config;
+
+	fn new(config: Config) -> Self {
 		SpiralGenerator {
 			x_max: 0,
 			y_max: 0,
@@ -49,6 +52,13 @@ impl SpiralGenerator {
 		}
 	}
 
+	fn set_config(&mut self, config: Config) {
+		self.config = config;
+		self.regenerate();
+	}
+}
+
+impl SpiralGenerator {
 	fn regenerate(&mut self) {
 		if self.params.log_frequencies().is_empty() {
 			self.edges.clear();
@@ -92,11 +102,6 @@ impl SpiralGenerator {
 				y_outer: y_origin - cos_theta * (r + thickness),
 			});
 		}
-	}
-
-	pub fn set_config(&mut self, config: Config) {
-		self.config = config;
-		self.regenerate();
 	}
 }
 

@@ -27,4 +27,9 @@ pub enum Error {
 	#[display(fmt = "failed to publish notification: {:?}", _0)]
 	#[from(ignore)]
 	PubSub(SendError<Box<dyn Any + Send>>),
+	#[display(fmt = "config references missing transform with ID {}", id)]
+	#[from(ignore)]
+	MissingTransform { id: u64 },
+	#[display(fmt = "invalid config entry reference: {}", _0)]
+	UnexpectedConfigEntry(#[error(not(source))] String),
 }

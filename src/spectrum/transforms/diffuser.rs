@@ -1,9 +1,10 @@
 use std::{
+	any::Any,
 	mem,
 	sync::Arc,
 };
 
-use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumParams, SpectrumTransform};
+use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumTransform};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -27,8 +28,7 @@ impl Diffuser {
 		}
 	}
 
-	fn regenerate_window(&mut self, params: Arc<SpectrumParams>) {
-		self.buffer = SpectrumBuffer::new(params);
+	fn regenerate_window(&mut self) {
 		self.window.clear();
 
 		let params = self.buffer.params();
@@ -56,12 +56,18 @@ impl Diffuser {
 
 		normalize(&mut self.window);
 	}
+
+	pub fn set_config(&mut self, config: Config) {
+		self.config = config;
+		self.regenerate_window();
+	}
 }
 
 impl SpectrumTransform for Diffuser {
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum {
 		if !Arc::ptr_eq(self.buffer.params(), spectrum.params()) {
-			self.regenerate_window(spectrum.params().clone());
+			self.buffer = SpectrumBuffer::new(spectrum.params().clone());
+			self.regenerate_window();
 		}
 		let buffer = mem::replace(&mut self.buffer, SpectrumBuffer::default());
 		let new_spectrum = buffer.fill(|samples, _| {
@@ -71,6 +77,14 @@ impl SpectrumTransform for Diffuser {
 		});
 		self.buffer = spectrum.into_buffer();
 		new_spectrum
+	}
+
+	fn upcast_any_ref(&self) -> &dyn Any {
+		self
+	}
+
+	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+		self
 	}
 }
 

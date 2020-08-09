@@ -3,6 +3,7 @@ pub mod renderer;
 pub mod transforms;
 
 use std::{
+	any::Any,
 	fmt::{self, Debug},
 	sync::Arc,
 	time::Duration,
@@ -135,4 +136,7 @@ pub trait SpectrumGenerator: Debug + Send {
 
 pub trait SpectrumTransform: Debug + Send {
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum;
+
+	fn upcast_any_ref(&self) -> &dyn Any;
+	fn upcast_any_mut(&mut self) -> &mut dyn Any;
 }

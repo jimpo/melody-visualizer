@@ -1,9 +1,12 @@
 use futures::{prelude::*, channel::mpsc, executor, select};
 use futures_timer::Delay;
 use log::{debug, error};
-use std::fmt::Debug;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+	collections::HashMap,
+	fmt::Debug,
+	thread,
+	time::{Duration, Instant},
+};
 
 use crate::async_processor::AsyncProcessor;
 use crate::error::Error;
@@ -16,6 +19,7 @@ enum SpectrumProcessingError {
 	ReceivedUnexpectedBuffer,
 	#[display(fmt = "skipping tick because no buffer is available")]
 	NoBuffer,
+	Other(Error),
 }
 
 #[derive(Debug)]
@@ -34,14 +38,16 @@ impl SpectrumGenerator for DefaultSpectrumGenerator {
 
 pub struct SpectrumRenderer {
 	generator: Box<dyn SpectrumGenerator>,
-	transforms: Vec<Box<dyn SpectrumTransform>>,
+	transforms: HashMap<u64, Box<dyn SpectrumTransform>>,
+	transform_order: Vec<u64>,
 }
 
 impl SpectrumRenderer {
 	fn new() -> Self {
 		SpectrumRenderer {
 			generator: Box::new(DefaultSpectrumGenerator),
-			transforms: Vec::new(),
+			transforms: HashMap::new(),
+			transform_order: Vec::new(),
 		}
 	}
 
@@ -57,8 +63,24 @@ impl SpectrumRenderer {
 		self.generator = generator;
 	}
 
-	pub fn transforms_mut(&mut self) -> &mut Vec<Box<dyn SpectrumTransform>> {
+	pub fn transform_by_index_mut(&mut self, index: usize)
+		-> Result<Option<(u64, &mut dyn SpectrumTransform)>, Error>
+	{
+		if let Some(&id) = self.transform_order.get(index) {
+			let config = self.transforms.get_mut(&id)
+				.ok_or_else(|| Error::MissingTransform { id })?;
+			Ok(Some((id, config.as_mut())))
+		} else {
+			Ok(None)
+		}
+	}
+
+	pub fn transforms_mut(&mut self) -> &mut HashMap<u64, Box<dyn SpectrumTransform>> {
 		&mut self.transforms
+	}
+
+	pub fn transform_order_mut(&mut self) -> &mut Vec<u64> {
+		&mut self.transform_order
 	}
 }
 
@@ -155,11 +177,16 @@ impl SpectrumProcessor {
 		}
 	}
 
-	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, SpectrumProcessingError> {
+	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, Error> {
 		let initial_spectrum = self.renderer.generator.generate(buffer);
-		let final_spectrum = self.renderer.transforms.iter_mut()
-			.fold(initial_spectrum, |spectrum, transform| transform.transform(spectrum));
-		Ok(final_spectrum)
+		(0..self.renderer.transform_order.len())
+			.try_fold(initial_spectrum, |spectrum, index| {
+				let (_id, transform) = self.renderer.transform_by_index_mut(index)?
+					.expect(
+						"index is in range of spectrum_transform_order, so Ok result must be Some"
+					);
+				Ok(transform.transform(spectrum))
+			})
 	}
 }
 

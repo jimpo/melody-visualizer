@@ -1,4 +1,3 @@
-use futures::prelude::*;
 use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt, WidgetExt};
 use lazy_static::lazy_static;
 use std::{
@@ -14,7 +13,7 @@ use crate::controllers::{
 	control_pane::PORT_NAME_COL,
 };
 use crate::error::Error;
-use crate::gui::error_dialog;
+use crate::gui::{error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
 use crate::source::SourceType;
@@ -129,7 +128,9 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>) -> gtk::Box {
 	view
 }
 
-fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Builder) {
+fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Builder)
+	-> Result<(), Error>
+{
 	let menu: gtk::ListBox = builder.get_object("control_menu").unwrap();
 
 	let control_stack: gtk::Stack = builder.get_object("control_stack").unwrap();
@@ -158,7 +159,9 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	visualization_name.set_label(get_visualization_name(&*app_controller));
 
 	// Initialize transform rows.
-	for (index, config) in app_controller.config.spectrum_transforms.iter().enumerate() {
+	for index in 0..app_controller.config.spectrum_transform_order.len() {
+		let (_id, config) = app_controller.config.spectrum_transform_by_index(index)?
+			.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
 		menu.insert(&new_row, 2 + index as i32);
 	}
@@ -199,14 +202,18 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 			// TODO: Make this less brittle
 			let InsertSpectrumTransform { index } = notification.clone();
 			let app_controller = app_controller_clone.borrow();
-			if let Some(ref config) = app_controller.config.spectrum_transforms.get(index) {
-				let new_row = build_transform_row(get_spectrum_transform_name(config));
-				menu_clone.insert(&new_row, 2 + index as i32);
-				new_row.show_all();
+			match app_controller.config.spectrum_transform_by_index(index) {
+				Ok(Some((_id, config))) => {
+					let new_row = build_transform_row(get_spectrum_transform_name(config));
+					menu_clone.insert(&new_row, 2 + index as i32);
+					new_row.show_all();
 
-				if menu_clone.get_selected_row() == Some(add_transform_row_clone.clone()) {
-					menu_clone.select_row(Some(&new_row));
+					if menu_clone.get_selected_row() == Some(add_transform_row_clone.clone()) {
+						menu_clone.select_row(Some(&new_row));
+					}
 				}
+				Ok(None) => {}
+				Err(err) => log::error!("{}", err),
 			}
 		});
 
@@ -215,6 +222,8 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 		let _ = &source_name_subscription;
 		let _ = &insert_transform_subscription;
 	});
+
+	Ok(())
 }
 
 fn build_transform_row(name: &str) -> gtk::ListBoxRow {
@@ -402,12 +411,4 @@ fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformC
 				.collect();
 	}
 	&*MAP
-}
-
-fn handle_async_err(fut: impl Future<Output=Result<(), Error>> + 'static) {
-	glib::MainContext::default().spawn_local(async move {
-		if let Err(err) = fut.await {
-			error_dialog(err);
-		}
-	});
 }

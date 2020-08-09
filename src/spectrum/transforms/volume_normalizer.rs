@@ -1,4 +1,7 @@
-use std::cmp::Ordering;
+use std::{
+	any::Any,
+	cmp::Ordering,
+};
 
 use crate::spectrum::{Spectrum, SpectrumTransform};
 
@@ -20,6 +23,10 @@ impl VolumeNormalizer {
 			max_value: 0.0,
 		}
 	}
+
+	pub fn set_config(&mut self, config: Config) {
+		self.config = config;
+	}
 }
 
 impl SpectrumTransform for VolumeNormalizer {
@@ -38,6 +45,14 @@ impl SpectrumTransform for VolumeNormalizer {
 			}
 		}
 		spectrum
+	}
+
+	fn upcast_any_ref(&self) -> &dyn Any {
+		self
+	}
+
+	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+		self
 	}
 }
 

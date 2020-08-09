@@ -153,6 +153,46 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
+	pub fn update_spectrum_transform(&self, id: u64) -> impl Future<Output=Result<(), Error>> {
+		if let Some(config) = self.config.spectrum_transforms.get(&id) {
+			let config = config.clone();
+			let fut = self.spectrum_renderer
+				.exec_cloned(move |renderer| {
+					let transform = renderer.transforms_mut().get_mut(&id)
+						.ok_or_else(|| Error::MissingTransform { id })?;
+					match config {
+						SpectrumTransformConfig::Diffuser(config) => {
+							match transform
+								.upcast_any_mut()
+								.downcast_mut::<Diffuser>()
+							{
+								Some(transform) => transform.set_config(config),
+								None => *transform = Box::new(Diffuser::new(config)),
+							}
+						}
+						SpectrumTransformConfig::VolumeNormalizer(config) => {
+							match transform
+								.upcast_any_mut()
+								.downcast_mut::<VolumeNormalizer>()
+							{
+								Some(transform) => transform.set_config(config),
+								None => *transform = Box::new(VolumeNormalizer::new(config)),
+							}
+						}
+					}
+					Ok(())
+				})
+				.map(|result| {
+					result
+						.map_err(Error::Communication)
+						.and_then(|result| result)
+				});
+			Either::Left(fut)
+		} else {
+			Either::Right(future::err(Error::MissingTransform { id }))
+		}
+	}
+
 	pub fn jack_client(&self) -> Option<&jack::Client> {
 		self.source.as_ref().map(|source| source.client())
 	}
@@ -194,13 +234,14 @@ impl AppController {
 			.exec_cloned(move |renderer| {
 				*renderer.transforms_mut() = transform_configs
 					.into_iter()
-					.map(|config| -> Box<dyn SpectrumTransform> {
-						match config {
+					.map(|(id, config)| {
+						let transform: Box<dyn SpectrumTransform> = match config {
 							SpectrumTransformConfig::VolumeNormalizer(config) =>
 								Box::new(VolumeNormalizer::new(config)),
 							SpectrumTransformConfig::Diffuser(config) =>
 								Box::new(Diffuser::new(config)),
-						}
+						};
+						(id, transform)
 					})
 					.collect();
 			})
@@ -210,10 +251,13 @@ impl AppController {
 	pub fn insert_spectrum_transform(&mut self, transform_config: SpectrumTransformConfig)
 		-> impl Future<Output=Result<(), Error>>
 	{
-		self.config.spectrum_transforms.push(transform_config.clone());
-		let index = self.config.spectrum_transforms.len() - 1;
+		let id = self.config.unused_transform_id();
+		self.config.spectrum_transforms.insert(id, transform_config.clone());
+		self.config.spectrum_transform_order.push(id);
+		let index = self.config.spectrum_transform_order.len() - 1;
 		self.notify_and_log_err(events::InsertSpectrumTransform { index });
 
+		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
 				let transform: Box<dyn SpectrumTransform> = match transform_config {
@@ -222,7 +266,8 @@ impl AppController {
 					SpectrumTransformConfig::Diffuser(config) =>
 						Box::new(Diffuser::new(config)),
 				};
-				renderer.transforms_mut().push(transform);
+				renderer.transforms_mut().insert(id, transform);
+				*renderer.transform_order_mut() = transform_order;
 			})
 			.map_err(Error::Communication)
 	}

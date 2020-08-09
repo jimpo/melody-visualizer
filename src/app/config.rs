@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use crate::error::Error;
 use crate::spectrum::generators::audio;
 use crate::source::SourceType;
 use crate::spectrum::{Hz, SpectrumParams};
@@ -11,7 +14,8 @@ pub struct Config {
 	// Frequency domain samples per octave.
 	pub samples_per_octave: usize,
 	pub spectrum_generator: SpectrumGeneratorConfig,
-	pub spectrum_transforms: Vec<SpectrumTransformConfig>,
+	pub spectrum_transforms: HashMap<u64, SpectrumTransformConfig>,
+	pub spectrum_transform_order: Vec<u64>,
 	pub graphic_generator: GraphicGeneratorConfig,
 }
 
@@ -55,7 +59,12 @@ impl Default for Config {
 				SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config {
 					rate: 0.1,
 				}),
-			],
+			]
+				.into_iter()
+				.enumerate()
+				.map(|(i, config)| (i as u64, config))
+				.collect(),
+			spectrum_transform_order: (0..2).into_iter().collect(),
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
 				key_log_freq: 263.74, // C
 				outer_pad: 20.0,
@@ -72,5 +81,25 @@ impl Config {
 		// there must be at least two samples, one at min_freq and one at max_freq
 		let samples = samples.max(2);
 		SpectrumParams::exp_spaced(samples, self.min_freq, self.max_freq)
+	}
+
+	pub fn unused_transform_id(&self) -> u64 {
+		let mut id = 0;
+		while self.spectrum_transforms.contains_key(&id) {
+			id += 1;
+		}
+		id
+	}
+
+	pub fn spectrum_transform_by_index(&self, index: usize)
+		-> Result<Option<(u64, &SpectrumTransformConfig)>, Error>
+	{
+		if let Some(&id) = self.spectrum_transform_order.get(index) {
+			let config = self.spectrum_transforms.get(&id)
+				.ok_or_else(|| Error::MissingTransform { id })?;
+			Ok(Some((id, config)))
+		} else {
+			Ok(None)
+		}
 	}
 }

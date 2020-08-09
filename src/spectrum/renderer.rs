@@ -27,7 +27,6 @@ pub struct DefaultSpectrumGenerator;
 
 impl SpectrumGenerator for DefaultSpectrumGenerator {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum {
-		debug!("generating spectrum");
 		buffer.fill(|_, _| ())
 	}
 
@@ -179,6 +178,7 @@ impl SpectrumProcessor {
 
 	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, Error> {
 		let initial_spectrum = self.renderer.generator.generate(buffer);
+		// log::debug!("render n_transforms = {}", self.renderer.transform_order.len());
 		(0..self.renderer.transform_order.len())
 			.try_fold(initial_spectrum, |spectrum, index| {
 				let (_id, transform) = self.renderer.transform_by_index_mut(index)?

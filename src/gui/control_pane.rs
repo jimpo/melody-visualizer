@@ -7,7 +7,11 @@ use std::{
 };
 
 use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
-use crate::controllers::{AppController, ControlPaneController, app::events::{SourcePortChanged, InsertSpectrumTransform}, control_pane::PORT_NAME_COL, DiffuserController};
+use crate::controllers::{
+	AppController, ControlPaneController, DiffuserController, VolumeNormalizerController,
+	app::events::{SourcePortChanged, InsertSpectrumTransform},
+	control_pane::PORT_NAME_COL,
+};
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
@@ -161,7 +165,7 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 		let (id, config) = app_controller.config.spectrum_transform_by_index(index)?
 			.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(id, config, app_controller_ref);
+		let new_control = build_transform_control(id, config, app_controller_ref)?;
 		menu.insert(&new_row, 2 + index as i32);
 		control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
 	}
@@ -202,23 +206,16 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	let insert_transform_subscription = app_controller
 		.pubsub()
 		.subscribe(move |notification: &InsertSpectrumTransform| {
-			// TODO: Make this less brittle
 			let InsertSpectrumTransform { index } = notification.clone();
-			let app_controller = app_controller_clone.borrow();
-			match app_controller.config.spectrum_transform_by_index(index) {
-				Ok(Some((id, config))) => {
-					let new_row = build_transform_row(get_spectrum_transform_name(config));
-					let new_control = build_transform_control(id, config, &app_controller_clone);
-					menu_clone.insert(&new_row, 2 + index as i32);
-					control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
-					new_row.show_all();
-
-					if menu_clone.get_selected_row() == Some(add_transform_row.clone()) {
-						menu_clone.select_row(Some(&new_row));
-					}
-				}
-				Ok(None) => {}
-				Err(err) => log::error!("{}", err),
+			let result = on_insert_spectrum_transform(
+				&app_controller_clone,
+				&menu_clone,
+				&control_stack,
+				&add_transform_row,
+				index,
+			);
+			if let Err(err) = result {
+				log::error!("{}", err);
 			}
 		});
 
@@ -228,6 +225,29 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 		let _ = &insert_transform_subscription;
 	});
 
+	Ok(())
+}
+
+fn on_insert_spectrum_transform(
+	app_controller_ref: &Rc<RefCell<AppController>>,
+	menu: &gtk::ListBox,
+	control_stack: &gtk::Stack,
+	add_transform_row: &gtk::ListBoxRow,
+	index: usize,
+) -> Result<(), Error> {
+	// TODO: Make this less brittle
+	let app_controller = app_controller_ref.borrow();
+	if let Some((id, config)) = app_controller.config.spectrum_transform_by_index(index)? {
+		let new_row = build_transform_row(get_spectrum_transform_name(config));
+		let new_control = build_transform_control(id, config, &app_controller_ref)?;
+		menu.insert(&new_row, 2 + index as i32);
+		control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
+		new_row.show_all();
+
+		if menu.get_selected_row().as_ref() == Some(add_transform_row) {
+			menu.select_row(Some(&new_row));
+		}
+	}
 	Ok(())
 }
 
@@ -311,10 +331,20 @@ fn build_transform_control(
 	id: u64,
 	config: &SpectrumTransformConfig,
 	app_controller: &Rc<RefCell<AppController>>,
-) -> impl IsA<gtk::Widget>
+) -> Result<impl IsA<gtk::Widget>, Error>
 {
-	let controller = DiffuserController::new(id, app_controller.clone());
-	controls::diffuser::new(&controller)
+	match config {
+		SpectrumTransformConfig::Diffuser(_) => {
+			let controller = DiffuserController::new(id, app_controller.clone());
+			controls::diffuser::new(&controller)
+				.map(|widget| widget.upcast())
+		}
+		SpectrumTransformConfig::VolumeNormalizer(_) => {
+			let controller = VolumeNormalizerController::new(id, app_controller.clone());
+			controls::volume_normalizer::new(&controller)
+				.map(|widget| widget.upcast())
+		}
+	}
 }
 
 fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {

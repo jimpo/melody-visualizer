@@ -8,14 +8,14 @@ use crate::app::config::SpectrumTransformConfig;
 use crate::controllers::app::AppController;
 use crate::error::Error;
 
-pub struct DiffuserController {
+pub struct VolumeNormalizerController {
 	id: u64,
 	app_controller: Rc<RefCell<AppController>>,
 }
 
-impl DiffuserController {
+impl VolumeNormalizerController {
 	pub fn new(id: u64, app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
-		let controller = Rc::new(RefCell::new(DiffuserController {
+		let controller = Rc::new(RefCell::new(VolumeNormalizerController {
 			id,
 			app_controller,
 		}));
@@ -30,8 +30,8 @@ impl DiffuserController {
 		&self.app_controller
 	}
 
-	pub fn update_width(&mut self, width: f64) -> impl Future<Output=Result<(), Error>> {
-		match self.set_width(width) {
+	pub fn update_rate(&mut self, rate: f64) -> impl Future<Output=Result<(), Error>> {
+		match self.set_rate(rate) {
 			Ok(()) => Either::Left(
 				self.app_controller.borrow()
 					.update_spectrum_transform(self.id)
@@ -40,17 +40,18 @@ impl DiffuserController {
 		}
 	}
 
-	fn set_width(&mut self, width: f64) -> Result<(), Error> {
+	fn set_rate(&mut self, rate: f64) -> Result<(), Error> {
 		let mut app_controller = self.app_controller.borrow_mut();
 		let config = app_controller.config.spectrum_transforms.get_mut(&self.id)
 			.ok_or_else(|| Error::MissingTransform { id: self.id })?;
 		match config {
-			SpectrumTransformConfig::Diffuser(config) => {
-				config.width = width;
+			SpectrumTransformConfig::VolumeNormalizer(config) => {
+				config.rate = rate;
 				Ok(())
 			}
 			config => Err(Error::UnexpectedConfigEntry(format!(
-				"diffuser control signal fired when other spectrum transform is configured: {:?}",
+				"volume normalizer control signal fired when other spectrum transform is \
+				configured: {:?}",
 				config
 			))),
 		}

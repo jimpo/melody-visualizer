@@ -230,6 +230,7 @@ impl AppController {
 
 	pub fn sync_spectrum_transforms(&self) -> impl Future<Output=Result<(), Error>> {
 		let transform_configs = self.config.spectrum_transforms.clone();
+		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
 				*renderer.transforms_mut() = transform_configs
@@ -244,6 +245,7 @@ impl AppController {
 						(id, transform)
 					})
 					.collect();
+				*renderer.transform_order_mut() = transform_order;
 			})
 			.map_err(Error::Communication)
 	}

@@ -4,6 +4,7 @@
 		<property name="valign">start</property>
 		<child>
 			<object class="GtkGrid">
+				<property name="column-spacing">10</property>
 				<child>
 					<object class="GtkLabel">
 						<property name="label">Width (semitones)</property>
@@ -15,7 +16,7 @@
 				</child>
 				<child>
 					<object class="GtkScale" id="width_scale">
-						<property name="label">Width (semitones)</property>
+						<property name="value_pos">right</property>
 						<property name="hexpand">True</property>
 					</object>
 					<packing>
@@ -23,6 +24,14 @@
 						<property name="top_attach">0</property>
 					</packing>
 				</child>
+				<style>
+					<class name="control-grid"/>
+				</style>
+			</object>
+		</child>
+		<child type="label">
+			<object class="GtkLabel">
+				<property name="label">Diffuser</property>
 			</object>
 		</child>
 	</object>

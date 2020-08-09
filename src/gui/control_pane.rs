@@ -7,13 +7,9 @@ use std::{
 };
 
 use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
-use crate::controllers::{
-	AppController, ControlPaneController,
-	app::events::{SourcePortChanged, InsertSpectrumTransform},
-	control_pane::PORT_NAME_COL,
-};
+use crate::controllers::{AppController, ControlPaneController, app::events::{SourcePortChanged, InsertSpectrumTransform}, control_pane::PORT_NAME_COL, DiffuserController};
 use crate::error::Error;
-use crate::gui::{error_dialog, handle_async_err};
+use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
 use crate::source::SourceType;
@@ -32,7 +28,9 @@ const MAX_NOTE: Note = note!(C, 8);
 
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
-pub fn new(controller: &Rc<RefCell<ControlPaneController>>) -> gtk::Box {
+pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
+	-> Result<impl IsA<gtk::Widget>, Error>
+{
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Box = builder.get_object("control_pane").unwrap();
 	let source_type_selection: gtk::Box = builder.get_object("source_type_selection").unwrap();
@@ -44,7 +42,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>) -> gtk::Box {
 		builder.get_object("add_transform_type_selector").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
-	init_menu(&app_controller, &builder);
+	init_menu(&app_controller, &builder)?;
 
 	// Transform type selector options.
 	for (id, config) in get_transform_type_map().iter() {
@@ -125,7 +123,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>) -> gtk::Box {
 		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
 	}
 
-	view
+	Ok(view)
 }
 
 fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Builder)
@@ -160,10 +158,12 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 
 	// Initialize transform rows.
 	for index in 0..app_controller.config.spectrum_transform_order.len() {
-		let (_id, config) = app_controller.config.spectrum_transform_by_index(index)?
+		let (id, config) = app_controller.config.spectrum_transform_by_index(index)?
 			.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
+		let new_control = build_transform_control(id, config, app_controller_ref);
 		menu.insert(&new_row, 2 + index as i32);
+		control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
 	}
 
 	// Subscribe to update menu labels on updates.
@@ -176,21 +176,24 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 			source_name_clone.set_label(get_source_name(&*app_controller));
 		});
 
+	let app_controller_clone = app_controller_ref.clone();
 	let add_transform_row_clone = add_transform_row.clone();
+	let add_transform_control_clone = add_transform_control.clone();
+	let control_stack_clone = control_stack.clone();
 	menu.connect_row_activated(move |_, row| {
-		let child = if row == &source_row {
-			&source_control
-		} else if row == &spectrum_generator_row {
-			&spectrum_generator_control
-		} else if row == &add_transform_row {
-			&add_transform_control
-		} else if row == &visualization_row {
-			&visualization_control
-		} else {
-			log::error!("unknown control menu row activated");
-			return;
-		};
-		control_stack.set_visible_child(child);
+		on_control_row_activated(
+			&*app_controller_clone.borrow(),
+			row,
+			&control_stack_clone,
+			&source_row,
+			&spectrum_generator_row,
+			&visualization_row,
+			&add_transform_row_clone,
+			&source_control,
+			&spectrum_generator_control,
+			&visualization_control,
+			&add_transform_control_clone,
+		);
 	});
 
 
@@ -203,12 +206,14 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 			let InsertSpectrumTransform { index } = notification.clone();
 			let app_controller = app_controller_clone.borrow();
 			match app_controller.config.spectrum_transform_by_index(index) {
-				Ok(Some((_id, config))) => {
+				Ok(Some((id, config))) => {
 					let new_row = build_transform_row(get_spectrum_transform_name(config));
+					let new_control = build_transform_control(id, config, &app_controller_clone);
 					menu_clone.insert(&new_row, 2 + index as i32);
+					control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
 					new_row.show_all();
 
-					if menu_clone.get_selected_row() == Some(add_transform_row_clone.clone()) {
+					if menu_clone.get_selected_row() == Some(add_transform_row.clone()) {
 						menu_clone.select_row(Some(&new_row));
 					}
 				}
@@ -224,6 +229,50 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	});
 
 	Ok(())
+}
+
+fn on_control_row_activated(
+	app_controller: &AppController,
+	row: &gtk::ListBoxRow,
+	control_stack: &gtk::Stack,
+	source_row: &gtk::ListBoxRow,
+	spectrum_generator_row: &gtk::ListBoxRow,
+	visualization_row: &gtk::ListBoxRow,
+	add_transform_row_clone: &gtk::ListBoxRow,
+	source_control: &gtk::Frame,
+	spectrum_generator_control: &gtk::Frame,
+	visualization_control: &gtk::Frame,
+	add_transform_control_clone: &gtk::Frame,
+) {
+	let transform_count = app_controller.config.spectrum_transform_order.len();
+
+	let row_index = row.get_index();
+	assert!(row_index >= 0, "row was activated, so it must have an index");
+	let row_index = row_index as usize;
+
+	let child = if row_index == 0 {
+		assert_eq!(row, source_row);
+		control_stack.set_visible_child(source_control);
+	} else if row_index == 1 {
+		assert_eq!(row, spectrum_generator_row);
+		control_stack.set_visible_child(spectrum_generator_control);
+	} else if row_index < 2 + transform_count {
+		let transform_id = app_controller.config.spectrum_transform_order[row_index - 2];
+		let row_name = get_spectrum_transform_row_name(transform_id);
+		if let Some(child) = control_stack.get_child_by_name(&row_name) {
+			control_stack.set_visible_child(&child);
+		} else {
+			log::error!("control stack children out of sync with transforms");
+		}
+	} else if row_index == 2 + transform_count {
+		assert_eq!(row, add_transform_row_clone);
+		control_stack.set_visible_child(add_transform_control_clone);
+	} else if row_index == 3 + transform_count {
+		assert_eq!(row, visualization_row);
+		control_stack.set_visible_child(visualization_control);
+	} else {
+		log::error!("unknown control menu row activated: index = {}", row_index);
+	};
 }
 
 fn build_transform_row(name: &str) -> gtk::ListBoxRow {
@@ -256,6 +305,16 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 	grid.attach(&label, 1, 0, 1, 1);
 
 	row
+}
+
+fn build_transform_control(
+	id: u64,
+	config: &SpectrumTransformConfig,
+	app_controller: &Rc<RefCell<AppController>>,
+) -> impl IsA<gtk::Widget>
+{
+	let controller = DiffuserController::new(id, app_controller.clone());
+	controls::diffuser::new(&controller)
 }
 
 fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
@@ -375,6 +434,10 @@ fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
 	match app_controller.config.spectrum_generator {
 		SpectrumGeneratorConfig::Audio(_) => "Default Audio Analyzer",
 	}
+}
+
+fn get_spectrum_transform_row_name(id: u64) -> String {
+	format!("transform_{}", id)
 }
 
 fn get_spectrum_transform_name(config: &SpectrumTransformConfig) -> &str {

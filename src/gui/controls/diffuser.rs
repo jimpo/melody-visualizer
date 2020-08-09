@@ -10,7 +10,7 @@ use crate::controllers::DiffuserController;
 const MAX_WIDTH: f64 = 10.0;
 const UI_DEF: &str = include_str!("diffuser.ui");
 
-pub fn new(controller: &Rc<RefCell<DiffuserController>>) -> gtk::Frame {
+pub fn new(controller: &Rc<RefCell<DiffuserController>>) -> impl IsA<gtk::Widget> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Frame = builder.get_object("toplevel").unwrap();
 	let width_scale: gtk::Scale = builder.get_object("width_scale").unwrap();

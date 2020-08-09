@@ -9,3 +9,7 @@ list#control_menu > row {
 #control_stack > frame {
     margin: 10px;
 }
+
+.control-grid {
+    padding: 10px;
+}

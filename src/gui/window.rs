@@ -21,7 +21,7 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	panes.add1(&visualization::new(&visualization_controller));
 
 	let control_pane_controller = ControlPaneController::new(app_controller.clone());
-	panes.add2(&control_pane::new(&control_pane_controller));
+	panes.add2(&control_pane::new(&control_pane_controller)?);
 
 	window.set_application(Some(app));
 	window.show_all();

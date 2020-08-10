@@ -2,7 +2,6 @@ use jack::{Frames, RingBufferReader};
 use itertools::Itertools;
 use rustfft::{num_complex::Complex64, num_traits::Zero, FFTplanner, FFT};
 use std::{
-	cmp::Ordering,
 	f64::consts::PI,
 	fmt::{self, Debug},
 	sync::Arc,
@@ -136,9 +135,8 @@ impl Analyzer {
 		self.window_shape.generate(&mut self.windowing);
 	}
 
-	// TODO: Test that this preserves square sum regardless of window size.
 	fn fill_spectrum(&mut self, buffer: SpectrumBuffer, samples: impl Iterator<Item=f64>)
-					 -> Spectrum
+		-> Spectrum
 	{
 		let n = self.dft_window.len();
 
@@ -213,8 +211,6 @@ mod tests {
 	use super::*;
 
 	use rand::{rngs::StdRng, SeedableRng, RngCore};
-
-	use crate::spectrum::SpectrumParams;
 
 	#[test]
 	fn fft_preserves_power() {

@@ -8,7 +8,8 @@ use std::{
 
 use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::controllers::{
-	AppController, ControlPaneController, DiffuserController, VolumeNormalizerController,
+	AppController, ControlPaneController,
+	DiffuserController, VolumeNormalizerController, DecibelConverterController,
 	app::events::{SourcePortChanged, InsertSpectrumTransform},
 	control_pane::PORT_NAME_COL,
 };
@@ -334,6 +335,11 @@ fn build_transform_control(
 ) -> Result<impl IsA<gtk::Widget>, Error>
 {
 	match config {
+		SpectrumTransformConfig::DecibelConverter(_) => {
+			let controller = DecibelConverterController::new(id, app_controller.clone());
+			controls::decibel_converter::new(&controller)
+				.map(|widget| widget.upcast())
+		}
 		SpectrumTransformConfig::Diffuser(_) => {
 			let controller = DiffuserController::new(id, app_controller.clone());
 			controls::diffuser::new(&controller)
@@ -472,6 +478,7 @@ fn get_spectrum_transform_row_name(id: u64) -> String {
 
 fn get_spectrum_transform_name(config: &SpectrumTransformConfig) -> &str {
 	match config {
+		SpectrumTransformConfig::DecibelConverter(_) => "Decibel Converter",
 		SpectrumTransformConfig::Diffuser(_) => "Diffuser",
 		SpectrumTransformConfig::VolumeNormalizer(_) => "Volume Normalizer",
 	}

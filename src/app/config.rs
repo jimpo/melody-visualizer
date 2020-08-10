@@ -11,7 +11,11 @@ use crate::source::SourceType;
 use crate::spectrum::{
 	Hz, SpectrumParams, SpectrumTransform,
 	generators::audio,
-	transforms::{diffuser::{self, Diffuser}, volume_normalizer::{self, VolumeNormalizer}},
+	transforms::{
+		decibel_converter::{self, DecibelConverter},
+		diffuser::{self, Diffuser},
+		volume_normalizer::{self, VolumeNormalizer},
+	},
 };
 use crate::traits::Configurable;
 
@@ -50,6 +54,14 @@ macro_rules! define_graphic_generator_config {
 		}
 
 		impl $name {
+			pub fn create(self) -> Box<dyn GraphicGenerator> {
+				match self {
+					$(
+						Self::$variant(config) => Box::new($variant::new(config)),
+					)+
+				}
+			}
+
 			pub fn update(self, transform: &mut Box<dyn GraphicGenerator>) {
 				match self {
 					$(
@@ -86,6 +98,14 @@ macro_rules! define_spectrum_transform_config {
 		}
 
 		impl $name {
+			pub fn create(self) -> Box<dyn SpectrumTransform> {
+				match self {
+					$(
+						Self::$variant(config) => Box::new($variant::new(config)),
+					)+
+				}
+			}
+
 			pub fn update(self, transform: &mut Box<dyn SpectrumTransform>) {
 				match self {
 					$(
@@ -108,6 +128,7 @@ macro_rules! define_spectrum_transform_config {
 define_spectrum_transform_config! {
  	#[derive(Debug, Clone, PartialEq)]
 	pub enum SpectrumTransformConfig {
+		DecibelConverter,
 		Diffuser,
 		VolumeNormalizer,
 	}
@@ -115,6 +136,18 @@ define_spectrum_transform_config! {
 
 impl Default for Config {
 	fn default() -> Self {
+		let transforms = vec![
+			SpectrumTransformConfig::DecibelConverter(decibel_converter::Config {
+				min_level: 1.0e-6,
+			}),
+			SpectrumTransformConfig::Diffuser(diffuser::Config {
+				width: 1.0 / 24.0,
+			}),
+			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config {
+				rate: 0.1,
+			}),
+		];
+		let n_transforms = transforms.len();
 		Config {
 			min_freq: 200.0, // Low-end of human hearing
 			max_freq: 20000.0, // High-end of human hearing
@@ -122,19 +155,15 @@ impl Default for Config {
 			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config {
 				dft_window_size: 2048,
 			}),
-			spectrum_transforms: vec![
-				SpectrumTransformConfig::Diffuser(diffuser::Config {
-					width: 1.0 / 24.0,
-				}),
-				SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config {
-					rate: 0.1,
-				}),
-			]
+			spectrum_transforms: transforms
 				.into_iter()
 				.enumerate()
 				.map(|(i, config)| (i as u64, config))
 				.collect(),
-			spectrum_transform_order: (0..2).into_iter().collect(),
+			spectrum_transform_order: (0..n_transforms)
+				.into_iter()
+				.map(|i| i as u64)
+				.collect(),
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
 				key_log_freq: 263.74, // C
 				outer_pad: 20.0,

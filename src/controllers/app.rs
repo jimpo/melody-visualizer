@@ -15,13 +15,7 @@ use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
-use crate::spectrum::{
-	renderer::{self as spectrum_processor, SpectrumRenderer},
-	transforms::diffuser::Diffuser,
-	transforms::volume_normalizer::VolumeNormalizer,
-	SpectrumTransform,
-};
-use crate::traits::Configurable;
+use crate::spectrum::renderer::{self as spectrum_processor, SpectrumRenderer};
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 
@@ -204,15 +198,7 @@ impl AppController {
 			.exec_cloned(move |renderer| {
 				*renderer.transforms_mut() = transform_configs
 					.into_iter()
-					.map(|(id, config)| {
-						let transform: Box<dyn SpectrumTransform> = match config {
-							SpectrumTransformConfig::VolumeNormalizer(config) =>
-								Box::new(VolumeNormalizer::new(config)),
-							SpectrumTransformConfig::Diffuser(config) =>
-								Box::new(Diffuser::new(config)),
-						};
-						(id, transform)
-					})
+					.map(|(id, config)| (id, config.create()))
 					.collect();
 				*renderer.transform_order_mut() = transform_order;
 			})
@@ -231,13 +217,7 @@ impl AppController {
 		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
-				let transform: Box<dyn SpectrumTransform> = match transform_config {
-					SpectrumTransformConfig::VolumeNormalizer(config) =>
-						Box::new(VolumeNormalizer::new(config)),
-					SpectrumTransformConfig::Diffuser(config) =>
-						Box::new(Diffuser::new(config)),
-				};
-				renderer.transforms_mut().insert(id, transform);
+				renderer.transforms_mut().insert(id, transform_config.create());
 				*renderer.transform_order_mut() = transform_order;
 			})
 			.map_err(Error::Communication)

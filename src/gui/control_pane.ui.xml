@@ -220,13 +220,34 @@
 							<object class="GtkBox">
 								<property name="orientation">GTK_ORIENTATION_VERTICAL</property>
 								<child>
+									<object class="GtkLabel">
+										<property name="label">Lowest pitch</property>
+										<property name="xalign">0</property>
+										<property name="xpad">15</property>
+									</object>
+								</child>
+								<child>
 									<object class="GtkScale" id="min_freq_scale">
 										<property name="draw-value">False</property>
 									</object>
 								</child>
 								<child>
+									<object class="GtkLabel">
+										<property name="label">Highest pitch</property>
+										<property name="xalign">0</property>
+										<property name="xpad">15</property>
+									</object>
+								</child>
+								<child>
 									<object class="GtkScale" id="max_freq_scale">
 										<property name="draw-value">False</property>
+									</object>
+								</child>
+								<child>
+									<object class="GtkLabel">
+										<property name="label">Key</property>
+										<property name="xalign">0</property>
+										<property name="xpad">15</property>
 									</object>
 								</child>
 								<child>

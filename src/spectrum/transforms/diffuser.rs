@@ -54,6 +54,7 @@ impl Diffuser {
 		assert!(dist_between_samples.is_finite() && dist_between_samples.is_sign_positive());
 
 		let half_width = self.config.width / 2.0;
+		println!("{} {} {}", max_log_freq, min_log_freq, params.samples());
 		let samples_per_side = (half_width / dist_between_samples) as usize;
 		self.window.resize(samples_per_side * 2 + 1, 0.0);
 

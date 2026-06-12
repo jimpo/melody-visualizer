@@ -137,9 +137,9 @@ define_spectrum_transform_config! {
 impl Default for Config {
 	fn default() -> Self {
 		let transforms = vec![
-			SpectrumTransformConfig::DecibelConverter(decibel_converter::Config {
-				min_level: 1.0e-6,
-			}),
+			// SpectrumTransformConfig::DecibelConverter(decibel_converter::Config {
+			// 	min_level: 1.0e-6,
+			// }),
 			SpectrumTransformConfig::Diffuser(diffuser::Config {
 				width: 1.0 / 24.0,
 			}),

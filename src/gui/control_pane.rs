@@ -20,7 +20,7 @@ use crate::note::Note;
 use crate::source::SourceType;
 use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
-const UI_DEF: &str = include_str!("control_pane.ui");
+const UI_DEF: &str = include_str!("control_pane.ui.xml");
 
 const MIN_NOTE: Note = note!(A, 0);
 const MAX_NOTE: Note = note!(C, 8);
@@ -125,6 +125,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 		let app_controller = app_controller.borrow();
 		min_freq_scale.set_value(app_controller.config.min_freq.log2());
 		max_freq_scale.set_value(app_controller.config.max_freq.log2());
+		// TODO:
 		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
 	}
 

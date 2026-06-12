@@ -8,7 +8,7 @@ use crate::gui::visualization;
 use crate::controllers::{AppController, ControlPaneController, VisualizationController};
 
 const STYLE: &[u8] = include_bytes!("style.css");
-const UI_DEF: &str = include_str!("window.ui");
+const UI_DEF: &str = include_str!("window.ui.xml");
 
 pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	let app_controller = executor::block_on(AppController::new())?;

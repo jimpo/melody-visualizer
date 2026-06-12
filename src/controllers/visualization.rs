@@ -27,7 +27,7 @@ pub struct VisualizationController {
 	notifier: Notifier,
 	renderer: AsyncProcessor<GraphicRenderer>,
 	graphic: Graphic,
-	rendinging_state: RenderingState,
+	rendering_state: RenderingState,
 	frame_interval_ms: u32,
 }
 
@@ -41,7 +41,7 @@ impl VisualizationController {
 			notifier,
 			renderer,
 			graphic: Graphic::default(),
-			rendinging_state: RenderingState::Idle(GraphicBuffer::default()),
+			rendering_state: RenderingState::Idle(GraphicBuffer::default()),
 			frame_interval_ms: DEFAULT_FRAME_INTERVAL,
 		}));
 
@@ -107,7 +107,7 @@ fn start_render_timer(controller: &Rc<RefCell<VisualizationController>>) {
 
 fn start_render(controller: &mut VisualizationController, controller_ref: Weak<RefCell<VisualizationController>>) -> bool {
 	let rendering_state = mem::replace(
-		&mut controller.rendinging_state,
+		&mut controller.rendering_state,
 		RenderingState::Running
 	);
 	match rendering_state {
@@ -137,8 +137,8 @@ fn start_render(controller: &mut VisualizationController, controller_ref: Weak<R
 							controller.graphic.clone()
 						}
 					};
-					assert!(matches!(controller.rendinging_state, RenderingState::Running));
-					controller.rendinging_state = RenderingState::Idle(old_graphic.into_buffer());
+					assert!(matches!(controller.rendering_state, RenderingState::Running));
+					controller.rendering_state = RenderingState::Idle(old_graphic.into_buffer());
 				}
 			});
 

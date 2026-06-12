@@ -31,6 +31,9 @@ impl Graphic {
 		self.buffer.height()
 	}
 
+	// Sadly, this is mutable because a Surface reference can be used to modify its backing data,
+	// which we do not want to make a copy of for performance reasons. It is recommended that the
+	// callback only use the Surface argument in an immutable way.
 	pub fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
 		where F: Fn(&Surface) -> Result<T, Error>
 	{

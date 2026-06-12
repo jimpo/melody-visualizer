@@ -1,8 +1,10 @@
-use std::any::{Any, TypeId};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::{Rc, Weak};
-use std::sync::mpsc::SendError;
+use std::{
+	any::{Any, TypeId},
+	cell::RefCell,
+	collections::HashMap,
+	rc::{Rc, Weak},
+	sync::mpsc::SendError,
+};
 
 pub struct PubSub {
 	subscribers: Rc<RefCell<HashMap<TypeId, Vec<Subscription>>>>,

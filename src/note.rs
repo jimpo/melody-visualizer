@@ -1,9 +1,9 @@
 use std::cmp::{Ord, PartialOrd};
 use std::convert::TryInto;
-use std::ops::{Add, Sub};
+use std::ops::{Add, Sub, RangeBounds};
 use glib::bitflags::_core::cmp::Ordering;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, derive_more::Display, Clone, Copy, PartialEq, Eq)]
 pub enum PitchClass {
 	Ab,
 	A,
@@ -19,7 +19,8 @@ pub enum PitchClass {
 	G,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, derive_more::Display, Clone, Copy, PartialEq, Eq)]
+#[display(fmt = "{}{}", pitch_class, octave)]
 pub struct Note {
 	pub octave: i8,
 	pub pitch_class: PitchClass,
@@ -27,7 +28,7 @@ pub struct Note {
 
 #[macro_export]
 macro_rules! note {
-	($pitch_class:ident, $octave:literal) => {
+	($pitch_class:ident, $octave:expr) => {
 		$crate::note::Note {
 			octave: $octave,
 			pitch_class: $crate::note::PitchClass::$pitch_class,
@@ -43,6 +44,24 @@ impl Note {
 	pub fn log_frequency(&self) -> f64 {
 		const A4: Note = note!(A, 4);
 		440.0f64.log2() + (*self - A4) as f64 / 12.0
+	}
+
+	// TODO: Implement iter::Step when that trait is stable.
+	pub fn next(&self) -> Self {
+		match self.pitch_class {
+			PitchClass::C  => note!(Db, self.octave),
+			PitchClass::Db  => note!(D, self.octave),
+			PitchClass::D  => note!(Eb, self.octave),
+			PitchClass::Eb  => note!(E, self.octave),
+			PitchClass::E  => note!(F, self.octave),
+			PitchClass::F  => note!(Gb, self.octave),
+			PitchClass::Gb  => note!(G, self.octave),
+			PitchClass::G  => note!(Ab, self.octave),
+			PitchClass::Ab  => note!(A, self.octave),
+			PitchClass::A  => note!(Bb, self.octave),
+			PitchClass::Bb  => note!(B, self.octave),
+			PitchClass::B  => note!(C, self.octave + 1),
+		}
 	}
 
 	fn to_half_step_count(&self) -> isize {
@@ -117,6 +136,45 @@ impl Sub for Note {
 	}
 }
 
+struct NoteIterator {
+	next: Option<Note>,
+	end: Note,
+}
+
+impl Iterator for NoteIterator {
+	type Item = Note;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		let next = self.next?;
+		if next > self.end {
+			self.next = None;
+			return None;
+		}
+		self.next = Some(next.next());
+		Some(next)
+	}
+
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		(0, None)
+	}
+}
+
+pub fn iter(range: impl RangeBounds<Note>) -> NoteIterator {
+	use std::ops::Bound;
+	let next = match range.start_bound() {
+		Bound::Included(&note) => Some(note),
+		Bound::Excluded(&note) => Some(note.next()),
+		Bound::Unbounded => None,
+	};
+	let end = match range.end_bound() {
+		Bound::Included(&note) => note,
+		Bound::Excluded(&note) => note + -1,
+		Bound::Unbounded => note!(B, i8::MAX),
+	};
+	NoteIterator { next, end }
+}
+
+
 fn pitch_class_to_index(pitch_class: PitchClass) -> isize {
 	match pitch_class {
 		PitchClass::Ab => 0,
@@ -136,10 +194,19 @@ fn pitch_class_to_index(pitch_class: PitchClass) -> isize {
 
 #[cfg(test)]
 mod tests {
+	use super::iter;
+
 	#[test]
 	fn frequencies() {
-		assert_eq!(note!(A, 0).frequency(), 27.5);
-		assert_eq!(note!(A, 4).frequency(), 440.0);
+		assert!((note!(A, 0).frequency() - 27.5).abs() < 0.001);
+		assert!((note!(A, 4).frequency() - 440.0).abs() < 0.001);
 		assert!((note!(C, 8).frequency() - 4186.009).abs() < 0.001);
+	}
+
+	#[test]
+	fn note_iterator() {
+		for note in iter(note!(A, 2)..note!(B, 3)) {
+			println!("{}", &note);
+		}
 	}
 }

@@ -1,10 +1,10 @@
-pub mod window;
 pub mod control_pane;
 pub mod controls;
 pub mod visualization;
+pub mod window;
 
-use gtk::prelude::*;
 use futures::prelude::*;
+use gtk::prelude::*;
 
 use crate::error::Error;
 
@@ -19,7 +19,7 @@ pub fn error_dialog(err: Error) {
 	dialog.close();
 }
 
-pub fn handle_async_err(fut: impl Future<Output=Result<(), Error>> + 'static) {
+pub fn handle_async_err(fut: impl Future<Output = Result<(), Error>> + 'static) {
 	glib::MainContext::default().spawn_local(async move {
 		if let Err(err) = fut.await {
 			error_dialog(err);

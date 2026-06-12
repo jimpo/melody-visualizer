@@ -1,21 +1,19 @@
-use std::{
-	collections::HashMap,
-};
+use std::collections::HashMap;
 
 use crate::error::Error;
 use crate::graphic::{
-	GraphicGenerator,
 	generators::spiral::{self, SpiralGenerator as Spiral},
+	GraphicGenerator,
 };
 use crate::source::SourceType;
 use crate::spectrum::{
-	Hz, SpectrumParams, SpectrumTransform,
 	generators::audio,
 	transforms::{
 		decibel_converter::{self, DecibelConverter},
 		diffuser::{self, Diffuser},
 		volume_normalizer::{self, VolumeNormalizer},
 	},
+	Hz, SpectrumParams, SpectrumTransform,
 };
 use crate::traits::Configurable;
 
@@ -126,7 +124,7 @@ macro_rules! define_spectrum_transform_config {
 }
 
 define_spectrum_transform_config! {
- 	#[derive(Debug, Clone, PartialEq)]
+	 #[derive(Debug, Clone, PartialEq)]
 	pub enum SpectrumTransformConfig {
 		DecibelConverter,
 		Diffuser,
@@ -140,16 +138,12 @@ impl Default for Config {
 			// SpectrumTransformConfig::DecibelConverter(decibel_converter::Config {
 			// 	min_level: 1.0e-6,
 			// }),
-			SpectrumTransformConfig::Diffuser(diffuser::Config {
-				width: 1.0 / 24.0,
-			}),
-			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config {
-				rate: 0.1,
-			}),
+			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
+			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];
 		let n_transforms = transforms.len();
 		Config {
-			min_freq: 200.0, // Low-end of human hearing
+			min_freq: 200.0,   // Low-end of human hearing
 			max_freq: 20000.0, // High-end of human hearing
 			samples_per_octave: 180,
 			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config {
@@ -160,10 +154,7 @@ impl Default for Config {
 				.enumerate()
 				.map(|(i, config)| (i as u64, config))
 				.collect(),
-			spectrum_transform_order: (0..n_transforms)
-				.into_iter()
-				.map(|i| i as u64)
-				.collect(),
+			spectrum_transform_order: (0..n_transforms).into_iter().map(|i| i as u64).collect(),
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
 				key_log_freq: 263.74, // C
 				outer_pad: 20.0,
@@ -190,11 +181,14 @@ impl Config {
 		id
 	}
 
-	pub fn spectrum_transform_by_index(&self, index: usize)
-		-> Result<Option<(u64, &SpectrumTransformConfig)>, Error>
-	{
+	pub fn spectrum_transform_by_index(
+		&self,
+		index: usize,
+	) -> Result<Option<(u64, &SpectrumTransformConfig)>, Error> {
 		if let Some(&id) = self.spectrum_transform_order.get(index) {
-			let config = self.spectrum_transforms.get(&id)
+			let config = self
+				.spectrum_transforms
+				.get(&id)
 				.ok_or_else(|| Error::MissingTransform { id })?;
 			Ok(Some((id, config)))
 		} else {

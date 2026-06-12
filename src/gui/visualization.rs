@@ -1,9 +1,5 @@
 use gtk::prelude::*;
-use std::{
-	cell::RefCell,
-	mem,
-	rc::Rc,
-};
+use std::{cell::RefCell, mem, rc::Rc};
 
 use crate::controllers::VisualizationController;
 use crate::error::Error;
@@ -32,9 +28,11 @@ pub fn new(controller: &Rc<RefCell<VisualizationController>>) -> impl IsA<gtk::W
 	drawing_area
 }
 
-fn on_draw(controller: &mut VisualizationController, area: &gtk::DrawingArea, ctx: &cairo::Context)
-	-> Result<(), Error>
-{
+fn on_draw(
+	controller: &mut VisualizationController,
+	area: &gtk::DrawingArea,
+	ctx: &cairo::Context,
+) -> Result<(), Error> {
 	let x_max = area.allocated_width();
 	let y_max = area.allocated_height();
 	let graphic = controller.graphic_mut();
@@ -57,17 +55,14 @@ fn on_draw(controller: &mut VisualizationController, area: &gtk::DrawingArea, ct
 
 fn resize_surface(graphic: &mut Graphic, x_max: i32, y_max: i32) -> Result<(), Error> {
 	let old_graphic = mem::replace(graphic, Graphic::default());
-	let new_graphic = old_graphic
-		.into_buffer()
-		.resize(x_max, y_max)
-		.draw(|ctx| {
-			// Set the new surface to all black.
-			// TODO: Attempt to modify the old surface maybe?
-			ctx.set_source_rgb(0.0, 0.0, 0.0);
-			ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
-			ctx.fill()?;
-			Ok(())
-		})?;
+	let new_graphic = old_graphic.into_buffer().resize(x_max, y_max).draw(|ctx| {
+		// Set the new surface to all black.
+		// TODO: Attempt to modify the old surface maybe?
+		ctx.set_source_rgb(0.0, 0.0, 0.0);
+		ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
+		ctx.fill()?;
+		Ok(())
+	})?;
 	*graphic = new_graphic;
 	Ok(())
 }

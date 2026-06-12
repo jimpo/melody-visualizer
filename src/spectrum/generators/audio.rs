@@ -1,5 +1,5 @@
-use jack::{Frames, RingBufferReader};
 use itertools::Itertools;
+use jack::{Frames, RingBufferReader};
 use rustfft::{num_complex::Complex64, Fft, FftPlanner};
 use std::{
 	f64::consts::PI,
@@ -60,7 +60,8 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 			self.audio_buffer.advance(available - n * 4);
 		}
 
-		let samples = self.audio_buffer
+		let samples = self
+			.audio_buffer
 			.peek_iter()
 			.take(n * 4)
 			.tuples::<(_, _, _, _)>()
@@ -72,8 +73,8 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 	fn interval(&self) -> Duration {
 		let (overlap_numerator, overlap_denominator) = TARGET_OVERLAP;
 		Duration::from_micros(
-			(1_000_000 * self.analyzer.window_size() as u64 * overlap_numerator) /
-				(self.analyzer.sample_rate as u64 * overlap_denominator)
+			(1_000_000 * self.analyzer.window_size() as u64 * overlap_numerator)
+				/ (self.analyzer.sample_rate as u64 * overlap_denominator),
 		)
 	}
 }
@@ -132,14 +133,14 @@ impl Analyzer {
 		self.window_shape.generate(&mut self.windowing);
 	}
 
-	fn fill_spectrum(&mut self, buffer: SpectrumBuffer, samples: impl Iterator<Item=f64>)
-		-> Spectrum
-	{
+	fn fill_spectrum(
+		&mut self,
+		buffer: SpectrumBuffer,
+		samples: impl Iterator<Item = f64>,
+	) -> Spectrum {
 		let n = self.dft_window.len();
 
-		let windowed_samples = samples
-			.zip(self.windowing.iter())
-			.map(|(a, &b)| a * b);
+		let windowed_samples = samples.zip(self.windowing.iter()).map(|(a, &b)| a * b);
 
 		for (sample, dst) in windowed_samples.zip(self.dft_window.iter_mut()) {
 			*dst = Complex64::new(sample, 0.0);
@@ -221,15 +222,14 @@ mod tests {
 		}
 
 		let dft = FftPlanner::new().plan_fft_forward(n);
-		let mut dft_buffer = input.iter()
+		let mut dft_buffer = input
+			.iter()
 			.map(|&val| Complex64::new(val, 0.0))
 			.collect::<Vec<_>>();
 		dft.process(&mut dft_buffer);
 
 		let input_power = input.iter().map(|x| x * x).sum::<f64>() / n as f64;
-		let output_power = dft_buffer.iter()
-			.map(|x| dft_out_to_val(x, n))
-			.sum::<f64>();
+		let output_power = dft_buffer.iter().map(|x| dft_out_to_val(x, n)).sum::<f64>();
 		assert!(input_power / output_power > 0.99999 && input_power / output_power < 1.00001);
 	}
 }

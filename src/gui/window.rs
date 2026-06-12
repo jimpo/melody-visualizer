@@ -1,11 +1,11 @@
+use futures::executor;
 use gtk::prelude::*;
 use gtk::Application;
-use futures::executor;
 
+use crate::controllers::{AppController, ControlPaneController, VisualizationController};
 use crate::error::Error;
 use crate::gui::control_pane;
 use crate::gui::visualization;
-use crate::controllers::{AppController, ControlPaneController, VisualizationController};
 
 const STYLE: &[u8] = include_bytes!("style.css");
 const UI_DEF: &str = include_str!("window.ui.xml");

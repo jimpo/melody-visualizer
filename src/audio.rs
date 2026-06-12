@@ -1,6 +1,6 @@
 use jack::{
 	AudioIn, Client, ClientStatus, Control, Frames, NotificationHandler, Port, PortId,
-	ProcessHandler, ProcessScope, RingBuffer, RingBufferWriter, RingBufferReader,
+	ProcessHandler, ProcessScope, RingBuffer, RingBufferReader, RingBufferWriter,
 };
 use log::error;
 use std::sync::Mutex;
@@ -18,28 +18,27 @@ pub struct AudioSourceController {
 
 impl AudioSourceController {
 	pub fn new(buffer_size: usize, notifier: Notifier) -> Result<(Self, RingBufferReader), Error> {
-		let (client, status) = jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER)
-			.map_err(Error::Jack)?;
+		let (client, status) =
+			jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER).map_err(Error::Jack)?;
 		if !status.is_empty() {
 			return Err(Error::JackStatus(status));
 		}
 
-		let port = client.register_port("input", AudioIn::default())
+		let port = client
+			.register_port("input", AudioIn::default())
 			.map_err(Error::Jack)?;
 		let input_port = port.clone_unowned();
 
 		let (buffer_reader, buffer_writer) = RingBuffer::new(buffer_size)
 			.map_err(|_| Error::RingBufferAllocFailure { size: buffer_size })?
 			.into_reader_writer();
-		let client = client.activate_async(
-			AudioNotificationHandler::new(notifier),
-			AudioProcessHandler::new(port, buffer_writer),
-		)
+		let client = client
+			.activate_async(
+				AudioNotificationHandler::new(notifier),
+				AudioProcessHandler::new(port, buffer_writer),
+			)
 			.map_err(Error::Jack)?;
-		let controller = AudioSourceController {
-			client,
-			input_port,
-		};
+		let controller = AudioSourceController { client, input_port };
 		Ok((controller, buffer_reader))
 	}
 }
@@ -85,7 +84,10 @@ impl AudioNotificationHandler {
 impl NotificationHandler for AudioNotificationHandler {
 	// TODO: Handle shutdown gracefully
 	unsafe fn shutdown(&mut self, status: ClientStatus, reason: &str) {
-		error!("JACK client shutdown: status = {:?}, reason = {}", status, reason);
+		error!(
+			"JACK client shutdown: status = {:?}, reason = {}",
+			status, reason
+		);
 	}
 
 	fn sample_rate(&mut self, _client: &Client, sample_rate: Frames) -> Control {
@@ -97,9 +99,13 @@ impl NotificationHandler for AudioNotificationHandler {
 		self.notify_port_registration(port_id, is_registered);
 	}
 
-	fn port_rename(&mut self, _: &Client, port_id: PortId, _old_name: &str, new_name: &str)
-		-> Control
-	{
+	fn port_rename(
+		&mut self,
+		_: &Client,
+		port_id: PortId,
+		_old_name: &str,
+		new_name: &str,
+	) -> Control {
 		self.notify_port_rename(port_id, new_name);
 		Control::Continue
 	}
@@ -123,7 +129,9 @@ impl AudioProcessHandler {
 
 impl ProcessHandler for AudioProcessHandler {
 	fn process(&mut self, _client: &Client, scope: &ProcessScope) -> Control {
-		let mut ring_buffer = self.ring_buffer.lock()
+		let mut ring_buffer = self
+			.ring_buffer
+			.lock()
 			.expect("I shouldn't even need a Mutex...");
 		write_samples(&mut ring_buffer, self.port.as_slice(scope));
 		Control::Continue

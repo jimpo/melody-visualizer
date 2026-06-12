@@ -1,7 +1,7 @@
+use std::cmp::Ordering;
 use std::cmp::{Ord, PartialOrd};
 use std::convert::TryInto;
-use std::ops::{Add, Sub, RangeBounds};
-use std::cmp::Ordering;
+use std::ops::{Add, RangeBounds, Sub};
 
 #[derive(Debug, derive_more::Display, Clone, Copy, PartialEq, Eq)]
 pub enum PitchClass {
@@ -33,7 +33,7 @@ macro_rules! note {
 			octave: $octave,
 			pitch_class: $crate::note::PitchClass::$pitch_class,
 		}
-	}
+	};
 }
 
 impl Note {
@@ -49,35 +49,35 @@ impl Note {
 	// TODO: Implement iter::Step when that trait is stable.
 	pub fn next(&self) -> Self {
 		match self.pitch_class {
-			PitchClass::C  => note!(Db, self.octave),
-			PitchClass::Db  => note!(D, self.octave),
-			PitchClass::D  => note!(Eb, self.octave),
-			PitchClass::Eb  => note!(E, self.octave),
-			PitchClass::E  => note!(F, self.octave),
-			PitchClass::F  => note!(Gb, self.octave),
-			PitchClass::Gb  => note!(G, self.octave),
-			PitchClass::G  => note!(Ab, self.octave),
-			PitchClass::Ab  => note!(A, self.octave),
-			PitchClass::A  => note!(Bb, self.octave),
-			PitchClass::Bb  => note!(B, self.octave),
-			PitchClass::B  => note!(C, self.octave + 1),
+			PitchClass::C => note!(Db, self.octave),
+			PitchClass::Db => note!(D, self.octave),
+			PitchClass::D => note!(Eb, self.octave),
+			PitchClass::Eb => note!(E, self.octave),
+			PitchClass::E => note!(F, self.octave),
+			PitchClass::F => note!(Gb, self.octave),
+			PitchClass::Gb => note!(G, self.octave),
+			PitchClass::G => note!(Ab, self.octave),
+			PitchClass::Ab => note!(A, self.octave),
+			PitchClass::A => note!(Bb, self.octave),
+			PitchClass::Bb => note!(B, self.octave),
+			PitchClass::B => note!(C, self.octave + 1),
 		}
 	}
 
 	fn to_half_step_count(&self) -> isize {
 		let pitch_class_half_steps = match self.pitch_class {
-			PitchClass::C  => 0,
+			PitchClass::C => 0,
 			PitchClass::Db => 1,
-			PitchClass::D  => 2,
+			PitchClass::D => 2,
 			PitchClass::Eb => 3,
-			PitchClass::E  => 4,
-			PitchClass::F  => 5,
+			PitchClass::E => 4,
+			PitchClass::F => 5,
 			PitchClass::Gb => 6,
-			PitchClass::G  => 7,
+			PitchClass::G => 7,
 			PitchClass::Ab => 8,
-			PitchClass::A  => 9,
+			PitchClass::A => 9,
 			PitchClass::Bb => 10,
-			PitchClass::B  => 11,
+			PitchClass::B => 11,
 		};
 		self.octave as isize * 12 + pitch_class_half_steps
 	}
@@ -97,7 +97,8 @@ impl Note {
 			PitchClass::Bb,
 			PitchClass::B,
 		];
-		let octave = count.div_euclid(12)
+		let octave = count
+			.div_euclid(12)
 			.try_into()
 			.expect("from_half_step_count argument out of range");
 		let pitch_class = PITCH_CLASSES[count.rem_euclid(12) as usize];
@@ -174,21 +175,20 @@ pub fn iter(range: impl RangeBounds<Note>) -> NoteIterator {
 	NoteIterator { next, end }
 }
 
-
 fn pitch_class_to_index(pitch_class: PitchClass) -> isize {
 	match pitch_class {
 		PitchClass::Ab => 0,
-		PitchClass::A  => 1,
+		PitchClass::A => 1,
 		PitchClass::Bb => 2,
-		PitchClass::B  => 3,
-		PitchClass::C  => 4,
+		PitchClass::B => 3,
+		PitchClass::C => 4,
 		PitchClass::Db => 5,
-		PitchClass::D  => 6,
+		PitchClass::D => 6,
 		PitchClass::Eb => 7,
-		PitchClass::E  => 8,
-		PitchClass::F  => 9,
+		PitchClass::E => 8,
+		PitchClass::F => 9,
 		PitchClass::Gb => 10,
-		PitchClass::G  => 11,
+		PitchClass::G => 11,
 	}
 }
 

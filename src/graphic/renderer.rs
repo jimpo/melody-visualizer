@@ -1,16 +1,11 @@
-use futures::{prelude::*, channel::mpsc, executor, select};
+use futures::{channel::mpsc, executor, prelude::*, select};
 use log::{debug, error};
-use std::{
-	any::Any,
-	collections::VecDeque,
-	thread,
-	sync::Arc,
-};
+use std::{any::Any, collections::VecDeque, sync::Arc, thread};
 
 use crate::async_processor::AsyncProcessor;
+use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
-use crate::error::Error;
 
 // Graphics renderer
 //
@@ -57,9 +52,8 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 		&mut self,
 		buffer: GraphicBuffer,
 		_params: &Arc<SpectrumParams>,
-		_spectrum_history: &VecDeque<Spectrum>
-	) -> Result<Graphic, Error>
-	{
+		_spectrum_history: &VecDeque<Spectrum>,
+	) -> Result<Graphic, Error> {
 		let x_max = buffer.width();
 		let y_max = buffer.height();
 
@@ -106,7 +100,8 @@ impl GraphicRenderer {
 			self.spectrum_history.push_front(spectrum);
 		}
 		if self.spectrum_history.len() > max_history_len {
-			self.spectrum_history.pop_back()
+			self.spectrum_history
+				.pop_back()
 				.expect("spectrum_history len is greater than 0")
 				.into_buffer()
 		} else {
@@ -119,7 +114,8 @@ impl GraphicRenderer {
 	}
 
 	pub fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
-		self.generator.generate(buffer, &self.spectrum_params, &self.spectrum_history)
+		self.generator
+			.generate(buffer, &self.spectrum_params, &self.spectrum_history)
 	}
 
 	pub fn generator(&self) -> &Box<dyn GraphicGenerator> {
@@ -143,32 +139,20 @@ impl GraphicRenderer {
 pub fn start(
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
-) -> Result<AsyncProcessor<GraphicRenderer>, Error>
-{
-	start_with_thread_name(
-		"GraphicProcessor".into(),
-		spectrum_input,
-		spectrum_output,
-	)
+) -> Result<AsyncProcessor<GraphicRenderer>, Error> {
+	start_with_thread_name("GraphicProcessor".into(), spectrum_input, spectrum_output)
 }
 
 pub fn start_with_thread_name(
 	name: String,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
-) -> Result<AsyncProcessor<GraphicRenderer>, Error>
-{
+) -> Result<AsyncProcessor<GraphicRenderer>, Error> {
 	let (exec_tx, exec_rx) = mpsc::channel(0);
-	let _ = thread::Builder::new()
-		.name(name)
-		.spawn(move || {
-			let mut processor = GraphicProcessor::new(
-				exec_rx,
-				spectrum_input,
-				spectrum_output,
-			);
-			executor::block_on(processor.process_loop())
-		})?;
+	let _ = thread::Builder::new().name(name).spawn(move || {
+		let mut processor = GraphicProcessor::new(exec_rx, spectrum_input, spectrum_output);
+		executor::block_on(processor.process_loop())
+	})?;
 	Ok(AsyncProcessor::new(exec_tx))
 }
 
@@ -200,8 +184,11 @@ impl GraphicProcessor {
 		self.current_buffer = Some(GraphicBuffer::default());
 
 		// Kick off the spectrum generation loop.
-		match self.send_spectrum_buffer(self.renderer.new_spectrum_buffer()).await {
-			Ok(true) => {},
+		match self
+			.send_spectrum_buffer(self.renderer.new_spectrum_buffer())
+			.await
+		{
+			Ok(true) => {}
 			_ => {
 				error!(
 					"failed to send initial spectrum buffer to processing thread, \
@@ -218,7 +205,7 @@ impl GraphicProcessor {
 					self.handle_new_spectrum(new_spectrum).await,
 			};
 			match result {
-				Ok(true) => {},
+				Ok(true) => {}
 				Ok(false) => break,
 				Err(err) => error!("error during graphic render processing: {}", err),
 			}
@@ -226,9 +213,10 @@ impl GraphicProcessor {
 		debug!("Exiting graphic rendering thread");
 	}
 
-	fn handle_exec(&mut self, exec: Option<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>)
-		-> Result<bool, GraphicProcessingError>
-	{
+	fn handle_exec(
+		&mut self,
+		exec: Option<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
+	) -> Result<bool, GraphicProcessingError> {
 		if let Some(exec) = exec {
 			exec(&mut self.renderer);
 			Ok(true)
@@ -238,9 +226,10 @@ impl GraphicProcessor {
 		}
 	}
 
-	async fn handle_new_spectrum(&mut self, spectrum: Option<Spectrum>)
-		-> Result<bool, GraphicProcessingError>
-	{
+	async fn handle_new_spectrum(
+		&mut self,
+		spectrum: Option<Spectrum>,
+	) -> Result<bool, GraphicProcessingError> {
 		if let Some(spectrum) = spectrum {
 			let buffer = self.renderer.update_spectrum(spectrum);
 			self.send_spectrum_buffer(buffer).await
@@ -250,9 +239,10 @@ impl GraphicProcessor {
 		}
 	}
 
-	async fn send_spectrum_buffer(&mut self, buffer: SpectrumBuffer)
-		-> Result<bool, GraphicProcessingError>
-	{
+	async fn send_spectrum_buffer(
+		&mut self,
+		buffer: SpectrumBuffer,
+	) -> Result<bool, GraphicProcessingError> {
 		if let Err(err) = self.spectrum_output.send(buffer).await {
 			return if err.is_disconnected() {
 				debug!("spectrum output channel disconnected, stopping graphic processing");

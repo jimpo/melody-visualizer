@@ -1,13 +1,16 @@
-use cairo::{Mesh, MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3}};
-use palette::{encoding::Srgb, rgb::Rgb, IntoColor, Hsv, RgbHue};
+use cairo::{
+	Mesh,
+	MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3},
+};
+use palette::{encoding::Srgb, rgb::Rgb, Hsv, IntoColor, RgbHue};
 use std::any::Any;
 use std::cmp;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::error::Error;
+use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::spectrum::{Spectrum, SpectrumParams};
 use crate::traits::Configurable;
 
@@ -65,17 +68,21 @@ impl SpiralGenerator {
 			return;
 		}
 
-		let min_log_freq = self.params.min_log_freq()
+		let min_log_freq = self
+			.params
+			.min_log_freq()
 			.expect("params.log_frequencies() is not empty");
-		let max_log_freq = self.params.max_log_freq()
+		let max_log_freq = self
+			.params
+			.max_log_freq()
 			.expect("params.log_frequencies() is not empty");
 
 		self.edges.clear();
 		self.edges.reserve(self.params.log_frequencies().len());
 
 		let r_min = self.config.center_pad;
-		let r_max = (cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.config.outer_pad)
-			.max(r_min);
+		let r_max =
+			(cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.config.outer_pad).max(r_min);
 		let r_scale = (r_max - r_min) / (max_log_freq - min_log_freq);
 		let x_origin = self.x_max as f64 / 2.0;
 		let y_origin = self.y_max as f64 / 2.0;
@@ -111,8 +118,7 @@ impl GraphicGenerator for SpiralGenerator {
 		buffer: GraphicBuffer,
 		params: &Arc<SpectrumParams>,
 		spectrum_history: &VecDeque<Spectrum>,
-	) -> Result<Graphic, Error>
-	{
+	) -> Result<Graphic, Error> {
 		let x_max = buffer.width();
 		let y_max = buffer.height();
 
@@ -123,8 +129,7 @@ impl GraphicGenerator for SpiralGenerator {
 			self.regenerate();
 		}
 
-		let spectrum = spectrum_history.front()
-			.map(|spectrum| spectrum.values());
+		let spectrum = spectrum_history.front().map(|spectrum| spectrum.values());
 
 		buffer.draw(|ctx| {
 			ctx.set_source_rgb(0.0, 0.0, 0.0);
@@ -144,10 +149,10 @@ impl GraphicGenerator for SpiralGenerator {
 				let value1 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i - 1].min(1.0));
 				let value2 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i].min(1.0));
 
-				let color1: Rgb<Srgb, f64> = <Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1)
-					.into_color();
-				let color2: Rgb<Srgb, f64> = <Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value2)
-					.into_color();
+				let color1: Rgb<Srgb, f64> =
+					<Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1).into_color();
+				let color2: Rgb<Srgb, f64> =
+					<Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value2).into_color();
 
 				mesh.begin_patch();
 				mesh.line_to(edge1.x_center, edge1.y_center);

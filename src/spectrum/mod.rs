@@ -21,10 +21,7 @@ pub struct SpectrumBuffer {
 impl SpectrumBuffer {
 	pub fn new(params: Arc<SpectrumParams>) -> Self {
 		let data = vec![0.0; params.samples()];
-		SpectrumBuffer {
-			params,
-			data,
-		}
+		SpectrumBuffer { params, data }
 	}
 
 	pub fn fill(mut self, f: impl Fn(&mut [f64], &SpectrumParams)) -> Spectrum {
@@ -53,8 +50,12 @@ impl Spectrum {
 		self.buffer
 	}
 
-	pub fn values(&self) -> &[f64] { &self.buffer.data }
-	pub fn values_mut(&mut self) -> &mut [f64] { &mut self.buffer.data }
+	pub fn values(&self) -> &[f64] {
+		&self.buffer.data
+	}
+	pub fn values_mut(&mut self) -> &mut [f64] {
+		&mut self.buffer.data
+	}
 	pub fn params(&self) -> &Arc<SpectrumParams> {
 		self.buffer.params()
 	}
@@ -86,7 +87,7 @@ impl SpectrumParams {
 		}
 		SpectrumParams {
 			frequencies,
-			log_frequencies
+			log_frequencies,
 		}
 	}
 

@@ -1,4 +1,7 @@
-use futures::{prelude::*, channel::{mpsc, oneshot}};
+use futures::{
+	channel::{mpsc, oneshot},
+	prelude::*,
+};
 use std::any::Any;
 
 #[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
@@ -15,15 +18,13 @@ pub struct AsyncProcessor<T: ?Sized> {
 
 impl<T: ?Sized> AsyncProcessor<T> {
 	pub fn new(exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>) -> Self {
-		AsyncProcessor {
-			exec_tx,
-		}
+		AsyncProcessor { exec_tx }
 	}
 
 	pub async fn exec<R, F>(&mut self, f: F) -> Result<R, CommunicationError>
-		where
-			R: Any + Send,
-			F: FnOnce(&mut T) -> R + Send + 'static,
+	where
+		R: Any + Send,
+		F: FnOnce(&mut T) -> R + Send + 'static,
 	{
 		let (response_tx, response_rx) = oneshot::channel();
 		self.exec_tx
@@ -34,14 +35,15 @@ impl<T: ?Sized> AsyncProcessor<T> {
 			}))
 			.await?;
 
-		response_rx.await
+		response_rx
+			.await
 			.map_err(|_| CommunicationError::ResponseFailure)
 	}
 
-	pub fn exec_cloned<R, F>(&self, f: F) -> impl Future<Output=Result<R, CommunicationError>>
-		where
-			R: Any + Send,
-			F: FnOnce(&mut T) -> R + Send + 'static,
+	pub fn exec_cloned<R, F>(&self, f: F) -> impl Future<Output = Result<R, CommunicationError>>
+	where
+		R: Any + Send,
+		F: FnOnce(&mut T) -> R + Send + 'static,
 	{
 		let mut self_clone = self.clone();
 		async move { self_clone.exec(f).await }

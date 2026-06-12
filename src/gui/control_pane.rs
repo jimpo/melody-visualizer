@@ -1,17 +1,14 @@
-use gtk::{prelude::*, TreeSelection, TreeIter};
-use std::{
-	cell::RefCell,
-	collections::HashMap,
-	rc::Rc,
-	sync::LazyLock,
-};
+use gtk::{prelude::*, TreeIter, TreeSelection};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
 
-use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
+use crate::app::config::{
+	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
+};
 use crate::controllers::{
-	AppController, ControlPaneController,
-	DiffuserController, VolumeNormalizerController, DecibelConverterController,
-	app::events::{SourcePortChanged, InsertSpectrumTransform},
+	app::events::{InsertSpectrumTransform, SourcePortChanged},
 	control_pane::PORT_NAME_COL,
+	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
+	VolumeNormalizerController,
 };
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
@@ -33,9 +30,9 @@ const MAX_NOTE: Note = note!(C, 8);
 
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
-pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
-	-> Result<impl IsA<gtk::Widget>, Error>
-{
+pub fn new(
+	controller: &Rc<RefCell<ControlPaneController>>,
+) -> Result<impl IsA<gtk::Widget>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Box = builder.object("control_pane").unwrap();
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
@@ -81,7 +78,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 		MAX_NOTE.log_frequency(),
 		1.0 / 12.0,
 		0.0,
-		0.0
+		0.0,
 	));
 	max_freq_scale.set_adjustment(&gtk::Adjustment::new(
 		MIN_NOTE.log_frequency(),
@@ -89,7 +86,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 		MAX_NOTE.log_frequency(),
 		1.0 / 12.0,
 		0.0,
-		0.0
+		0.0,
 	));
 	key_freq_scale.set_adjustment(&gtk::Adjustment::new(
 		note!(C, 3).log_frequency(),
@@ -97,24 +94,21 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 		note!(C, 4).log_frequency(),
 		1.0 / 12.0,
 		0.0,
-		0.0
+		0.0,
 	));
 
 	// Connect signal handler functions.
 	let controller_clone = controller.clone();
-	min_freq_scale.connect_change_value(
-		move |_scale, _, value| on_min_freq_change(&controller_clone, value)
-	);
+	min_freq_scale
+		.connect_change_value(move |_scale, _, value| on_min_freq_change(&controller_clone, value));
 
 	let controller_clone = controller.clone();
-	max_freq_scale.connect_change_value(
-		move |_scale, _, value| on_max_freq_change(&controller_clone, value)
-	);
+	max_freq_scale
+		.connect_change_value(move |_scale, _, value| on_max_freq_change(&controller_clone, value));
 
 	let controller_clone = controller.clone();
-	key_freq_scale.connect_change_value(
-		move |_scale, _, value| on_key_freq_change(&controller_clone, value)
-	);
+	key_freq_scale
+		.connect_change_value(move |_scale, _, value| on_key_freq_change(&controller_clone, value));
 
 	let selection = port_view.selection();
 	let controller_clone = app_controller.clone();
@@ -132,9 +126,10 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 	Ok(view)
 }
 
-fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Builder)
-	-> Result<(), Error>
-{
+fn init_menu(
+	app_controller_ref: &Rc<RefCell<AppController>>,
+	builder: &gtk::Builder,
+) -> Result<(), Error> {
 	let menu: gtk::ListBox = builder.object("control_menu").unwrap();
 
 	let control_stack: gtk::Stack = builder.object("control_stack").unwrap();
@@ -145,15 +140,12 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	let add_transform_control: gtk::Frame = builder.object("add_transform_control").unwrap();
 
 	let source_row: gtk::ListBoxRow = builder.object("source_row").unwrap();
-	let spectrum_generator_row: gtk::ListBoxRow =
-		builder.object("spectrum_generator_row").unwrap();
-	let visualization_row: gtk::ListBoxRow =
-		builder.object("visualization_row").unwrap();
+	let spectrum_generator_row: gtk::ListBoxRow = builder.object("spectrum_generator_row").unwrap();
+	let visualization_row: gtk::ListBoxRow = builder.object("visualization_row").unwrap();
 	let add_transform_row: gtk::ListBoxRow = builder.object("add_transform_row").unwrap();
 
 	let source_name: gtk::Label = builder.object("source_name").unwrap();
-	let spectrum_generator_name: gtk::Label =
-		builder.object("spectrum_generator_name").unwrap();
+	let spectrum_generator_name: gtk::Label = builder.object("spectrum_generator_name").unwrap();
 	let visualization_name: gtk::Label = builder.object("visualization_name").unwrap();
 
 	// Initialize menu labels.
@@ -164,7 +156,9 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 
 	// Initialize transform rows.
 	for index in 0..app_controller.config.spectrum_transform_order.len() {
-		let (id, config) = app_controller.config.spectrum_transform_by_index(index)?
+		let (id, config) = app_controller
+			.config
+			.spectrum_transform_by_index(index)?
 			.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
 		let new_control = build_transform_control(id, config, app_controller_ref)?;
@@ -175,12 +169,13 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 	// Subscribe to update menu labels on updates.
 	let app_controller_clone = app_controller_ref.clone();
 	let source_name_clone = source_name.clone();
-	let source_name_subscription = app_controller
-		.pubsub()
-		.subscribe(move |_: &SourcePortChanged| {
-			let app_controller = app_controller_clone.borrow();
-			source_name_clone.set_label(get_source_name(&*app_controller));
-		});
+	let source_name_subscription =
+		app_controller
+			.pubsub()
+			.subscribe(move |_: &SourcePortChanged| {
+				let app_controller = app_controller_clone.borrow();
+				source_name_clone.set_label(get_source_name(&*app_controller));
+			});
 
 	let app_controller_clone = app_controller_ref.clone();
 	let add_transform_row_clone = add_transform_row.clone();
@@ -202,24 +197,24 @@ fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Bui
 		);
 	});
 
-
 	let app_controller_clone = app_controller_ref.clone();
 	let menu_clone = menu.clone();
-	let insert_transform_subscription = app_controller
-		.pubsub()
-		.subscribe(move |notification: &InsertSpectrumTransform| {
-			let InsertSpectrumTransform { index } = notification.clone();
-			let result = on_insert_spectrum_transform(
-				&app_controller_clone,
-				&menu_clone,
-				&control_stack,
-				&add_transform_row,
-				index,
-			);
-			if let Err(err) = result {
-				log::error!("{}", err);
-			}
-		});
+	let insert_transform_subscription =
+		app_controller
+			.pubsub()
+			.subscribe(move |notification: &InsertSpectrumTransform| {
+				let InsertSpectrumTransform { index } = notification.clone();
+				let result = on_insert_spectrum_transform(
+					&app_controller_clone,
+					&menu_clone,
+					&control_stack,
+					&add_transform_row,
+					index,
+				);
+				if let Err(err) = result {
+					log::error!("{}", err);
+				}
+			});
 
 	// Keep subscriptions alive until view is destroyed.
 	menu.connect_destroy(move |_| {
@@ -269,7 +264,10 @@ fn on_control_row_activated(
 	let transform_count = app_controller.config.spectrum_transform_order.len();
 
 	let row_index = row.index();
-	assert!(row_index >= 0, "row was activated, so it must have an index");
+	assert!(
+		row_index >= 0,
+		"row was activated, so it must have an index"
+	);
 	let row_index = row_index as usize;
 
 	if row_index == 0 {
@@ -333,29 +331,26 @@ fn build_transform_control(
 	id: u64,
 	config: &SpectrumTransformConfig,
 	app_controller: &Rc<RefCell<AppController>>,
-) -> Result<impl IsA<gtk::Widget>, Error>
-{
+) -> Result<impl IsA<gtk::Widget>, Error> {
 	match config {
 		SpectrumTransformConfig::DecibelConverter(_) => {
 			let controller = DecibelConverterController::new(id, app_controller.clone());
-			controls::decibel_converter::new(&controller)
-				.map(|widget| widget.upcast())
+			controls::decibel_converter::new(&controller).map(|widget| widget.upcast())
 		}
 		SpectrumTransformConfig::Diffuser(_) => {
 			let controller = DiffuserController::new(id, app_controller.clone());
-			controls::diffuser::new(&controller)
-				.map(|widget| widget.upcast())
+			controls::diffuser::new(&controller).map(|widget| widget.upcast())
 		}
 		SpectrumTransformConfig::VolumeNormalizer(_) => {
 			let controller = VolumeNormalizerController::new(id, app_controller.clone());
-			controls::volume_normalizer::new(&controller)
-				.map(|widget| widget.upcast())
+			controls::volume_normalizer::new(&controller).map(|widget| widget.upcast())
 		}
 	}
 }
 
 fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
-	let port_name = selection.selected()
+	let port_name = selection
+		.selected()
 		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
 	let mut app_controller = app_controller.borrow_mut();
 	if let Err(err) = app_controller.connect_port(port_name) {
@@ -385,8 +380,10 @@ fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 // 	}
 // }
 
-
-fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> glib::Propagation {
+fn on_min_freq_change(
+	controller_ref: &Rc<RefCell<ControlPaneController>>,
+	value: f64,
+) -> glib::Propagation {
 	let controller = controller_ref.borrow_mut();
 	let mut app_controller = controller.app_controller().borrow_mut();
 
@@ -400,7 +397,10 @@ fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value
 	glib::Propagation::Proceed
 }
 
-fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> glib::Propagation {
+fn on_max_freq_change(
+	controller_ref: &Rc<RefCell<ControlPaneController>>,
+	value: f64,
+) -> glib::Propagation {
 	let controller = controller_ref.borrow_mut();
 	let mut app_controller = controller.app_controller().borrow_mut();
 
@@ -414,7 +414,10 @@ fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value
 	glib::Propagation::Proceed
 }
 
-fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> glib::Propagation {
+fn on_key_freq_change(
+	controller_ref: &Rc<RefCell<ControlPaneController>>,
+	value: f64,
+) -> glib::Propagation {
 	let async_update = {
 		let controller = controller_ref.borrow_mut();
 		let mut app_controller = controller.app_controller().borrow_mut();
@@ -437,9 +440,9 @@ fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value
 	glib::Propagation::Proceed
 }
 
-fn build_source_type_selectors(app_controller: &Rc<RefCell<AppController>>)
-	-> Vec<gtk::RadioButton>
-{
+fn build_source_type_selectors(
+	app_controller: &Rc<RefCell<AppController>>,
+) -> Vec<gtk::RadioButton> {
 	let active_source_type = app_controller.borrow().get_source_type();
 
 	let mut selectors = Vec::new();
@@ -495,19 +498,15 @@ fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformC
 		vec![
 			(
 				"Diffuser",
-				SpectrumTransformConfig::Diffuser(
-					diffuser::Config { width: 1.0 / 24.0 },
-				)
+				SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			),
 			(
 				"VolumeNormalizer",
-				SpectrumTransformConfig::VolumeNormalizer(
-					volume_normalizer::Config { rate: 0.1 }
-				)
+				SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 			),
 		]
-			.into_iter()
-			.collect()
+		.into_iter()
+		.collect()
 	});
 	&MAP
 }

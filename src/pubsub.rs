@@ -34,16 +34,15 @@ impl PubSub {
 	}
 
 	pub fn subscribe<N, F>(&self, callback: F) -> SubscriptionHandle
-		where
-			N: Any + Send,
-			F: Fn(&N) + 'static
+	where
+		N: Any + Send,
+		F: Fn(&N) + 'static,
 	{
 		let callback: Rc<Box<dyn Fn(&(dyn Any + Send))>> = Rc::new(Box::new(move |notification| {
-			let notification = notification.downcast_ref::<N>()
-				.expect(
-					"all subscribers registered for a notification by TypeId will only be called \
-					with notifications of the type matching that TypeId"
-				);
+			let notification = notification.downcast_ref::<N>().expect(
+				"all subscribers registered for a notification by TypeId will only be called \
+					with notifications of the type matching that TypeId",
+			);
 			callback(notification);
 		}));
 
@@ -51,16 +50,15 @@ impl PubSub {
 			.borrow_mut()
 			.entry(TypeId::of::<N>())
 			.or_insert_with(Vec::new)
-			.push(Subscription { callback: Rc::downgrade(&callback) });
+			.push(Subscription {
+				callback: Rc::downgrade(&callback),
+			});
 
 		SubscriptionHandle(callback)
 	}
 }
 
-fn notify(
-	subscribers: &mut HashMap<TypeId, Vec<Subscription>>,
-	notification: Box<dyn Any + Send>
-) {
+fn notify(subscribers: &mut HashMap<TypeId, Vec<Subscription>>, notification: Box<dyn Any + Send>) {
 	let type_id = (*notification).type_id();
 	if let Some(subscribers) = subscribers.get_mut(&type_id) {
 		let mut i = 0;
@@ -100,15 +98,17 @@ impl Notifier {
 		Notifier { notification_tx }
 	}
 
-	pub fn send<T: Any + Send>(&self, notification: T)
-		-> Result<(), SendError<Box<dyn Any + Send>>>
-	{
+	pub fn send<T: Any + Send>(
+		&self,
+		notification: T,
+	) -> Result<(), SendError<Box<dyn Any + Send>>> {
 		self.send_boxed(Box::new(notification))
 	}
 
-	pub fn send_boxed(&self, notification: Box<dyn Any + Send>)
-		-> Result<(), SendError<Box<dyn Any + Send>>>
-	{
+	pub fn send_boxed(
+		&self,
+		notification: Box<dyn Any + Send>,
+	) -> Result<(), SendError<Box<dyn Any + Send>>> {
 		self.notification_tx.send(notification)
 	}
 }
@@ -138,7 +138,10 @@ mod tests {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
-			pubsub.notifier().send_boxed(Box::new(TestNotification)).unwrap();
+			pubsub
+				.notifier()
+				.send_boxed(Box::new(TestNotification))
+				.unwrap();
 			yield_rx.next().await.unwrap();
 
 			assert!(*subscription_called.borrow());
@@ -176,7 +179,10 @@ mod tests {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
-			pubsub.notifier().send(Box::new(OtherTestNotification)).unwrap();
+			pubsub
+				.notifier()
+				.send(Box::new(OtherTestNotification))
+				.unwrap();
 			yield_rx.next().await.unwrap();
 
 			assert!(!*subscription_called.borrow());

@@ -1,8 +1,5 @@
-use futures::{prelude::*, future::Either};
-use std::{
-	cell::RefCell,
-	rc::Rc,
-};
+use futures::{future::Either, prelude::*};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::app::config::SpectrumTransformConfig;
 use crate::controllers::app::AppController;
@@ -30,11 +27,12 @@ impl VolumeNormalizerController {
 		&self.app_controller
 	}
 
-	pub fn update_rate(&mut self, rate: f64) -> impl Future<Output=Result<(), Error>> {
+	pub fn update_rate(&mut self, rate: f64) -> impl Future<Output = Result<(), Error>> {
 		match self.set_rate(rate) {
 			Ok(()) => Either::Left(
-				self.app_controller.borrow()
-					.update_spectrum_transform(self.id)
+				self.app_controller
+					.borrow()
+					.update_spectrum_transform(self.id),
 			),
 			Err(err) => Either::Right(future::err(err)),
 		}
@@ -42,7 +40,10 @@ impl VolumeNormalizerController {
 
 	fn set_rate(&mut self, rate: f64) -> Result<(), Error> {
 		let mut app_controller = self.app_controller.borrow_mut();
-		let config = app_controller.config.spectrum_transforms.get_mut(&self.id)
+		let config = app_controller
+			.config
+			.spectrum_transforms
+			.get_mut(&self.id)
 			.ok_or_else(|| Error::MissingTransform { id: self.id })?;
 		match config {
 			SpectrumTransformConfig::VolumeNormalizer(config) => {

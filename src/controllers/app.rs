@@ -1,20 +1,14 @@
-use futures::{prelude::*, channel::mpsc, future::Either};
-use std::{
-	any::Any,
-	cell::RefCell,
-	rc::Rc,
-};
+use futures::{channel::mpsc, future::Either, prelude::*};
+use std::{any::Any, cell::RefCell, rc::Rc};
 
-use crate::app::config::{
-	Config, SpectrumGeneratorConfig, SpectrumTransformConfig,
-};
-use crate::audio::AudioSourceController;
-use crate::spectrum::generators::audio::AudioSpectrumGenerator;
+use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::async_processor::AsyncProcessor;
+use crate::audio::AudioSourceController;
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
 use crate::source::{JackSource, SourceType};
+use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 use crate::spectrum::renderer::{self as spectrum_processor, SpectrumRenderer};
 
 const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
@@ -42,16 +36,11 @@ impl AppController {
 		let (graphic_spectrum_tx, graphic_spectrum_rx) = mpsc::channel(0);
 
 		// Start the graphic rendering background thread.
-		let graphic_renderer = renderer::start(
-			spectrum_graphic_rx,
-			graphic_spectrum_tx,
-		)?;
+		let graphic_renderer = renderer::start(spectrum_graphic_rx, graphic_spectrum_tx)?;
 
 		// Start the spectrum rendering background thread.
-		let spectrum_renderer = spectrum_processor::start(
-			graphic_spectrum_rx,
-			spectrum_graphic_tx,
-		)?;
+		let spectrum_renderer =
+			spectrum_processor::start(graphic_spectrum_rx, spectrum_graphic_tx)?;
 
 		let mut controller = AppController {
 			config: Config::default(),
@@ -85,7 +74,7 @@ impl AppController {
 		&self.spectrum_renderer
 	}
 
-	fn activate_source(&mut self) -> impl Future<Output=Result<(), Error>> {
+	fn activate_source(&mut self) -> impl Future<Output = Result<(), Error>> {
 		// Drop old source first in case new source cannot be constructed.
 		self.source = None;
 		if self.source_port_name.is_some() {
@@ -99,9 +88,8 @@ impl AppController {
 					Ok((source, reader)) => {
 						log::debug!("Audio source activated");
 						let sample_rate = source.client().sample_rate() as jack::Frames;
-						let generator = AudioSpectrumGenerator::new(
-							config.clone(), reader, sample_rate
-						);
+						let generator =
+							AudioSpectrumGenerator::new(config.clone(), reader, sample_rate);
 						(Box::new(source), Box::new(generator))
 					}
 					Err(err) => return Either::Left(future::err(err)),
@@ -113,11 +101,11 @@ impl AppController {
 		Either::Right(
 			self.spectrum_renderer
 				.exec_cloned(move |renderer| renderer.set_generator(new_generator))
-				.map_err(Error::Communication)
+				.map_err(Error::Communication),
 		)
 	}
 
-	pub fn update_graphic_generator(&self) -> impl Future<Output=Result<(), Error>> {
+	pub fn update_graphic_generator(&self) -> impl Future<Output = Result<(), Error>> {
 		let config = self.config.graphic_generator.clone();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
@@ -126,7 +114,7 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
-	pub fn update_spectrum_params(&self) -> impl Future<Output=Result<(), Error>> {
+	pub fn update_spectrum_params(&self) -> impl Future<Output = Result<(), Error>> {
 		let spectrum_params = self.config.spectrum_params();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
@@ -135,12 +123,15 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
-	pub fn update_spectrum_transform(&self, id: u64) -> impl Future<Output=Result<(), Error>> {
+	pub fn update_spectrum_transform(&self, id: u64) -> impl Future<Output = Result<(), Error>> {
 		if let Some(config) = self.config.spectrum_transforms.get(&id) {
 			let config = config.clone();
-			let fut = self.spectrum_renderer
+			let fut = self
+				.spectrum_renderer
 				.exec_cloned(move |renderer| {
-					let transform = renderer.transforms_mut().get_mut(&id)
+					let transform = renderer
+						.transforms_mut()
+						.get_mut(&id)
 						.ok_or_else(|| Error::MissingTransform { id })?;
 					config.update(transform);
 					Ok(())
@@ -174,10 +165,7 @@ impl AppController {
 			self.notify_and_log_err(events::SourcePortChanged);
 
 			if let Some(output_port_name) = output_port {
-				client.connect_ports_by_name(
-					&output_port_name,
-					&input_port.name()?
-				)?;
+				client.connect_ports_by_name(&output_port_name, &input_port.name()?)?;
 				log::debug!("Connected port {}", output_port_name);
 				self.source_port_name = Some(output_port_name);
 				self.notify_and_log_err(events::SourcePortChanged);
@@ -191,7 +179,7 @@ impl AppController {
 		}
 	}
 
-	pub fn sync_spectrum_transforms(&self) -> impl Future<Output=Result<(), Error>> {
+	pub fn sync_spectrum_transforms(&self) -> impl Future<Output = Result<(), Error>> {
 		let transform_configs = self.config.spectrum_transforms.clone();
 		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
@@ -205,11 +193,14 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
-	pub fn insert_spectrum_transform(&mut self, transform_config: SpectrumTransformConfig)
-		-> impl Future<Output=Result<(), Error>>
-	{
+	pub fn insert_spectrum_transform(
+		&mut self,
+		transform_config: SpectrumTransformConfig,
+	) -> impl Future<Output = Result<(), Error>> {
 		let id = self.config.unused_transform_id();
-		self.config.spectrum_transforms.insert(id, transform_config.clone());
+		self.config
+			.spectrum_transforms
+			.insert(id, transform_config.clone());
 		self.config.spectrum_transform_order.push(id);
 		let index = self.config.spectrum_transform_order.len() - 1;
 		self.notify_and_log_err(events::InsertSpectrumTransform { index });
@@ -217,7 +208,9 @@ impl AppController {
 		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
-				renderer.transforms_mut().insert(id, transform_config.create());
+				renderer
+					.transforms_mut()
+					.insert(id, transform_config.create());
 				*renderer.transform_order_mut() = transform_order;
 			})
 			.map_err(Error::Communication)

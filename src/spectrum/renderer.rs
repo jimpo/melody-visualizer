@@ -1,4 +1,4 @@
-use futures::{prelude::*, channel::mpsc, executor, select};
+use futures::{channel::mpsc, executor, prelude::*, select};
 use futures_timer::Delay;
 use log::{debug, error};
 use std::{
@@ -62,11 +62,14 @@ impl SpectrumRenderer {
 		self.generator = generator;
 	}
 
-	pub fn transform_by_index_mut(&mut self, index: usize)
-		-> Result<Option<(u64, &mut dyn SpectrumTransform)>, Error>
-	{
+	pub fn transform_by_index_mut(
+		&mut self,
+		index: usize,
+	) -> Result<Option<(u64, &mut dyn SpectrumTransform)>, Error> {
 		if let Some(&id) = self.transform_order.get(index) {
-			let config = self.transforms.get_mut(&id)
+			let config = self
+				.transforms
+				.get_mut(&id)
 				.ok_or_else(|| Error::MissingTransform { id })?;
 			Ok(Some((id, config.as_mut())))
 		} else {
@@ -113,7 +116,9 @@ impl SpectrumProcessor {
 		self.next_tick_time = Instant::now() + self.renderer.generator.interval();
 
 		loop {
-			let tick_delay = self.next_tick_time.saturating_duration_since(Instant::now());
+			let tick_delay = self
+				.next_tick_time
+				.saturating_duration_since(Instant::now());
 			let result = select! {
 				exec = self.exec_rx.next() => self.handle_exec(exec),
 				new_buffer = self.spectrum_input.next() =>
@@ -121,7 +126,7 @@ impl SpectrumProcessor {
 				_ = Delay::new(tick_delay).fuse() => self.handle_tick().await,
 			};
 			match result {
-				Ok(true) => {},
+				Ok(true) => {}
 				Ok(false) => break,
 				Err(err) => error!("error during spectrum render processing: {}", err),
 			}
@@ -129,9 +134,10 @@ impl SpectrumProcessor {
 		debug!("Exiting spectrum rendering thread");
 	}
 
-	fn handle_exec(&mut self, exec: Option<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>)
-		-> Result<bool, SpectrumProcessingError>
-	{
+	fn handle_exec(
+		&mut self,
+		exec: Option<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>,
+	) -> Result<bool, SpectrumProcessingError> {
 		if let Some(exec) = exec {
 			exec(&mut self.renderer);
 			Ok(true)
@@ -141,9 +147,10 @@ impl SpectrumProcessor {
 		}
 	}
 
-	async fn handle_new_buffer(&mut self, new_buffer: Option<SpectrumBuffer>)
-		-> Result<bool, SpectrumProcessingError>
-	{
+	async fn handle_new_buffer(
+		&mut self,
+		new_buffer: Option<SpectrumBuffer>,
+	) -> Result<bool, SpectrumProcessingError> {
 		if let Some(new_buffer) = new_buffer {
 			if self.current_buffer.is_some() {
 				return Err(SpectrumProcessingError::ReceivedUnexpectedBuffer);
@@ -179,22 +186,20 @@ impl SpectrumProcessor {
 	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, Error> {
 		let initial_spectrum = self.renderer.generator.generate(buffer);
 		// log::debug!("render n_transforms = {}", self.renderer.transform_order.len());
-		(0..self.renderer.transform_order.len())
-			.try_fold(initial_spectrum, |spectrum, index| {
-				let (_id, transform) = self.renderer.transform_by_index_mut(index)?
-					.expect(
-						"index is in range of spectrum_transform_order, so Ok result must be Some"
-					);
-				Ok(transform.transform(spectrum))
-			})
+		(0..self.renderer.transform_order.len()).try_fold(initial_spectrum, |spectrum, index| {
+			let (_id, transform) = self
+				.renderer
+				.transform_by_index_mut(index)?
+				.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
+			Ok(transform.transform(spectrum))
+		})
 	}
 }
 
 pub fn start(
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
-) -> Result<AsyncProcessor<SpectrumRenderer>, Error>
-{
+) -> Result<AsyncProcessor<SpectrumRenderer>, Error> {
 	start_with_thread_name("SpectrumProcessor".into(), spectrum_input, spectrum_output)
 }
 
@@ -202,14 +207,11 @@ pub fn start_with_thread_name(
 	name: String,
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
-) -> Result<AsyncProcessor<SpectrumRenderer>, Error>
-{
+) -> Result<AsyncProcessor<SpectrumRenderer>, Error> {
 	let (exec_tx, exec_rx) = mpsc::channel(0);
-	let _ = thread::Builder::new()
-		.name(name)
-		.spawn(move || {
-			let mut processor = SpectrumProcessor::new(exec_rx, spectrum_input, spectrum_output);
-			executor::block_on(processor.process_loop())
-		})?;
+	let _ = thread::Builder::new().name(name).spawn(move || {
+		let mut processor = SpectrumProcessor::new(exec_rx, spectrum_input, spectrum_output);
+		executor::block_on(processor.process_loop())
+	})?;
 	Ok(AsyncProcessor::new(exec_tx))
 }

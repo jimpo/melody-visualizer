@@ -2,7 +2,7 @@
 //!
 //! This module is compiled only under `#[cfg(test)]` (see `main.rs`).
 
-use futures::{prelude::*, channel::mpsc};
+use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;
 use std::sync::Arc;
 
@@ -15,8 +15,9 @@ use std::sync::Arc;
 /// `Priority::LOW` (e.g. a pending notification dispatch) has run. The loop quits
 /// when the test future completes.
 pub fn run_in_glib_main_loop<F, U>(f: F)
-	where F: FnOnce(mpsc::Receiver<()>) -> U + Send + 'static,
-		  U: Future<Output = ()>,
+where
+	F: FnOnce(mpsc::Receiver<()>) -> U + Send + 'static,
+	U: Future<Output = ()>,
 {
 	let main_loop = Arc::new(MainLoop::new(None, false));
 	let main_context = main_loop.context();

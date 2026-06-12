@@ -10,9 +10,9 @@ use std::{
 
 use crate::async_processor::AsyncProcessor;
 use crate::controllers::app::AppController;
-use crate::graphic::{Graphic, GraphicBuffer};
-use crate::graphic::renderer::GraphicRenderer;
 use crate::error::Error;
+use crate::graphic::renderer::GraphicRenderer;
+use crate::graphic::{Graphic, GraphicBuffer};
 use crate::pubsub::{Notifier, SubscriptionHandle};
 
 const DEFAULT_FRAME_INTERVAL: u32 = 40;
@@ -81,40 +81,44 @@ fn start_render_timer(controller: &Rc<RefCell<VisualizationController>>) {
 	// unnecessarily.
 	let controller_ref = Rc::downgrade(controller);
 	let old_frame_rate = controller.borrow().frame_interval_ms;
-	glib::timeout_add_local(std::time::Duration::from_millis(old_frame_rate as u64), move || {
-		if let Some(controller) = controller_ref.clone().upgrade() {
-			let new_frame_rate;
-			{
-				let mut controller = controller.borrow_mut();
-				new_frame_rate = controller.frame_interval_ms;
-				if !start_render(&mut *controller, controller_ref.clone()) {
-					log::debug!("skipping frame because last frame is still rendering");
-				}
-			};
+	glib::timeout_add_local(
+		std::time::Duration::from_millis(old_frame_rate as u64),
+		move || {
+			if let Some(controller) = controller_ref.clone().upgrade() {
+				let new_frame_rate;
+				{
+					let mut controller = controller.borrow_mut();
+					new_frame_rate = controller.frame_interval_ms;
+					if !start_render(&mut *controller, controller_ref.clone()) {
+						log::debug!("skipping frame because last frame is still rendering");
+					}
+				};
 
-			// If frame rate has changed, start a new timer.
-			if old_frame_rate == new_frame_rate {
-				glib::ControlFlow::Continue
+				// If frame rate has changed, start a new timer.
+				if old_frame_rate == new_frame_rate {
+					glib::ControlFlow::Continue
+				} else {
+					start_render_timer(&controller);
+					glib::ControlFlow::Break
+				}
 			} else {
-				start_render_timer(&controller);
 				glib::ControlFlow::Break
 			}
-		} else {
-			glib::ControlFlow::Break
-		}
-	});
+		},
+	);
 }
 
-fn start_render(controller: &mut VisualizationController, controller_ref: Weak<RefCell<VisualizationController>>) -> bool {
-	let rendering_state = mem::replace(
-		&mut controller.rendering_state,
-		RenderingState::Running
-	);
+fn start_render(
+	controller: &mut VisualizationController,
+	controller_ref: Weak<RefCell<VisualizationController>>,
+) -> bool {
+	let rendering_state = mem::replace(&mut controller.rendering_state, RenderingState::Running);
 	match rendering_state {
 		RenderingState::Running => false,
 
 		RenderingState::Idle(buffer) => {
-			let graphic_fut = controller.renderer
+			let graphic_fut = controller
+				.renderer
 				.exec_cloned(move |renderer| renderer.render(buffer))
 				.map(|result| {
 					result
@@ -137,7 +141,10 @@ fn start_render(controller: &mut VisualizationController, controller_ref: Weak<R
 							controller.graphic.clone()
 						}
 					};
-					assert!(matches!(controller.rendering_state, RenderingState::Running));
+					assert!(matches!(
+						controller.rendering_state,
+						RenderingState::Running
+					));
 					controller.rendering_state = RenderingState::Idle(old_graphic.into_buffer());
 				}
 			});

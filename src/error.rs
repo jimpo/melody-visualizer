@@ -16,7 +16,9 @@ pub enum Error {
 	JackStatus(#[error(not(source))] jack::ClientStatus),
 	#[display("failed to allocate a ring buffer of size {}", size)]
 	#[from(skip)]
-	RingBufferAllocFailure { size: usize },
+	RingBufferAllocFailure {
+		size: usize,
+	},
 	#[display("failed to spawn a new thread: {}", _0)]
 	ThreadSpawnFailure(io::Error),
 	GraphicDrawClonesSurface,
@@ -29,7 +31,9 @@ pub enum Error {
 	PubSub(SendError<Box<dyn Any + Send>>),
 	#[display("config references missing transform with ID {}", id)]
 	#[from(skip)]
-	MissingTransform { id: u64 },
+	MissingTransform {
+		id: u64,
+	},
 	#[display("invalid config entry reference: {}", _0)]
 	UnexpectedConfigEntry(#[error(not(source))] String),
 }

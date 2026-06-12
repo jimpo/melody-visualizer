@@ -1,8 +1,4 @@
-use std::{
-	any::Any,
-	mem,
-	sync::Arc,
-};
+use std::{any::Any, mem, sync::Arc};
 
 use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumTransform};
 use crate::traits::Configurable;
@@ -46,10 +42,8 @@ impl Diffuser {
 			return;
 		}
 
-		let min_log_freq = params.min_log_freq()
-			.expect("params.samples() > 0");
-		let max_log_freq = params.max_log_freq()
-			.expect("params.samples() > 0");
+		let min_log_freq = params.min_log_freq().expect("params.samples() > 0");
+		let max_log_freq = params.max_log_freq().expect("params.samples() > 0");
 		let dist_between_samples = (max_log_freq - min_log_freq) / (params.samples() - 1) as f64;
 		assert!(dist_between_samples.is_finite() && dist_between_samples.is_sign_positive());
 

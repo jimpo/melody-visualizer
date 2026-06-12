@@ -1,14 +1,11 @@
 use glib::Type;
 use gtk::{prelude::*, TreeIter};
 use jack::{AudioOut, PortFlags, PortSpec};
-use std::{
-	cell::RefCell,
-	rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::controllers::app::AppController;
 use crate::pubsub::SubscriptionHandle;
-use crate::source::{events::InputsChanged};
+use crate::source::events::InputsChanged;
 
 pub const PORT_NAME_COL: i32 = 0;
 
@@ -31,12 +28,14 @@ impl ControlPaneController {
 
 		// Refresh port list when JACK inputs change.
 		let controller_clone = controller.clone();
-		let subscription = app_controller.borrow()
-			.pubsub()
-			.subscribe(move |notification: &InputsChanged| {
-				on_input_ports_changed(&controller_clone, notification.clone());
-				controller_clone.borrow().refresh_inputs()
-			});
+		let subscription =
+			app_controller
+				.borrow()
+				.pubsub()
+				.subscribe(move |notification: &InputsChanged| {
+					on_input_ports_changed(&controller_clone, notification.clone());
+					controller_clone.borrow().refresh_inputs()
+				});
 
 		{
 			let mut controller = controller.borrow_mut();
@@ -60,9 +59,17 @@ impl ControlPaneController {
 	fn refresh_inputs(&self) {
 		let port_store = &self.port_store;
 
-		let ports = self.app_controller.borrow()
+		let ports = self
+			.app_controller
+			.borrow()
 			.jack_client()
-			.map(|client| client.ports(None, Some(AudioOut::default().jack_port_type()), PortFlags::IS_OUTPUT))
+			.map(|client| {
+				client.ports(
+					None,
+					Some(AudioOut::default().jack_port_type()),
+					PortFlags::IS_OUTPUT,
+				)
+			})
 			.unwrap_or_default();
 
 		// Remove rows from ListStore.
@@ -121,7 +128,8 @@ fn on_input_ports_changed(
 
 fn is_inputs_update_pending(controller: &ControlPaneController, update: InputsChanged) -> bool {
 	controller
-		.app_controller.borrow()
+		.app_controller
+		.borrow()
 		.jack_client()
 		.map(move |client| {
 			match update {
@@ -129,10 +137,9 @@ fn is_inputs_update_pending(controller: &ControlPaneController, update: InputsCh
 				InputsChanged::Unregistered(port_id) => {
 					if let Some(port) = client.port_by_id(port_id) {
 						match port.name() {
-							Ok(name) =>
-								client
-									.ports(None, None, PortFlags::empty())
-									.contains(&name),
+							Ok(name) => {
+								client.ports(None, None, PortFlags::empty()).contains(&name)
+							}
 							Err(err) => {
 								log::warn!("JACK port {} has no name: {}", port_id, err);
 								// Whatever, let's just say it's updated.

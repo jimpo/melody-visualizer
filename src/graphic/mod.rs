@@ -1,14 +1,8 @@
-pub mod renderer;
 pub mod generators;
+pub mod renderer;
 
 use cairo::{BorrowError, Context, Format, ImageSurface, Surface};
-use std::{
-	any::Any,
-	collections::VecDeque,
-	fmt::Debug,
-	mem,
-	sync::Arc,
-};
+use std::{any::Any, collections::VecDeque, fmt::Debug, mem, sync::Arc};
 
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumParams};
@@ -35,7 +29,8 @@ impl Graphic {
 	// which we do not want to make a copy of for performance reasons. It is recommended that the
 	// callback only use the Surface argument in an immutable way.
 	pub fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
-		where F: Fn(&Surface) -> Result<T, Error>
+	where
+		F: Fn(&Surface) -> Result<T, Error>,
 	{
 		self.buffer.with_image_surface(f)
 	}
@@ -69,7 +64,8 @@ impl GraphicBuffer {
 	}
 
 	pub fn resize(self, width: i32, height: i32) -> Self {
-		let stride = Format::Rgb24.stride_for_width(width as u32)
+		let stride = Format::Rgb24
+			.stride_for_width(width as u32)
 			.expect("stride_for_width cannot fail");
 
 		let mut data = self.data;
@@ -83,9 +79,7 @@ impl GraphicBuffer {
 		}
 	}
 
-	pub fn draw(mut self, draw: impl Fn(&Context) -> Result<(), Error>)
-		-> Result<Graphic, Error>
-	{
+	pub fn draw(mut self, draw: impl Fn(&Context) -> Result<(), Error>) -> Result<Graphic, Error> {
 		self.with_image_surface(|surface| draw(&Context::new(surface)?))?;
 		Ok(Graphic { buffer: self })
 	}
@@ -93,7 +87,8 @@ impl GraphicBuffer {
 	/// The callback must destroy any copies it makes of the surface reference, even if Cairo
 	/// creates the copies internally. Otherwise, this returns Error::GraphicDrawCopiesSurface.
 	fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
-		where F: Fn(&Surface) -> Result<T, Error>
+	where
+		F: Fn(&Surface) -> Result<T, Error>,
 	{
 		// Use unsafe cast to extend lifetime of the data reference because
 		// ImageSurface::create_for_data takes ownership of the data
@@ -102,29 +97,27 @@ impl GraphicBuffer {
 		// references to the data vector.
 		//
 		// See https://github.com/gtk-rs/cairo/issues/335 for rationale.
-		let data_ref = unsafe {
-			mem::transmute::<&'_ mut [u8], &'static mut [u8]>(self.data.as_mut())
-		};
+		let data_ref =
+			unsafe { mem::transmute::<&'_ mut [u8], &'static mut [u8]>(self.data.as_mut()) };
 		let mut surface = ImageSurface::create_for_data(
 			data_ref,
 			Format::Rgb24,
 			self.width,
 			self.height,
-			self.stride
+			self.stride,
 		)?;
 
 		let result = f(&*surface);
 
 		// ImageSurface::get_data checks that there are no additional references and the data
 		// is safe to modify. If there is an error, we clone the data to avoid corruption.
-		let _ = surface.data()
-			.map_err(|err| {
-				self.data = self.data.clone();
-				match err {
-					BorrowError::Cairo(err) => err.into(),
-					BorrowError::NonExclusive => Error::GraphicDrawClonesSurface,
-				}
-			})?;
+		let _ = surface.data().map_err(|err| {
+			self.data = self.data.clone();
+			match err {
+				BorrowError::Cairo(err) => err.into(),
+				BorrowError::NonExclusive => Error::GraphicDrawClonesSurface,
+			}
+		})?;
 
 		result
 	}
@@ -144,6 +137,4 @@ pub trait GraphicGenerator: Debug {
 	fn upcast_any_mut(&mut self) -> &mut dyn Any;
 }
 
-pub trait ConfigurableGraphicGenerator {
-
-}
+pub trait ConfigurableGraphicGenerator {}

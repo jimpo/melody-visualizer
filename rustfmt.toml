@@ -1,0 +1,2 @@
+# The codebase is indented with tabs; keep cargo fmt from converting to spaces.
+hard_tabs = true

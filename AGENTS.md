@@ -315,14 +315,23 @@ Useful env vars: `SHOT=` (output path), `WAIT=` (seconds before capture),
 JACK layer connected. A panic at `window.rs`'s `.expect("failed to create main
 window")` instead means JACK wasn't reachable (distinct from a display problem).
 
-**What this verifies — and what it doesn't.** A successful run proves GTK
+**What a plain run verifies — and what it doesn't.** A successful run proves GTK
 rendered the full UI chrome and the JACK port list (the screenshot shows the
-control pane listing `system:capture_*`). It does **not** prove the visualizer
-*animates*: with no signal connected the spectrum is silent, so the spiral renders
-at its static base brightness. To exercise the live audio→pixels pipeline you'd
-connect a JACK signal generator (e.g. `jack-keyboard`, `sndfile-jackplay`, or a
-test-tone client) to the app's input port — tracked as a follow-up, not wired into
-this script.
+control pane listing `system:capture_*`). On its own it does **not** prove the
+visualizer *animates*: with no signal connected the spectrum is silent, so the
+spiral renders at its static base brightness.
+
+**Driving the live pipeline.** To exercise audio → spectrum → graphic end to end,
+feed the app's input a real signal with `scripts/connect-test-tone.sh`, which
+starts a `jack_simple_client` sine and connects it to `Melody Visualizer:input`:
+
+```sh
+KEEP_RUNNING=1 scripts/run-headless.sh      # launch the app, leave it running
+scripts/connect-test-tone.sh                # connect a sine tone
+DISPLAY=:99 import -window root /tmp/tone.png
+# The spiral lights one bright band at the tone's frequency (a pure sine → one
+# band). `scripts/connect-test-tone.sh --disconnect` stops driving the input.
+```
 
 [rust-jack#121]: https://github.com/RustAudio/rust-jack/issues/121
 [jack2#617]: https://github.com/jackaudio/jack2/issues/617

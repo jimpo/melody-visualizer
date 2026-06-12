@@ -1,6 +1,6 @@
 use futures::executor;
-use gtk::prelude::*;
 use gtk::Application;
+use gtk::prelude::*;
 
 use crate::controllers::{AppController, ControlPaneController, VisualizationController};
 use crate::error::Error;

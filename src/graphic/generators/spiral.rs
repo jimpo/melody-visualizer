@@ -2,7 +2,7 @@ use cairo::{
 	Mesh,
 	MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3},
 };
-use palette::{encoding::Srgb, rgb::Rgb, Hsv, IntoColor, RgbHue};
+use palette::{Hsv, IntoColor, RgbHue, encoding::Srgb, rgb::Rgb};
 use std::any::Any;
 use std::cmp;
 use std::collections::VecDeque;

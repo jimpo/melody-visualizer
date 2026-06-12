@@ -74,7 +74,7 @@ impl AppController {
 		&self.spectrum_renderer
 	}
 
-	fn activate_source(&mut self) -> impl Future<Output = Result<(), Error>> {
+	fn activate_source(&mut self) -> impl Future<Output = Result<(), Error>> + use<> {
 		// Drop old source first in case new source cannot be constructed.
 		self.source = None;
 		if self.source_port_name.is_some() {
@@ -105,7 +105,7 @@ impl AppController {
 		)
 	}
 
-	pub fn update_graphic_generator(&self) -> impl Future<Output = Result<(), Error>> {
+	pub fn update_graphic_generator(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let config = self.config.graphic_generator.clone();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
@@ -114,7 +114,7 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
-	pub fn update_spectrum_params(&self) -> impl Future<Output = Result<(), Error>> {
+	pub fn update_spectrum_params(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let spectrum_params = self.config.spectrum_params();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
@@ -123,7 +123,10 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
-	pub fn update_spectrum_transform(&self, id: u64) -> impl Future<Output = Result<(), Error>> {
+	pub fn update_spectrum_transform(
+		&self,
+		id: u64,
+	) -> impl Future<Output = Result<(), Error>> + use<> {
 		if let Some(config) = self.config.spectrum_transforms.get(&id) {
 			let config = config.clone();
 			let fut = self
@@ -179,7 +182,7 @@ impl AppController {
 		}
 	}
 
-	pub fn sync_spectrum_transforms(&self) -> impl Future<Output = Result<(), Error>> {
+	pub fn sync_spectrum_transforms(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let transform_configs = self.config.spectrum_transforms.clone();
 		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
@@ -196,7 +199,7 @@ impl AppController {
 	pub fn insert_spectrum_transform(
 		&mut self,
 		transform_config: SpectrumTransformConfig,
-	) -> impl Future<Output = Result<(), Error>> {
+	) -> impl Future<Output = Result<(), Error>> + use<> {
 		let id = self.config.unused_transform_id();
 		self.config
 			.spectrum_transforms

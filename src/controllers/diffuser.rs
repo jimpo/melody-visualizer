@@ -24,7 +24,7 @@ impl DiffuserController {
 		&self.app_controller
 	}
 
-	pub fn update_width(&mut self, width: f64) -> impl Future<Output = Result<(), Error>> {
+	pub fn update_width(&mut self, width: f64) -> impl Future<Output = Result<(), Error>> + use<> {
 		match self.set_width(width) {
 			Ok(()) => Either::Left(
 				self.app_controller

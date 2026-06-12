@@ -10,7 +10,7 @@ const UI_DEF: &str = include_str!("decibel_converter.ui");
 
 pub fn new(
 	controller: &Rc<RefCell<DecibelConverterController>>,
-) -> Result<impl IsA<gtk::Widget>, Error> {
+) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Frame = builder.object("toplevel").unwrap();
 	let min_level_scale: gtk::Scale = builder.object("min_level_scale").unwrap();
@@ -32,12 +32,12 @@ pub fn new(
 			return Err(Error::UnexpectedConfigEntry(format!(
 				"expected decibel converter transform with id {}",
 				controller.id()
-			)))
+			)));
 		}
 		None => {
 			return Err(Error::MissingTransform {
 				id: controller.id(),
-			})
+			});
 		}
 	};
 

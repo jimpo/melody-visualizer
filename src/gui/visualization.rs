@@ -5,7 +5,7 @@ use crate::controllers::VisualizationController;
 use crate::error::Error;
 use crate::graphic::Graphic;
 
-pub fn new(controller: &Rc<RefCell<VisualizationController>>) -> impl IsA<gtk::Widget> {
+pub fn new(controller: &Rc<RefCell<VisualizationController>>) -> impl IsA<gtk::Widget> + use<> {
 	let drawing_area = gtk::DrawingArea::new();
 
 	let drawing_area_clone = drawing_area.clone();

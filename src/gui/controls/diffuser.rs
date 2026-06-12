@@ -9,7 +9,9 @@ use crate::gui::handle_async_err;
 const SEMITONES_PER_OCTAVE: f64 = 12.0;
 const UI_DEF: &str = include_str!("diffuser.ui");
 
-pub fn new(controller: &Rc<RefCell<DiffuserController>>) -> Result<impl IsA<gtk::Widget>, Error> {
+pub fn new(
+	controller: &Rc<RefCell<DiffuserController>>,
+) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Frame = builder.object("toplevel").unwrap();
 	let width_scale: gtk::Scale = builder.object("width_scale").unwrap();
@@ -30,12 +32,12 @@ pub fn new(controller: &Rc<RefCell<DiffuserController>>) -> Result<impl IsA<gtk:
 			return Err(Error::UnexpectedConfigEntry(format!(
 				"expected diffuser transform with id {}",
 				controller.id()
-			)))
+			)));
 		}
 		None => {
 			return Err(Error::MissingTransform {
 				id: controller.id(),
-			})
+			});
 		}
 	};
 

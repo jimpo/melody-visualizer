@@ -1,14 +1,14 @@
-use gtk::{prelude::*, TreeIter, TreeSelection};
+use gtk::{TreeIter, TreeSelection, prelude::*};
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
 
 use crate::app::config::{
 	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
 };
 use crate::controllers::{
-	app::events::{InsertSpectrumTransform, SourcePortChanged},
-	control_pane::PORT_NAME_COL,
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
 	VolumeNormalizerController,
+	app::events::{InsertSpectrumTransform, SourcePortChanged},
+	control_pane::PORT_NAME_COL,
 };
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
@@ -32,7 +32,7 @@ const MAX_NOTE: Note = note!(C, 8);
 
 pub fn new(
 	controller: &Rc<RefCell<ControlPaneController>>,
-) -> Result<impl IsA<gtk::Widget>, Error> {
+) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Box = builder.object("control_pane").unwrap();
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
@@ -331,7 +331,7 @@ fn build_transform_control(
 	id: u64,
 	config: &SpectrumTransformConfig,
 	app_controller: &Rc<RefCell<AppController>>,
-) -> Result<impl IsA<gtk::Widget>, Error> {
+) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	match config {
 		SpectrumTransformConfig::DecibelConverter(_) => {
 			let controller = DecibelConverterController::new(id, app_controller.clone());

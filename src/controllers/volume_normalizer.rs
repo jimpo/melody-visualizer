@@ -27,7 +27,7 @@ impl VolumeNormalizerController {
 		&self.app_controller
 	}
 
-	pub fn update_rate(&mut self, rate: f64) -> impl Future<Output = Result<(), Error>> {
+	pub fn update_rate(&mut self, rate: f64) -> impl Future<Output = Result<(), Error>> + use<> {
 		match self.set_rate(rate) {
 			Ok(()) => Either::Left(
 				self.app_controller

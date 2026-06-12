@@ -1,5 +1,5 @@
 use glib::Type;
-use gtk::{prelude::*, TreeIter};
+use gtk::{TreeIter, prelude::*};
 use jack::{AudioOut, PortFlags, PortSpec};
 use std::{cell::RefCell, rc::Rc};
 

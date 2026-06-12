@@ -27,7 +27,10 @@ impl DecibelConverterController {
 		&self.app_controller
 	}
 
-	pub fn update_min_level(&mut self, min_level: f64) -> impl Future<Output = Result<(), Error>> {
+	pub fn update_min_level(
+		&mut self,
+		min_level: f64,
+	) -> impl Future<Output = Result<(), Error>> + use<> {
 		match self.set_min_level(min_level) {
 			Ok(()) => Either::Left(
 				self.app_controller

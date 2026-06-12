@@ -28,7 +28,7 @@ pub struct Note {
 
 #[macro_export]
 macro_rules! note {
-	($pitch_class:ident, $octave:expr) => {
+	($pitch_class:ident, $octave:expr_2021) => {
 		$crate::note::Note {
 			octave: $octave,
 			pitch_class: $crate::note::PitchClass::$pitch_class,

@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use jack::{Frames, RingBufferReader};
-use rustfft::{num_complex::Complex64, Fft, FftPlanner};
+use rustfft::{Fft, FftPlanner, num_complex::Complex64};
 use std::{
 	f64::consts::PI,
 	fmt::{self, Debug},
@@ -208,7 +208,7 @@ impl Debug for Analyzer {
 mod tests {
 	use super::*;
 
-	use rand::{rngs::StdRng, RngExt, SeedableRng};
+	use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 	#[test]
 	fn fft_preserves_power() {

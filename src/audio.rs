@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use crate::error::Error;
 use crate::pubsub::Notifier;
-use crate::source::{events, JackSource, SourceType};
+use crate::source::{JackSource, SourceType, events};
 
 const TITLE: &str = "Melody Visualizer";
 

@@ -10,7 +10,7 @@ const UI_DEF: &str = include_str!("volume_normalizer.ui");
 
 pub fn new(
 	controller: &Rc<RefCell<VolumeNormalizerController>>,
-) -> Result<impl IsA<gtk::Widget>, Error> {
+) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let view: gtk::Frame = builder.object("toplevel").unwrap();
 	let rate_scale: gtk::Scale = builder.object("rate_scale").unwrap();
@@ -31,12 +31,12 @@ pub fn new(
 			return Err(Error::UnexpectedConfigEntry(format!(
 				"expected volume normalizer transform with id {}",
 				controller.id()
-			)))
+			)));
 		}
 		None => {
 			return Err(Error::MissingTransform {
 				id: controller.id(),
-			})
+			});
 		}
 	};
 

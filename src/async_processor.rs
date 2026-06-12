@@ -40,7 +40,10 @@ impl<T: ?Sized> AsyncProcessor<T> {
 			.map_err(|_| CommunicationError::ResponseFailure)
 	}
 
-	pub fn exec_cloned<R, F>(&self, f: F) -> impl Future<Output = Result<R, CommunicationError>>
+	pub fn exec_cloned<R, F>(
+		&self,
+		f: F,
+	) -> impl Future<Output = Result<R, CommunicationError>> + use<R, F, T>
 	where
 		R: Any + Send,
 		F: FnOnce(&mut T) -> R + Send + 'static,

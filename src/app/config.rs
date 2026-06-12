@@ -2,18 +2,18 @@ use std::collections::HashMap;
 
 use crate::error::Error;
 use crate::graphic::{
-	generators::spiral::{self, SpiralGenerator as Spiral},
 	GraphicGenerator,
+	generators::spiral::{self, SpiralGenerator as Spiral},
 };
 use crate::source::SourceType;
 use crate::spectrum::{
+	Hz, SpectrumParams, SpectrumTransform,
 	generators::audio,
 	transforms::{
 		decibel_converter::{self, DecibelConverter},
 		diffuser::{self, Diffuser},
 		volume_normalizer::{self, VolumeNormalizer},
 	},
-	Hz, SpectrumParams, SpectrumTransform,
 };
 use crate::traits::Configurable;
 

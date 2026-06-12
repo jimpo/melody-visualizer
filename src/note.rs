@@ -1,7 +1,7 @@
 use std::cmp::{Ord, PartialOrd};
 use std::convert::TryInto;
 use std::ops::{Add, Sub, RangeBounds};
-use glib::bitflags::_core::cmp::Ordering;
+use std::cmp::Ordering;
 
 #[derive(Debug, derive_more::Display, Clone, Copy, PartialEq, Eq)]
 pub enum PitchClass {

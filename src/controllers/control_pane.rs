@@ -20,7 +20,7 @@ pub struct ControlPaneController {
 
 impl ControlPaneController {
 	pub fn new(app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
-		let column_types = [Type::String];
+		let column_types = [Type::STRING];
 		let port_store = gtk::ListStore::new(&column_types[..]);
 
 		let controller = Rc::new(RefCell::new(ControlPaneController {
@@ -66,7 +66,7 @@ impl ControlPaneController {
 			.unwrap_or_default();
 
 		// Remove rows from ListStore.
-		if let Some(iter) = port_store.get_iter_first() {
+		if let Some(iter) = port_store.iter_first() {
 			loop {
 				let found = ports.contains(&get_port_name(port_store, &iter));
 				let iter_invalid = if !found {
@@ -83,7 +83,7 @@ impl ControlPaneController {
 
 		// Add rows to ListStore.
 		for new_port in ports {
-			let found = if let Some(iter) = port_store.get_iter_first() {
+			let found = if let Some(iter) = port_store.iter_first() {
 				loop {
 					if new_port == get_port_name(port_store, &iter) {
 						break true;
@@ -109,12 +109,12 @@ fn on_input_ports_changed(
 	// TODO: Unfortunately, we need to poll until port_update is reflected.
 	// https://github.com/jackaudio/jack2/issues/617
 	let controller = controller_ref.clone();
-	gtk::timeout_add(10, move || {
+	glib::timeout_add_local(std::time::Duration::from_millis(10), move || {
 		if is_inputs_update_pending(&*controller.borrow(), update.clone()) {
-			glib::Continue(true)
+			glib::ControlFlow::Continue
 		} else {
 			controller.borrow().refresh_inputs();
-			glib::Continue(false)
+			glib::ControlFlow::Break
 		}
 	});
 }
@@ -152,8 +152,7 @@ fn is_inputs_update_pending(controller: &ControlPaneController, update: InputsCh
 
 fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 	port_store
-		.get_value(&iter, PORT_NAME_COL)
+		.value(&iter, PORT_NAME_COL)
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
-		.expect("port names cannot be None")
 }

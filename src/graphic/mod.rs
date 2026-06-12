@@ -86,7 +86,7 @@ impl GraphicBuffer {
 	pub fn draw(mut self, draw: impl Fn(&Context) -> Result<(), Error>)
 		-> Result<Graphic, Error>
 	{
-		self.with_image_surface(|surface| draw(&Context::new(surface)))?;
+		self.with_image_surface(|surface| draw(&Context::new(surface)?))?;
 		Ok(Graphic { buffer: self })
 	}
 
@@ -117,7 +117,7 @@ impl GraphicBuffer {
 
 		// ImageSurface::get_data checks that there are no additional references and the data
 		// is safe to modify. If there is an error, we clone the data to avoid corruption.
-		let _ = surface.get_data()
+		let _ = surface.data()
 			.map_err(|err| {
 				self.data = self.data.clone();
 				match err {

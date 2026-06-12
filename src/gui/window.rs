@@ -14,8 +14,8 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	let app_controller = executor::block_on(AppController::new())?;
 
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let window: gtk::ApplicationWindow = builder.get_object("main_window").unwrap();
-	let panes: gtk::Paned = builder.get_object("main_panes").unwrap();
+	let window: gtk::ApplicationWindow = builder.object("main_window").unwrap();
+	let panes: gtk::Paned = builder.object("main_panes").unwrap();
 
 	let visualization_controller = VisualizationController::new(app_controller.clone());
 	panes.add1(&visualization::new(&visualization_controller));
@@ -42,7 +42,7 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	let style_provider = gtk::CssProvider::new();
 	style_provider.load_from_data(STYLE).unwrap();
 	gtk::StyleContext::add_provider_for_screen(
-		&gdk::Screen::get_default().unwrap(),
+		&gdk::Screen::default().unwrap(),
 		&style_provider,
 		gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
 	);

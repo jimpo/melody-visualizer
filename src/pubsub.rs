@@ -20,7 +20,7 @@ impl PubSub {
 		let subscribers_clone = subscribers.clone();
 		notification_rx.attach(context, move |notification| {
 			notify(&mut *subscribers_clone.borrow_mut(), notification);
-			glib::Continue(true)
+			glib::ControlFlow::Continue
 		});
 
 		PubSub {
@@ -129,7 +129,7 @@ mod tests {
 			  U: Future<Output = ()>,
 	{
 		let main_loop = Arc::new(MainLoop::new(None, false));
-		let main_context = main_loop.get_context();
+		let main_context = main_loop.context();
 
 		// This seems kind of wacky. The idea is that we'll have an asynchronous test case that can
 		// yield control back to the main loop. The way we do that is have a separate low-priority
@@ -138,7 +138,7 @@ mod tests {
 		// ready.
 		let (mut yield_tx, yield_rx) = mpsc::channel(0);
 
-		main_context.spawn_with_priority(glib::PRIORITY_LOW, async move {
+		main_context.spawn_with_priority(glib::Priority::LOW, async move {
 			loop {
 				yield_tx.send(()).await.unwrap();
 			}
@@ -146,7 +146,7 @@ mod tests {
 
 		let main_loop_clone = main_loop.clone();
 		main_context.spawn(async move {
-			let main_context = main_loop_clone.get_context();
+			let main_context = main_loop_clone.context();
 			main_context.spawn_local(async move {
 				// Quit main loop after test code completes.
 				f(yield_rx).await;
@@ -163,7 +163,7 @@ mod tests {
 	#[test]
 	fn pubsub_subscriptions_are_called() {
 		run_in_glib_main_loop(|mut yield_rx| async move {
-			let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
@@ -182,7 +182,7 @@ mod tests {
 	#[test]
 	fn pubsub_dropped_subscriptions_are_not_called() {
 		run_in_glib_main_loop(|mut yield_rx| async move {
-			let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
@@ -202,7 +202,7 @@ mod tests {
 		struct OtherTestNotification;
 
 		run_in_glib_main_loop(|mut yield_rx| async move {
-			let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();

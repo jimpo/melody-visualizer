@@ -81,7 +81,7 @@ fn start_render_timer(controller: &Rc<RefCell<VisualizationController>>) {
 	// unnecessarily.
 	let controller_ref = Rc::downgrade(controller);
 	let old_frame_rate = controller.borrow().frame_interval_ms;
-	gtk::timeout_add(old_frame_rate, move || {
+	glib::timeout_add_local(std::time::Duration::from_millis(old_frame_rate as u64), move || {
 		if let Some(controller) = controller_ref.clone().upgrade() {
 			let new_frame_rate;
 			{
@@ -94,13 +94,13 @@ fn start_render_timer(controller: &Rc<RefCell<VisualizationController>>) {
 
 			// If frame rate has changed, start a new timer.
 			if old_frame_rate == new_frame_rate {
-				Continue(true)
+				glib::ControlFlow::Continue
 			} else {
 				start_render_timer(&controller);
-				Continue(false)
+				glib::ControlFlow::Break
 			}
 		} else {
-			Continue(false)
+			glib::ControlFlow::Break
 		}
 	});
 }

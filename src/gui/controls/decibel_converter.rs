@@ -15,8 +15,8 @@ pub fn new(controller: &Rc<RefCell<DecibelConverterController>>)
 	-> Result<impl IsA<gtk::Widget>, Error>
 {
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let view: gtk::Frame = builder.get_object("toplevel").unwrap();
-	let min_level_scale: gtk::Scale = builder.get_object("min_level_scale").unwrap();
+	let view: gtk::Frame = builder.object("toplevel").unwrap();
+	let min_level_scale: gtk::Scale = builder.object("min_level_scale").unwrap();
 
 	let controller_clone = controller.clone();
 	min_level_scale.connect_change_value(
@@ -39,9 +39,9 @@ pub fn new(controller: &Rc<RefCell<DecibelConverterController>>)
 }
 
 fn on_min_level_change(controller: &Rc<RefCell<DecibelConverterController>>, value: f64)
-	-> Inhibit
+	-> glib::Propagation
 {
 	let mut controller = controller.borrow_mut();
 	handle_async_err(controller.update_min_level(10.0f64.powf(value)));
-	Inhibit(false)
+	glib::Propagation::Proceed
 }

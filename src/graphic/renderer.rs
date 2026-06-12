@@ -66,7 +66,7 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 		buffer.draw(|ctx| {
 			ctx.set_source_rgb(0.0, 0.0, 0.0);
 			ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
-			ctx.fill();
+			ctx.fill()?;
 			Ok(())
 		})
 	}

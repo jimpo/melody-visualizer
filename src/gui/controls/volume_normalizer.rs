@@ -15,8 +15,8 @@ pub fn new(controller: &Rc<RefCell<VolumeNormalizerController>>)
 	-> Result<impl IsA<gtk::Widget>, Error>
 {
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let view: gtk::Frame = builder.get_object("toplevel").unwrap();
-	let rate_scale: gtk::Scale = builder.get_object("rate_scale").unwrap();
+	let view: gtk::Frame = builder.object("toplevel").unwrap();
+	let rate_scale: gtk::Scale = builder.object("rate_scale").unwrap();
 
 	let controller_clone = controller.clone();
 	rate_scale.connect_change_value(
@@ -38,8 +38,8 @@ pub fn new(controller: &Rc<RefCell<VolumeNormalizerController>>)
 	Ok(view)
 }
 
-fn on_rate_change(controller: &Rc<RefCell<VolumeNormalizerController>>, value: f64) -> Inhibit {
+fn on_rate_change(controller: &Rc<RefCell<VolumeNormalizerController>>, value: f64) -> glib::Propagation {
 	let mut controller = controller.borrow_mut();
 	handle_async_err(controller.update_rate(value));
-	Inhibit(false)
+	glib::Propagation::Proceed
 }

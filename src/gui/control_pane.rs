@@ -1,4 +1,4 @@
-use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt, WidgetExt};
+use gtk::{prelude::*, TreeSelection, TreeIter};
 use std::{
 	cell::RefCell,
 	collections::HashMap,
@@ -37,14 +37,14 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 	-> Result<impl IsA<gtk::Widget>, Error>
 {
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let view: gtk::Box = builder.get_object("control_pane").unwrap();
-	let source_type_selection: gtk::Box = builder.get_object("source_type_selection").unwrap();
-	let port_view: gtk::TreeView = builder.get_object("port_list").unwrap();
-	let min_freq_scale: gtk::Scale = builder.get_object("min_freq_scale").unwrap();
-	let max_freq_scale: gtk::Scale = builder.get_object("max_freq_scale").unwrap();
-	let key_freq_scale: gtk::Scale = builder.get_object("key_freq_scale").unwrap();
+	let view: gtk::Box = builder.object("control_pane").unwrap();
+	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
+	let port_view: gtk::TreeView = builder.object("port_list").unwrap();
+	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
+	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
+	let key_freq_scale: gtk::Scale = builder.object("key_freq_scale").unwrap();
 	let add_transform_type_selector: gtk::ComboBoxText =
-		builder.get_object("add_transform_type_selector").unwrap();
+		builder.object("add_transform_type_selector").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
 	init_menu(&app_controller, &builder)?;
@@ -55,7 +55,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 	}
 	let app_controller_clone = app_controller.clone();
 	add_transform_type_selector.connect_changed(move |selector| {
-		if let Some(id) = selector.get_active_id() {
+		if let Some(id) = selector.active_id() {
 			selector.set_active_id(None);
 			if let Some(config) = get_transform_type_map().get(id.as_str()) {
 				let mut app_controller = app_controller_clone.borrow_mut();
@@ -116,7 +116,7 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 		move |_scale, _, value| on_key_freq_change(&controller_clone, value)
 	);
 
-	let selection = port_view.get_selection();
+	let selection = port_view.selection();
 	let controller_clone = app_controller.clone();
 	selection.connect_changed(move |selection| on_port_selected(&*controller_clone, selection));
 
@@ -135,26 +135,26 @@ pub fn new(controller: &Rc<RefCell<ControlPaneController>>)
 fn init_menu(app_controller_ref: &Rc<RefCell<AppController>>, builder: &gtk::Builder)
 	-> Result<(), Error>
 {
-	let menu: gtk::ListBox = builder.get_object("control_menu").unwrap();
+	let menu: gtk::ListBox = builder.object("control_menu").unwrap();
 
-	let control_stack: gtk::Stack = builder.get_object("control_stack").unwrap();
-	let source_control: gtk::Frame = builder.get_object("source_control").unwrap();
+	let control_stack: gtk::Stack = builder.object("control_stack").unwrap();
+	let source_control: gtk::Frame = builder.object("source_control").unwrap();
 	let spectrum_generator_control: gtk::Frame =
-		builder.get_object("spectrum_generator_control").unwrap();
-	let visualization_control: gtk::Frame = builder.get_object("visualization_control").unwrap();
-	let add_transform_control: gtk::Frame = builder.get_object("add_transform_control").unwrap();
+		builder.object("spectrum_generator_control").unwrap();
+	let visualization_control: gtk::Frame = builder.object("visualization_control").unwrap();
+	let add_transform_control: gtk::Frame = builder.object("add_transform_control").unwrap();
 
-	let source_row: gtk::ListBoxRow = builder.get_object("source_row").unwrap();
+	let source_row: gtk::ListBoxRow = builder.object("source_row").unwrap();
 	let spectrum_generator_row: gtk::ListBoxRow =
-		builder.get_object("spectrum_generator_row").unwrap();
+		builder.object("spectrum_generator_row").unwrap();
 	let visualization_row: gtk::ListBoxRow =
-		builder.get_object("visualization_row").unwrap();
-	let add_transform_row: gtk::ListBoxRow = builder.get_object("add_transform_row").unwrap();
+		builder.object("visualization_row").unwrap();
+	let add_transform_row: gtk::ListBoxRow = builder.object("add_transform_row").unwrap();
 
-	let source_name: gtk::Label = builder.get_object("source_name").unwrap();
+	let source_name: gtk::Label = builder.object("source_name").unwrap();
 	let spectrum_generator_name: gtk::Label =
-		builder.get_object("spectrum_generator_name").unwrap();
-	let visualization_name: gtk::Label = builder.get_object("visualization_name").unwrap();
+		builder.object("spectrum_generator_name").unwrap();
+	let visualization_name: gtk::Label = builder.object("visualization_name").unwrap();
 
 	// Initialize menu labels.
 	let app_controller = app_controller_ref.borrow();
@@ -246,7 +246,7 @@ fn on_insert_spectrum_transform(
 		control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
 		new_row.show_all();
 
-		if menu.get_selected_row().as_ref() == Some(add_transform_row) {
+		if menu.selected_row().as_ref() == Some(add_transform_row) {
 			menu.select_row(Some(&new_row));
 		}
 	}
@@ -268,7 +268,7 @@ fn on_control_row_activated(
 ) {
 	let transform_count = app_controller.config.spectrum_transform_order.len();
 
-	let row_index = row.get_index();
+	let row_index = row.index();
 	assert!(row_index >= 0, "row was activated, so it must have an index");
 	let row_index = row_index as usize;
 
@@ -281,7 +281,7 @@ fn on_control_row_activated(
 	} else if row_index < 2 + transform_count {
 		let transform_id = app_controller.config.spectrum_transform_order[row_index - 2];
 		let row_name = get_spectrum_transform_row_name(transform_id);
-		if let Some(child) = control_stack.get_child_by_name(&row_name) {
+		if let Some(child) = control_stack.child_by_name(&row_name) {
 			control_stack.set_visible_child(&child);
 		} else {
 			log::error!("control stack children out of sync with transforms");
@@ -300,13 +300,13 @@ fn on_control_row_activated(
 fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 	let row = gtk::ListBoxRow::new();
 
-	let grid = gtk::GridBuilder::new()
+	let grid = gtk::Grid::builder()
 		.row_homogeneous(true)
 		.column_homogeneous(true)
 		.build();
 	row.add(&grid);
 
-	let button_box = gtk::ButtonBoxBuilder::new()
+	let button_box = gtk::ButtonBox::builder()
 		.orientation(gtk::Orientation::Horizontal)
 		.layout_style(gtk::ButtonBoxStyle::Center)
 		.build();
@@ -316,14 +316,14 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 	let down_icon = gtk::Image::from_icon_name(Some("down"), gtk::IconSize::Button);
 	let remove_icon = gtk::Image::from_icon_name(Some("remove"), gtk::IconSize::Button);
 
-	let up_button = gtk::ButtonBuilder::new().image(&up_icon).build();
-	let down_button = gtk::ButtonBuilder::new().image(&down_icon).build();
-	let remove_button = gtk::ButtonBuilder::new().image(&remove_icon).build();
+	let up_button = gtk::Button::builder().image(&up_icon).build();
+	let down_button = gtk::Button::builder().image(&down_icon).build();
+	let remove_button = gtk::Button::builder().image(&remove_icon).build();
 	button_box.add(&down_button);
 	button_box.add(&up_button);
 	button_box.add(&remove_button);
 
-	let label = gtk::LabelBuilder::new().label(name).build();
+	let label = gtk::Label::builder().label(name).build();
 	grid.attach(&label, 1, 0, 1, 1);
 
 	row
@@ -355,7 +355,7 @@ fn build_transform_control(
 }
 
 fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
-	let port_name = selection.get_selected()
+	let port_name = selection.selected()
 		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
 	let mut app_controller = app_controller.borrow_mut();
 	if let Err(err) = app_controller.connect_port(port_name) {
@@ -365,10 +365,9 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 
 fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 	port_store
-		.get_value(&iter, PORT_NAME_COL)
+		.value(&iter, PORT_NAME_COL)
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
-		.expect("port names cannot be None")
 }
 
 // fn on_source_type_toggled(
@@ -387,35 +386,35 @@ fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
 // }
 
 
-fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+fn on_min_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> glib::Propagation {
 	let controller = controller_ref.borrow_mut();
 	let mut app_controller = controller.app_controller().borrow_mut();
 
 	let freq = value.exp2();
 	if freq > app_controller.config.max_freq {
-		return Inhibit(true);
+		return glib::Propagation::Stop;
 	}
 
 	app_controller.config.min_freq = freq;
 	handle_async_err(app_controller.update_spectrum_params());
-	Inhibit(false)
+	glib::Propagation::Proceed
 }
 
-fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+fn on_max_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> glib::Propagation {
 	let controller = controller_ref.borrow_mut();
 	let mut app_controller = controller.app_controller().borrow_mut();
 
 	let freq = value.exp2();
 	if freq < app_controller.config.min_freq {
-		return Inhibit(true);
+		return glib::Propagation::Stop;
 	}
 
 	app_controller.config.max_freq = freq;
 	handle_async_err(app_controller.update_spectrum_params());
-	Inhibit(false)
+	glib::Propagation::Proceed
 }
 
-fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> Inhibit {
+fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value: f64) -> glib::Propagation {
 	let async_update = {
 		let controller = controller_ref.borrow_mut();
 		let mut app_controller = controller.app_controller().borrow_mut();
@@ -429,13 +428,13 @@ fn on_key_freq_change(controller_ref: &Rc<RefCell<ControlPaneController>>, value
 					"spiral control signal fired when other graphic generator is configured: {:?}",
 					config
 				);
-				return Inhibit(false);
+				return glib::Propagation::Proceed;
 			}
 		}
 	};
 
 	handle_async_err(async_update);
-	Inhibit(false)
+	glib::Propagation::Proceed
 }
 
 fn build_source_type_selectors(app_controller: &Rc<RefCell<AppController>>)

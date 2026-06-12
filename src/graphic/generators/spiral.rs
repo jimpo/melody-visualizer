@@ -129,7 +129,7 @@ impl GraphicGenerator for SpiralGenerator {
 		buffer.draw(|ctx| {
 			ctx.set_source_rgb(0.0, 0.0, 0.0);
 			ctx.rectangle(0.0, 0.0, self.x_max as f64, self.y_max as f64);
-			ctx.fill();
+			ctx.fill()?;
 
 			if self.edges.is_empty() {
 				return Ok(());
@@ -172,8 +172,8 @@ impl GraphicGenerator for SpiralGenerator {
 				mesh.end_patch();
 			}
 
-			ctx.set_source(&*mesh);
-			ctx.paint();
+			ctx.set_source(&*mesh)?;
+			ctx.paint()?;
 
 			Ok(())
 		})

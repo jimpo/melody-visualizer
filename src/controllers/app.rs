@@ -31,7 +31,7 @@ pub struct AppController {
 
 impl AppController {
 	pub async fn new() -> Result<Rc<RefCell<Self>>, Error> {
-		let pubsub = PubSub::new(None, glib::PRIORITY_DEFAULT);
+		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 		let notifier = pubsub.notifier();
 
 		// Channel sending the spectrum from the spectrum rendering thread to the graphic rendering

@@ -1,6 +1,6 @@
+use async_channel::TrySendError;
 use std::any::Any;
 use std::io;
-use std::sync::mpsc::SendError;
 
 use crate::async_processor::CommunicationError;
 
@@ -28,7 +28,7 @@ pub enum Error {
 	NoJackSource,
 	#[display("failed to publish notification: {:?}", _0)]
 	#[from(skip)]
-	PubSub(SendError<Box<dyn Any + Send>>),
+	PubSub(TrySendError<Box<dyn Any + Send>>),
 	#[display("config references missing transform with ID {}", id)]
 	#[from(skip)]
 	MissingTransform {

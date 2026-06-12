@@ -1,9 +1,9 @@
+use async_channel::{Sender, TrySendError};
 use std::{
 	any::{Any, TypeId},
 	cell::RefCell,
 	collections::HashMap,
 	rc::{Rc, Weak},
-	sync::mpsc::SendError,
 };
 
 pub struct PubSub {
@@ -15,13 +15,25 @@ impl PubSub {
 	pub fn new(context: Option<&glib::MainContext>, priority: glib::Priority) -> Self {
 		let subscribers = Rc::new(RefCell::new(HashMap::new()));
 
-		let (notification_tx, notification_rx) = glib::MainContext::channel(priority);
+		let (notification_tx, notification_rx) = async_channel::unbounded::<Box<dyn Any + Send>>();
 
+		// Drain the channel on the GTK main loop. `Notifier` (Send) can be called
+		// from any thread — notably JACK's notification thread — but this loop runs
+		// on the main context, so subscriber callbacks always fire on the GTK
+		// thread. (Replaces the deprecated `glib::MainContext::channel` + `attach`.)
 		let subscribers_clone = subscribers.clone();
-		notification_rx.attach(context, move |notification| {
-			notify(&mut *subscribers_clone.borrow_mut(), notification);
-			glib::ControlFlow::Continue
-		});
+		let delivery_loop = async move {
+			while let Ok(notification) = notification_rx.recv().await {
+				notify(&mut subscribers_clone.borrow_mut(), notification);
+			}
+		};
+
+		let main_context = context
+			.cloned()
+			.unwrap_or_else(glib::MainContext::ref_thread_default);
+		// Dropping the returned JoinHandle detaches the task; it keeps running
+		// until the channel closes (i.e. every `Notifier` has been dropped).
+		main_context.spawn_local_with_priority(priority, delivery_loop);
 
 		PubSub {
 			subscribers,
@@ -90,26 +102,28 @@ impl Subscription {
 
 #[derive(Clone)]
 pub struct Notifier {
-	notification_tx: glib::Sender<Box<dyn Any + Send>>,
+	notification_tx: Sender<Box<dyn Any + Send>>,
 }
 
 impl Notifier {
-	fn new(notification_tx: glib::Sender<Box<dyn Any + Send>>) -> Self {
+	fn new(notification_tx: Sender<Box<dyn Any + Send>>) -> Self {
 		Notifier { notification_tx }
 	}
 
 	pub fn send<T: Any + Send>(
 		&self,
 		notification: T,
-	) -> Result<(), SendError<Box<dyn Any + Send>>> {
+	) -> Result<(), TrySendError<Box<dyn Any + Send>>> {
 		self.send_boxed(Box::new(notification))
 	}
 
 	pub fn send_boxed(
 		&self,
 		notification: Box<dyn Any + Send>,
-	) -> Result<(), SendError<Box<dyn Any + Send>>> {
-		self.notification_tx.send(notification)
+	) -> Result<(), TrySendError<Box<dyn Any + Send>>> {
+		// The channel is unbounded, so `try_send` only fails if it is closed and
+		// never blocks — safe to call from the JACK notification thread.
+		self.notification_tx.try_send(notification)
 	}
 }
 

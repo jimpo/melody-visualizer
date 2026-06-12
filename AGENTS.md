@@ -281,5 +281,48 @@ both background threads by shipping them closures over **`AsyncProcessor`** and
 awaiting the replies, then blits the finished frame to a `DrawingArea` on a 25 fps
 timer.
 
+---
+
+## 8. Running the GUI headlessly (for agents / CI)
+
+The app is a GUI, but it can be run and visually verified with **no physical
+display and no audio hardware**. Two things have to exist first, because the app
+hard-requires both at startup:
+
+1. **A display.** GTK needs an X server; `gui::window::start` also unwraps
+   `gdk::Screen::default()`. A virtual framebuffer (**Xvfb**) is enough — the
+   visualization is drawn with CPU cairo, so no GPU/GL is needed.
+2. **A running JACK server.** `AudioSourceController::new` opens its client with
+   `NO_START_SERVER` (§5), so `AppController::new()` *errors out before the window
+   is ever built* if no server is up. A **dummy-backend** `jackd -d dummy` touches
+   no hardware and gives the app real `system:capture_*` ports to enumerate.
+
+`scripts/run-headless.sh` automates the whole flow — it brings up `jackd -d dummy`
+and `Xvfb` (idempotently), builds, launches the app under `dbus-run-session` (so
+GApplication has a session bus to register on, else it hangs), waits, screenshots
+the framebuffer with ImageMagick `import`, and stops the app again:
+
+```sh
+sudo apt-get install -y jackd2 xvfb dbus-x11 imagemagick   # one-time
+scripts/run-headless.sh                                    # -> /tmp/melody-shot.png
+# Then view /tmp/melody-shot.png (the Read tool renders PNGs).
+```
+
+Useful env vars: `SHOT=` (output path), `WAIT=` (seconds before capture),
+`KEEP_RUNNING=1` (leave the app up, e.g. to drive it / take multiple shots),
+`SCREEN=` (Xvfb geometry). App stdout/stderr (`RUST_LOG=debug`) lands in
+`/tmp/melody-app.log`; "`Audio source activated`" there is the signal that the
+JACK layer connected. A panic at `window.rs`'s `.expect("failed to create main
+window")` instead means JACK wasn't reachable (distinct from a display problem).
+
+**What this verifies — and what it doesn't.** A successful run proves GTK
+rendered the full UI chrome and the JACK port list (the screenshot shows the
+control pane listing `system:capture_*`). It does **not** prove the visualizer
+*animates*: with no signal connected the spectrum is silent, so the spiral renders
+at its static base brightness. To exercise the live audio→pixels pipeline you'd
+connect a JACK signal generator (e.g. `jack-keyboard`, `sndfile-jackplay`, or a
+test-tone client) to the app's input port — tracked as a follow-up, not wired into
+this script.
+
 [rust-jack#121]: https://github.com/RustAudio/rust-jack/issues/121
 [jack2#617]: https://github.com/jackaudio/jack2/issues/617

@@ -42,9 +42,9 @@ use crate::error::Error;
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum GraphicProcessingError {
 	SendError(mpsc::SendError),
-	#[display(fmt = "skipping tick because no buffer is available")]
+	#[display("skipping tick because no buffer is available")]
 	NoBuffer,
-	#[display(fmt = "received an unexpected buffer while one is already available")]
+	#[display("received an unexpected buffer while one is already available")]
 	ReceivedUnexpectedBuffer,
 	Other(Error),
 }

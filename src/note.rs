@@ -20,7 +20,7 @@ pub enum PitchClass {
 }
 
 #[derive(Debug, derive_more::Display, Clone, Copy, PartialEq, Eq)]
-#[display(fmt = "{}{}", pitch_class, octave)]
+#[display("{}{}", pitch_class, octave)]
 pub struct Note {
 	pub octave: i8,
 	pub pitch_class: PitchClass,

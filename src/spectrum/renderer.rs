@@ -15,9 +15,9 @@ use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumTrans
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
 	SendError(mpsc::SendError),
-	#[display(fmt = "received an unexpected buffer while one is already available")]
+	#[display("received an unexpected buffer while one is already available")]
 	ReceivedUnexpectedBuffer,
-	#[display(fmt = "skipping tick because no buffer is available")]
+	#[display("skipping tick because no buffer is available")]
 	NoBuffer,
 	Other(Error),
 }

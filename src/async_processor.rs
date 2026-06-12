@@ -3,9 +3,9 @@ use std::any::Any;
 
 #[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
 pub enum CommunicationError {
-	#[display(fmt = "failed to send message to processor: {}", _0)]
+	#[display("failed to send message to processor: {}", _0)]
 	DeliveryFailure(mpsc::SendError),
-	#[display(fmt = "processor failed to send response")]
+	#[display("processor failed to send response")]
 	ResponseFailure,
 }
 

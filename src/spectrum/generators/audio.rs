@@ -1,6 +1,6 @@
 use jack::{Frames, RingBufferReader};
 use itertools::Itertools;
-use rustfft::{num_complex::Complex64, num_traits::Zero, FFTplanner, FFT};
+use rustfft::{num_complex::Complex64, Fft, FftPlanner};
 use std::{
 	f64::consts::PI,
 	fmt::{self, Debug},
@@ -105,9 +105,8 @@ impl WindowShape {
 struct Analyzer {
 	window_shape: WindowShape,
 	sample_rate: Frames,
-	dft: Arc<dyn FFT<f64>>,
+	dft: Arc<dyn Fft<f64>>,
 	dft_window: Vec<Complex64>,
-	dft_output: Vec<Complex64>,
 	windowing: Vec<f64>,
 }
 
@@ -116,9 +115,8 @@ impl Analyzer {
 		Analyzer {
 			window_shape,
 			sample_rate,
-			dft: FFTplanner::new(false).plan_fft(0),
+			dft: FftPlanner::new().plan_fft_forward(1),
 			dft_window: Vec::new(),
-			dft_output: Vec::new(),
 			windowing: Vec::new(),
 		}
 	}
@@ -128,9 +126,8 @@ impl Analyzer {
 	}
 
 	pub fn set_window_size(&mut self, dft_window_size: usize) {
-		self.dft = FFTplanner::new(false).plan_fft(dft_window_size);
-		self.dft_window = vec![Complex64::zero(); dft_window_size];
-		self.dft_output = vec![Complex64::zero(); dft_window_size];
+		self.dft = FftPlanner::new().plan_fft_forward(dft_window_size);
+		self.dft_window = vec![Complex64::new(0.0, 0.0); dft_window_size];
 		self.windowing = vec![0.0; dft_window_size];
 		self.window_shape.generate(&mut self.windowing);
 	}
@@ -148,7 +145,7 @@ impl Analyzer {
 			*dst = Complex64::new(sample, 0.0);
 		}
 
-		self.dft.process(&mut self.dft_window, &mut self.dft_output);
+		self.dft.process(&mut self.dft_window);
 
 		buffer.fill(|spectrum, spectrum_params| {
 			// Use slice::fill when stable.
@@ -179,7 +176,7 @@ impl Analyzer {
 					}
 				}
 
-				let dft_out_val = dft_out_to_val(&self.dft_output[j], n);
+				let dft_out_val = dft_out_to_val(&self.dft_window[j], n);
 				let interp_ratio =
 					(dft_out_log_freq - log_freqs[i - 1]) / (log_freqs[i] - log_freqs[i - 1]);
 				spectrum[i - 1] += (1.0 - interp_ratio) * dft_out_val;
@@ -217,21 +214,20 @@ mod tests {
 		let n = 2048;
 
 		let mut input = vec![0.0; n];
-		let mut output = vec![Complex64::zero(); n];
 
 		let mut rng = StdRng::seed_from_u64(0);
 		for x in input.iter_mut() {
 			*x = rng.next_u32() as f64;
 		}
 
-		let dft = FFTplanner::new(false).plan_fft(n);
-		let mut dft_input = input.iter()
+		let dft = FftPlanner::new().plan_fft_forward(n);
+		let mut dft_buffer = input.iter()
 			.map(|&val| Complex64::new(val, 0.0))
 			.collect::<Vec<_>>();
-		dft.process(&mut dft_input, &mut output);
+		dft.process(&mut dft_buffer);
 
 		let input_power = input.iter().map(|x| x * x).sum::<f64>() / n as f64;
-		let output_power = output.iter()
+		let output_power = dft_buffer.iter()
 			.map(|x| dft_out_to_val(x, n))
 			.sum::<f64>();
 		assert!(input_power / output_power > 0.99999 && input_power / output_power < 1.00001);

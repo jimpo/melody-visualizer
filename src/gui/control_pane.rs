@@ -1,9 +1,9 @@
 use gtk::{prelude::*, TreeSelection, TreeIter, ListBoxExt, WidgetExt};
-use lazy_static::lazy_static;
 use std::{
 	cell::RefCell,
 	collections::HashMap,
 	rc::Rc,
+	sync::LazyLock,
 };
 
 use crate::app::config::{GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig};
@@ -492,24 +492,23 @@ fn get_visualization_name(app_controller: &AppController) -> &str {
 }
 
 fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformConfig> {
-	lazy_static! {
-    	static ref MAP: HashMap<&'static str, SpectrumTransformConfig> =
-			vec![
-				(
-					"Diffuser",
-					SpectrumTransformConfig::Diffuser(
-						diffuser::Config { width: 1.0 / 24.0 },
-					)
-				),
-				(
-					"VolumeNormalizer",
-					 SpectrumTransformConfig::VolumeNormalizer(
-					 	volume_normalizer::Config { rate: 0.1 }
-					 )
-				),
-			]
-				.into_iter()
-				.collect();
-	}
-	&*MAP
+	static MAP: LazyLock<HashMap<&'static str, SpectrumTransformConfig>> = LazyLock::new(|| {
+		vec![
+			(
+				"Diffuser",
+				SpectrumTransformConfig::Diffuser(
+					diffuser::Config { width: 1.0 / 24.0 },
+				)
+			),
+			(
+				"VolumeNormalizer",
+				SpectrumTransformConfig::VolumeNormalizer(
+					volume_normalizer::Config { rate: 0.1 }
+				)
+			),
+		]
+			.into_iter()
+			.collect()
+	});
+	&MAP
 }

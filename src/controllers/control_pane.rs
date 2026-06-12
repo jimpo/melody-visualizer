@@ -62,7 +62,7 @@ impl ControlPaneController {
 
 		let ports = self.app_controller.borrow()
 			.jack_client()
-			.map(|client| client.ports(None, Some(AudioOut.jack_port_type()), PortFlags::IS_OUTPUT))
+			.map(|client| client.ports(None, Some(AudioOut::default().jack_port_type()), PortFlags::IS_OUTPUT))
 			.unwrap_or_default();
 
 		// Remove rows from ListStore.

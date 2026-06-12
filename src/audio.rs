@@ -24,12 +24,12 @@ impl AudioSourceController {
 			return Err(Error::JackStatus(status));
 		}
 
-		let port = client.register_port("input", AudioIn)
+		let port = client.register_port("input", AudioIn::default())
 			.map_err(Error::Jack)?;
 		let input_port = port.clone_unowned();
 
 		let (buffer_reader, buffer_writer) = RingBuffer::new(buffer_size)
-			.map_err(|()| Error::RingBufferAllocFailure { size: buffer_size })?
+			.map_err(|_| Error::RingBufferAllocFailure { size: buffer_size })?
 			.into_reader_writer();
 		let client = client.activate_async(
 			AudioNotificationHandler::new(notifier),
@@ -56,7 +56,7 @@ impl AudioNotificationHandler {
 
 impl NotificationHandler for AudioNotificationHandler {
 	// TODO: Handle shutdown gracefully
-	fn shutdown(&mut self, status: ClientStatus, reason: &str) {
+	unsafe fn shutdown(&mut self, status: ClientStatus, reason: &str) {
 		error!("JACK client shutdown: status = {:?}, reason = {}", status, reason);
 	}
 

@@ -1,3 +1,8 @@
+// The port list uses GtkTreeView/GtkListStore, deprecated in GTK 4 in favour of
+// GtkColumnView. Keeping them is an intentional, scoped decision; migrating to
+// ColumnView is tracked as separate future work.
+#![allow(deprecated)]
+
 use gtk::{TreeIter, TreeSelection, prelude::*};
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
 
@@ -65,7 +70,7 @@ pub fn new(
 
 	// Populate source selection radio buttons.
 	for selector in build_source_type_selectors(&app_controller) {
-		source_type_selection.add(&selector);
+		source_type_selection.append(&selector);
 	}
 
 	port_view.set_model(Some(controller.borrow().port_store()));
@@ -163,7 +168,10 @@ fn init_menu(
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
 		let new_control = build_transform_control(id, config, app_controller_ref)?;
 		menu.insert(&new_row, 2 + index as i32);
-		control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
+		control_stack.add_named(
+			&new_control,
+			Some(get_spectrum_transform_row_name(id).as_str()),
+		);
 	}
 
 	// Subscribe to update menu labels on updates.
@@ -238,8 +246,10 @@ fn on_insert_spectrum_transform(
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
 		let new_control = build_transform_control(id, config, &app_controller_ref)?;
 		menu.insert(&new_row, 2 + index as i32);
-		control_stack.add_named(&new_control, &get_spectrum_transform_row_name(id));
-		new_row.show_all();
+		control_stack.add_named(
+			&new_control,
+			Some(get_spectrum_transform_row_name(id).as_str()),
+		);
 
 		if menu.selected_row().as_ref() == Some(add_transform_row) {
 			menu.select_row(Some(&new_row));
@@ -302,24 +312,22 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 		.row_homogeneous(true)
 		.column_homogeneous(true)
 		.build();
-	row.add(&grid);
+	row.set_child(Some(&grid));
 
-	let button_box = gtk::ButtonBox::builder()
+	let button_box = gtk::Box::builder()
 		.orientation(gtk::Orientation::Horizontal)
-		.layout_style(gtk::ButtonBoxStyle::Center)
+		.halign(gtk::Align::Center)
 		.build();
 	grid.attach(&button_box, 0, 0, 1, 1);
 
-	let up_icon = gtk::Image::from_icon_name(Some("up"), gtk::IconSize::Button);
-	let down_icon = gtk::Image::from_icon_name(Some("down"), gtk::IconSize::Button);
-	let remove_icon = gtk::Image::from_icon_name(Some("remove"), gtk::IconSize::Button);
-
-	let up_button = gtk::Button::builder().image(&up_icon).build();
-	let down_button = gtk::Button::builder().image(&down_icon).build();
-	let remove_button = gtk::Button::builder().image(&remove_icon).build();
-	button_box.add(&down_button);
-	button_box.add(&up_button);
-	button_box.add(&remove_button);
+	let up_button = gtk::Button::builder().icon_name("go-up-symbolic").build();
+	let down_button = gtk::Button::builder().icon_name("go-down-symbolic").build();
+	let remove_button = gtk::Button::builder()
+		.icon_name("list-remove-symbolic")
+		.build();
+	button_box.append(&down_button);
+	button_box.append(&up_button);
+	button_box.append(&remove_button);
 
 	let label = gtk::Label::builder().label(name).build();
 	grid.attach(&label, 1, 0, 1, 1);
@@ -358,9 +366,9 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 	}
 }
 
-fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
+fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> String {
 	port_store
-		.value(&iter, PORT_NAME_COL)
+		.get_value(iter, PORT_NAME_COL)
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
 }
@@ -442,16 +450,17 @@ fn on_key_freq_change(
 
 fn build_source_type_selectors(
 	app_controller: &Rc<RefCell<AppController>>,
-) -> Vec<gtk::RadioButton> {
+) -> Vec<gtk::CheckButton> {
 	let active_source_type = app_controller.borrow().get_source_type();
 
-	let mut selectors = Vec::new();
+	// GTK 4 removed RadioButton; a group of CheckButtons sharing a group behaves
+	// as a radio group.
+	let mut selectors: Vec<gtk::CheckButton> = Vec::new();
 	for source_type in [SourceType::Audio, SourceType::MIDI].iter() {
-		let selector = if let Some(widget) = selectors.get(0) {
-			gtk::RadioButton::with_label_from_widget(widget, &source_type.to_string())
-		} else {
-			gtk::RadioButton::with_label(&source_type.to_string())
-		};
+		let selector = gtk::CheckButton::with_label(&source_type.to_string());
+		if let Some(first) = selectors.first() {
+			selector.set_group(Some(first));
+		}
 
 		selector.set_active(active_source_type == Some(*source_type));
 

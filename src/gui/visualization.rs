@@ -14,11 +14,10 @@ pub fn new(controller: &Rc<RefCell<VisualizationController>>) -> impl IsA<gtk::W
 		.subscribe_graphic_updates(move || drawing_area_clone.queue_draw());
 
 	let controller_clone = controller.clone();
-	drawing_area.connect_draw(move |area, ctx| {
-		if let Err(err) = on_draw(&mut controller_clone.borrow_mut(), area, ctx) {
+	drawing_area.set_draw_func(move |_area, ctx, width, height| {
+		if let Err(err) = on_draw(&mut controller_clone.borrow_mut(), ctx, width, height) {
 			log::error!("error drawing to visualization pane: {}", err);
 		}
-		glib::Propagation::Proceed
 	});
 
 	drawing_area.connect_destroy(move |_| {
@@ -30,11 +29,10 @@ pub fn new(controller: &Rc<RefCell<VisualizationController>>) -> impl IsA<gtk::W
 
 fn on_draw(
 	controller: &mut VisualizationController,
-	area: &gtk::DrawingArea,
 	ctx: &cairo::Context,
+	x_max: i32,
+	y_max: i32,
 ) -> Result<(), Error> {
-	let x_max = area.allocated_width();
-	let y_max = area.allocated_height();
 	let graphic = controller.graphic_mut();
 
 	// Resize the graphic if it is the wrong size.

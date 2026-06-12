@@ -1,3 +1,7 @@
+// The port list uses GtkTreeView/GtkListStore, deprecated in GTK 4 (see the note
+// in src/gui/control_pane.rs). Migrating to GtkColumnView is future work.
+#![allow(deprecated)]
+
 use glib::Type;
 use gtk::{TreeIter, prelude::*};
 use jack::{AudioOut, PortFlags, PortSpec};
@@ -73,14 +77,14 @@ impl ControlPaneController {
 			.unwrap_or_default();
 
 		// Remove rows from ListStore.
-		if let Some(iter) = port_store.iter_first() {
+		if let Some(mut iter) = port_store.iter_first() {
 			loop {
 				let found = ports.contains(&get_port_name(port_store, &iter));
 				let iter_invalid = if !found {
 					log::debug!("attempting to remove port");
 					port_store.remove(&iter)
 				} else {
-					port_store.iter_next(&iter)
+					port_store.iter_next(&mut iter)
 				};
 				if !iter_invalid {
 					break;
@@ -90,11 +94,11 @@ impl ControlPaneController {
 
 		// Add rows to ListStore.
 		for new_port in ports {
-			let found = if let Some(iter) = port_store.iter_first() {
+			let found = if let Some(mut iter) = port_store.iter_first() {
 				loop {
 					if new_port == get_port_name(port_store, &iter) {
 						break true;
-					} else if !port_store.iter_next(&iter) {
+					} else if !port_store.iter_next(&mut iter) {
 						break false;
 					}
 				}
@@ -157,9 +161,9 @@ fn is_inputs_update_pending(controller: &ControlPaneController, update: InputsCh
 		.unwrap_or(false)
 }
 
-fn get_port_name<TM: TreeModelExt>(port_store: &TM, iter: &TreeIter) -> String {
+fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> String {
 	port_store
-		.value(&iter, PORT_NAME_COL)
+		.get_value(iter, PORT_NAME_COL)
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
 }

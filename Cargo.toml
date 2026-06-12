@@ -5,7 +5,13 @@ authors = ["Jim Posen <jim.posen@gmail.com>"]
 edition = "2024"
 
 [dependencies]
-cairo = { package = "cairo-rs", version = "0.18" }
+# GTK 4 stack. The standalone glib/gio/cairo versions are pinned to the same
+# generation gtk4 0.11 pulls so only one copy of each links (gdk = gdk4).
+gtk = { package = "gtk4", version = "0.11", features = ["v4_10"] }
+gdk = { package = "gdk4", version = "0.11" }
+glib = "0.22"
+gio = "0.22"
+cairo = { package = "cairo-rs", version = "0.22" }
 derive_more = { version = "2", features = ["display", "from", "error"] }
 jack = "0.13"
 env_logger = "0.11"
@@ -13,10 +19,6 @@ futures = "0.3.5"
 futures-timer = "3.0.2"
 itertools = "0.14"
 log = "0.4.8"
-gio = "0.18"
-glib = "0.18"
-gdk = "0.18"
-gtk = "0.18"
 palette = "0.7"
 rustfft = "6"
 async-channel = "2.5.0"

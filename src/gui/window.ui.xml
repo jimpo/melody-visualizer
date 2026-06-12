@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-    <object class="GtkApplicationWindow" id="main_window">
-        <property name="title">Melody Visualizer</property>
-        <property name="default-width">1600</property>
-        <property name="default-height">800</property>
-        <child>
-            <object class="GtkPaned" id="main_panes">
-                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
-                <property name="position">800</property>
-                <property name="position-set">True</property>
-            </object>
-        </child>
-    </object>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkApplicationWindow" id="main_window">
+    <property name="title">Melody Visualizer</property>
+    <property name="default-width">1600</property>
+    <property name="default-height">800</property>
+    <child>
+      <object class="GtkPaned" id="main_panes">
+        <property name="position">800</property>
+        <property name="position-set">1</property>
+      </object>
+    </child>
+  </object>
 </interface>

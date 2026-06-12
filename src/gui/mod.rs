@@ -9,14 +9,13 @@ use gtk::prelude::*;
 use crate::error::Error;
 
 pub fn error_dialog(err: Error) {
-	let dialog = gtk::MessageDialog::builder()
-		.message_type(gtk::MessageType::Error)
-		.text("An unexpected system error occurred:")
-		.secondary_text(&err.to_string())
-		.buttons(gtk::ButtonsType::Close)
+	// GTK 4 removed blocking dialogs; AlertDialog shows non-modally.
+	let dialog = gtk::AlertDialog::builder()
+		.message("An unexpected system error occurred:")
+		.detail(err.to_string())
+		.modal(true)
 		.build();
-	dialog.run();
-	dialog.close();
+	dialog.show(None::<&gtk::Window>);
 }
 
 pub fn handle_async_err(fut: impl Future<Output = Result<(), Error>> + 'static) {

@@ -3,7 +3,7 @@ FROM docker/sandbox-templates:claude-code-minimal
 USER root
 RUN apt update
 # build deps
-RUN apt install -y build-essential clang libgtk-3-dev libjack-jackd2-dev
+RUN apt install -y build-essential clang libgtk-4-dev libjack-jackd2-dev
 # headless GUI run/screenshot harness (scripts/run-headless.sh; see AGENTS.md §8)
 RUN apt install -y jackd2 xvfb dbus-x11 imagemagick
 

@@ -8,17 +8,17 @@ edition = "2018"
 cairo = { package = "cairo-rs", version = "0.9.0" }
 derive_more = { version = "2", features = ["display", "from", "error"] }
 jack = "0.6.2"
-env_logger = "0.7.1"
+env_logger = "0.11"
 futures = "0.3.5"
 futures-timer = "3.0.2"
-itertools = "0.9.0"
+itertools = "0.14"
 log = "0.4.8"
 gio = "0.9.0"
 glib = "0.10.1"
 gdk = "0.13.0"
 gtk = "0.9.1"
-palette = "0.5.0"
+palette = "0.7"
 rustfft = "6"
 
 [dev-dependencies]
-rand = "0.7.3"
+rand = "0.10"

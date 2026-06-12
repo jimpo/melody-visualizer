@@ -207,7 +207,7 @@ impl Debug for Analyzer {
 mod tests {
 	use super::*;
 
-	use rand::{rngs::StdRng, SeedableRng, RngCore};
+	use rand::{rngs::StdRng, RngExt, SeedableRng};
 
 	#[test]
 	fn fft_preserves_power() {
@@ -217,7 +217,7 @@ mod tests {
 
 		let mut rng = StdRng::seed_from_u64(0);
 		for x in input.iter_mut() {
-			*x = rng.next_u32() as f64;
+			*x = rng.random::<u32>() as f64;
 		}
 
 		let dft = FftPlanner::new().plan_fft_forward(n);

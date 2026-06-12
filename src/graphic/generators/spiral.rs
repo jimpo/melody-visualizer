@@ -1,5 +1,5 @@
 use cairo::{Mesh, MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3}};
-use palette::{encoding::Srgb, IntoColor, Hsv, RgbHue};
+use palette::{encoding::Srgb, rgb::Rgb, IntoColor, Hsv, RgbHue};
 use std::any::Any;
 use std::cmp;
 use std::collections::VecDeque;
@@ -144,10 +144,10 @@ impl GraphicGenerator for SpiralGenerator {
 				let value1 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i - 1].min(1.0));
 				let value2 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i].min(1.0));
 
-				let color1 = <Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1)
-					.into_rgb::<Srgb>();
-				let color2 = <Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value2)
-					.into_rgb::<Srgb>();
+				let color1: Rgb<Srgb, f64> = <Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1)
+					.into_color();
+				let color2: Rgb<Srgb, f64> = <Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value2)
+					.into_color();
 
 				mesh.begin_patch();
 				mesh.line_to(edge1.x_center, edge1.y_center);

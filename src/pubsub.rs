@@ -119,43 +119,9 @@ pub struct SubscriptionHandle(Rc<Box<dyn Fn(&(dyn Any + Send))>>);
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use futures::{prelude::*, channel::mpsc};
-	use glib::MainLoop;
+	use crate::test_support::run_in_glib_main_loop;
+	use futures::prelude::*;
 	use std::cell::RefCell;
-	use std::sync::Arc;
-
-	fn run_in_glib_main_loop<F, U>(f: F)
-		where F: FnOnce(mpsc::Receiver<()>) -> U + Send + 'static,
-			  U: Future<Output = ()>,
-	{
-		let main_loop = Arc::new(MainLoop::new(None, false));
-		let main_context = main_loop.context();
-
-		// This seems kind of wacky. The idea is that we'll have an asynchronous test case that can
-		// yield control back to the main loop. The way we do that is have a separate low-priority
-		// task, and every time it is polled, it will wake up the test code. In effect, every time
-		// the test code yields, it will be resumed when no tasks higher than PRIORITY_LOW are
-		// ready.
-		let (mut yield_tx, yield_rx) = mpsc::channel(0);
-
-		main_context.spawn_with_priority(glib::Priority::LOW, async move {
-			loop {
-				yield_tx.send(()).await.unwrap();
-			}
-		});
-
-		let main_loop_clone = main_loop.clone();
-		main_context.spawn(async move {
-			let main_context = main_loop_clone.context();
-			main_context.spawn_local(async move {
-				// Quit main loop after test code completes.
-				f(yield_rx).await;
-				main_loop_clone.quit();
-			});
-		});
-
-		main_loop.run();
-	}
 
 	#[derive(Debug, PartialEq, Eq)]
 	struct TestNotification;

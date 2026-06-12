@@ -52,22 +52,18 @@ impl AudioNotificationHandler {
 	fn new(notifier: Notifier) -> Self {
 		AudioNotificationHandler { notifier }
 	}
-}
 
-impl NotificationHandler for AudioNotificationHandler {
-	// TODO: Handle shutdown gracefully
-	unsafe fn shutdown(&mut self, status: ClientStatus, reason: &str) {
-		error!("JACK client shutdown: status = {:?}, reason = {}", status, reason);
-	}
+	// The methods below hold the event-forwarding logic, free of any JACK runtime
+	// types (`&Client`), so they can be unit-tested without a live JACK server.
+	// The `NotificationHandler` trait impl is a thin wrapper around them.
 
-	fn sample_rate(&mut self, _client: &Client, sample_rate: Frames) -> Control {
+	fn notify_sample_rate(&self, sample_rate: Frames) {
 		if let Err(err) = self.notifier.send(events::SampleRateChanged(sample_rate)) {
 			error!("failed to notify of JACK sample rate change: {}", err);
 		}
-		Control::Continue
 	}
 
-	fn port_registration(&mut self, _client: &Client, port_id: PortId, is_registered: bool) {
+	fn notify_port_registration(&self, port_id: PortId, is_registered: bool) {
 		let notification = if is_registered {
 			events::InputsChanged::Registered(port_id)
 		} else {
@@ -78,13 +74,33 @@ impl NotificationHandler for AudioNotificationHandler {
 		}
 	}
 
-	fn port_rename(&mut self, _: &Client, port_id: PortId, _old_name: &str, new_name: &str)
-		-> Control
-	{
+	fn notify_port_rename(&self, port_id: PortId, new_name: &str) {
 		let notification = events::InputsChanged::Renamed(port_id, new_name.into());
 		if let Err(err) = self.notifier.send(notification) {
 			error!("failed to notify of JACK input change: {}", err);
 		}
+	}
+}
+
+impl NotificationHandler for AudioNotificationHandler {
+	// TODO: Handle shutdown gracefully
+	unsafe fn shutdown(&mut self, status: ClientStatus, reason: &str) {
+		error!("JACK client shutdown: status = {:?}, reason = {}", status, reason);
+	}
+
+	fn sample_rate(&mut self, _client: &Client, sample_rate: Frames) -> Control {
+		self.notify_sample_rate(sample_rate);
+		Control::Continue
+	}
+
+	fn port_registration(&mut self, _client: &Client, port_id: PortId, is_registered: bool) {
+		self.notify_port_registration(port_id, is_registered);
+	}
+
+	fn port_rename(&mut self, _: &Client, port_id: PortId, _old_name: &str, new_name: &str)
+		-> Control
+	{
+		self.notify_port_rename(port_id, new_name);
 		Control::Continue
 	}
 }
@@ -109,11 +125,19 @@ impl ProcessHandler for AudioProcessHandler {
 	fn process(&mut self, _client: &Client, scope: &ProcessScope) -> Control {
 		let mut ring_buffer = self.ring_buffer.lock()
 			.expect("I shouldn't even need a Mutex...");
-		// TODO: Create a custom ring buffer holding an [f32] that is more efficient.
-		for sample in self.port.as_slice(scope) {
-			ring_buffer.write_buffer(&sample.to_ne_bytes());
-		}
+		write_samples(&mut ring_buffer, self.port.as_slice(scope));
 		Control::Continue
+	}
+}
+
+/// Copy audio samples into the ring buffer as native-endian bytes.
+///
+/// Pulled out of `AudioProcessHandler::process` so it can be unit-tested without
+/// a live JACK `ProcessScope` / `Port`.
+fn write_samples(ring_buffer: &mut RingBufferWriter, samples: &[f32]) {
+	// TODO: Create a custom ring buffer holding an [f32] that is more efficient.
+	for sample in samples {
+		ring_buffer.write_buffer(&sample.to_ne_bytes());
 	}
 }
 
@@ -128,5 +152,133 @@ impl JackSource for AudioSourceController {
 
 	fn source_type(&self) -> SourceType {
 		SourceType::Audio
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::pubsub::PubSub;
+	use crate::source::events::{InputsChanged, SampleRateChanged};
+	use crate::test_support::run_in_glib_main_loop;
+	use futures::prelude::*;
+	use std::cell::RefCell;
+	use std::rc::Rc;
+
+	// --- JACK notification forwarding -------------------------------------
+	//
+	// These drive `AudioNotificationHandler`'s client-free logic methods and
+	// assert the events reach a `PubSub` subscriber. No JACK server required.
+
+	#[test]
+	fn notification_handler_forwards_sample_rate() {
+		run_in_glib_main_loop(|mut yield_rx| async move {
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
+			let received = Rc::new(RefCell::new(None));
+
+			let received_clone = received.clone();
+			let _handle = pubsub.subscribe(move |event: &SampleRateChanged| {
+				*received_clone.borrow_mut() = Some(event.clone());
+			});
+
+			let handler = AudioNotificationHandler::new(pubsub.notifier());
+			handler.notify_sample_rate(48_000);
+			yield_rx.next().await.unwrap();
+
+			assert_eq!(*received.borrow(), Some(SampleRateChanged(48_000)));
+		});
+	}
+
+	#[test]
+	fn notification_handler_forwards_port_registration() {
+		run_in_glib_main_loop(|mut yield_rx| async move {
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
+			let received = Rc::new(RefCell::new(Vec::new()));
+
+			let received_clone = received.clone();
+			let _handle = pubsub.subscribe(move |event: &InputsChanged| {
+				received_clone.borrow_mut().push(event.clone());
+			});
+
+			let handler = AudioNotificationHandler::new(pubsub.notifier());
+			handler.notify_port_registration(7, true);
+			handler.notify_port_registration(7, false);
+			yield_rx.next().await.unwrap();
+
+			assert_eq!(
+				*received.borrow(),
+				vec![InputsChanged::Registered(7), InputsChanged::Unregistered(7)],
+			);
+		});
+	}
+
+	#[test]
+	fn notification_handler_forwards_port_rename() {
+		run_in_glib_main_loop(|mut yield_rx| async move {
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
+			let received = Rc::new(RefCell::new(None));
+
+			let received_clone = received.clone();
+			let _handle = pubsub.subscribe(move |event: &InputsChanged| {
+				*received_clone.borrow_mut() = Some(event.clone());
+			});
+
+			let handler = AudioNotificationHandler::new(pubsub.notifier());
+			handler.notify_port_rename(3, "system:capture_9");
+			yield_rx.next().await.unwrap();
+
+			assert_eq!(
+				*received.borrow(),
+				Some(InputsChanged::Renamed(3, "system:capture_9".to_string())),
+			);
+		});
+	}
+
+	// --- Ring buffer writes -----------------------------------------------
+
+	#[test]
+	fn process_handler_writes_samples_to_ring_buffer() {
+		let (mut reader, mut writer) = RingBuffer::new(1024)
+			.expect("ring buffer allocation is a userspace operation, needs no JACK server")
+			.into_reader_writer();
+
+		let samples = [0.0f32, 1.0, -0.5, 123.456, f32::MIN, f32::MAX];
+		write_samples(&mut writer, &samples);
+
+		// Samples are serialized as native-endian f32 bytes, 4 bytes each.
+		let mut bytes = vec![0u8; samples.len() * 4];
+		let n = reader.read_buffer(&mut bytes);
+		assert_eq!(n, bytes.len(), "all sample bytes should be readable back");
+
+		let read_back: Vec<f32> = bytes
+			.chunks_exact(4)
+			.map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+			.collect();
+		assert_eq!(read_back, samples);
+	}
+
+	// --- Integration: real JACK server ------------------------------------
+	//
+	// Exercises the parts the unit tests above cannot: real client creation,
+	// input-port registration, and `activate_async`. Ignored by default so plain
+	// `cargo test` stays deterministic with no server. Run against a dummy server:
+	//
+	//   jackd -r -d dummy &            # or `scripts/run-headless.sh`'s setup
+	//   cargo test -- --ignored
+
+	#[test]
+	#[ignore = "requires a running JACK server (e.g. `jackd -d dummy`)"]
+	fn audio_source_controller_connects_to_running_jack_server() {
+		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
+
+		let (controller, _reader) = AudioSourceController::new(128 * 1024, pubsub.notifier())
+			.expect("should connect to the running JACK server and register its input port");
+
+		assert_eq!(controller.source_type(), SourceType::Audio);
+		// The input port was really registered with the server, so it has a name.
+		assert!(
+			controller.input_port().name().is_ok(),
+			"registered input port should have a name",
+		);
 	}
 }

@@ -9,14 +9,14 @@ pub enum SourceType {
 pub mod events {
 	use jack::{Frames, PortId};
 
-	#[derive(Debug, Clone)]
+	#[derive(Debug, Clone, PartialEq, Eq)]
 	pub enum InputsChanged {
 		Registered(PortId),
 		Unregistered(PortId),
 		Renamed(PortId, String),
 	}
 
-	#[derive(Debug, Clone)]
+	#[derive(Debug, Clone, PartialEq, Eq)]
 	pub struct SampleRateChanged(pub Frames);
 }
 

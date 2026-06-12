@@ -9,6 +9,8 @@ mod note;
 mod pubsub;
 mod source;
 mod spectrum;
+#[cfg(test)]
+mod test_support;
 mod traits;
 
 use gio::prelude::*;

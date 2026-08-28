@@ -1,0 +1,424 @@
+# ARCHITECTURE
+
+Melody Visualizer is a real-time music visualizer. It reads audio from a JACK
+port, computes a log-frequency spectrum, and draws an animated graphic in a GTK 4
+window.
+
+This document is the **aspirational architecture**: the shape the code should
+have. Most of it describes the system as it is today, because the current design
+is sound. Where the code falls short of the intent, the gap is stated in
+[§7 Target state and gaps](#7-target-state-and-gaps) instead of being hidden.
+
+Read this before changing a component boundary, a thread, or a channel.
+[DEVELOPMENT.md](DEVELOPMENT.md) covers how to build, test, and run the app.
+
+## In one paragraph
+
+The GTK thread holds all the controllers (state) and views (widgets), wired
+together by a PubSub event bus. Audio enters on JACK's real-time thread and lands
+in a lock-free ring buffer. A dedicated spectrum thread FFTs those samples into a
+log-frequency `Spectrum` and applies a transform chain; a dedicated graphic
+thread turns spectra into cairo pixel buffers. Those two threads pass buffers
+back and forth over a pair of mpsc channels, recycling them to avoid per-frame
+allocation. The GTK thread commands and configures both background threads by
+shipping them closures over `AsyncProcessor` and awaiting the replies, then blits
+the finished frame to a `DrawingArea` on a 25 fps timer.
+
+---
+
+## 1. Components
+
+Five components, each with one job and one owner thread.
+
+| Component | Role | Lives on |
+|---|---|---|
+| **Audio engine client** | Opens a JACK client, receives sample blocks on JACK's real-time thread, forwards JACK events. | JACK RT + notification threads |
+| **DSP chain** | Turns a window of samples into a `Spectrum`, then applies an ordered chain of transforms. | Spectrum thread |
+| **Visualizer** | Turns a `Spectrum` (plus a short history) into a pixel buffer. | Graphic thread |
+| **GUI** | Builds GTK widgets, wires signals, blits the finished frame. Holds no state. | GTK main thread |
+| **Controls** | Owns `Config` — the single source of truth. Translates UI actions into commands for the other components. | GTK main thread |
+
+### Boundary contracts
+
+Each boundary carries exactly one kind of value. Keep it that way.
+
+- **Audio engine → DSP**: raw `f32` samples through a lock-free ring buffer, and
+  nothing else. The audio client never computes anything.
+- **DSP → Visualizer**: a `Spectrum` — a vector of non-negative power values plus
+  the `SpectrumParams` that give each bin its frequency. The DSP never knows
+  about pixels; the visualizer never knows about audio.
+- **Controls → DSP and Visualizer**: a command, never shared mutable state. See
+  [§4](#4-the-control-path).
+- **Controls → GUI**: a typed event on the PubSub bus. Views subscribe; they are
+  never called directly.
+
+The key asymmetry: **data flows one way (audio → pixels), control flows the other
+way (GUI → engine)**. The two paths use different mechanisms and never mix.
+
+---
+
+## 2. Concurrency model
+
+### Execution contexts
+
+Five contexts run concurrently. Four are threads we can reason about; one belongs
+to JACK.
+
+```
+  ┌───────────────────────┐        ring buffer         ┌──────────────────────┐
+  │  JACK RT thread       │      (lock-free SPSC)      │  Spectrum thread     │
+  │  audio.rs             │ ──────── f32 samples ────▶ │  spectrum/renderer   │
+  │  ProcessHandler       │                            │  FFT + transforms    │
+  │  never blocks/allocs  │                            │  ▲ TICK = the clock  │
+  └───────────────────────┘                            └──────────────────────┘
+  ┌───────────────────────┐                             Spectrum │   ▲ SpectrumBuffer
+  │  JACK notify thread   │                                      ▼   │ (recycled)
+  │  NotificationHandler  │                            ┌──────────────────────┐
+  └───────────┬───────────┘                            │  Graphic thread      │
+              │ events                                 │  graphic/renderer    │
+              │                                        │  keeps history;      │
+              │                                        │  draws only on RPC   │
+              │                                        └──────────────────────┘
+              │                                          ▲              │
+              │ PubSub                       render RPC  │              │ Graphic
+              ▼                                          │              ▼
+  ┌───────────────────────────────────────────────────────────────────────────┐
+  │  GTK main thread (glib main loop)                                         │
+  │  Controls (Rc<RefCell<…>>) ── PubSub ──▶ Views (GTK widgets)              │
+  │  40 ms frame timer drives the render RPC and the DrawingArea repaint      │
+  └───────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **GTK main thread.** The glib main loop. Runs every controller, every view,
+   and every PubSub callback. Single-threaded throughout: state is
+   `Rc<RefCell<…>>`, never `Arc<Mutex<…>>`. It must never block on audio or
+   pixel work.
+2. **JACK real-time thread.** Owned by the JACK server, which calls
+   `AudioProcessHandler::process`. It may not block, allocate, or lock. Its only
+   job is to copy samples into the ring buffer.
+3. **JACK notification thread.** Delivers sample-rate and port events. It only
+   pushes them onto the PubSub bus, which marshals them to the GTK thread.
+4. **Spectrum thread** (`SpectrumProcessor`). Reads samples, runs the FFT, bins
+   into log-spaced buckets, applies the transform chain.
+5. **Graphic thread** (`GraphicProcessor`). Keeps the recent spectra and, when
+   asked, draws a frame with cairo.
+
+Threads 4 and 5 are each **one blocking call around one async loop**:
+`futures::executor::block_on(process_loop())`, with a `select!` that multiplexes
+that thread's inputs. There is no work-stealing runtime and no Tokio. Each
+component owns its state exclusively, so nothing inside these threads is locked.
+
+### What is actually parallel
+
+Only the **pipeline stages** run in parallel. Nothing inside a stage does.
+
+- Capture of block *N+1* overlaps the FFT of window *N*.
+- The FFT of window *N+1* overlaps the drawing of frame *N*.
+- The GTK thread stays responsive while both run.
+
+There is **no data parallelism**: one FFT on one thread, one draw on one thread.
+This is deliberate. The pipeline must meet a per-frame deadline, not maximize
+throughput, and a single-owner-per-stage model removes every lock from the hot
+path.
+
+### The two clocks
+
+The pipeline is paced by two independent timers. Do not conflate them.
+
+| Clock | Where | Rate | Drives |
+|---|---|---|---|
+| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — half a DFT window, so ~21 ms at 2048 samples / 48 kHz | How often a new `Spectrum` is produced |
+| **Frame timer** | GTK thread (`glib::timeout_add_local`) | 40 ms (25 fps) | How often a frame is rendered and repainted |
+
+The spectrum thread is the **only** timed producer. The graphic thread has no
+timer at all: it reacts to arriving spectra by updating its history, and it draws
+only when the GTK thread asks it to. Analysis rate and frame rate are therefore
+decoupled, and either can change without the other noticing.
+
+### Backpressure
+
+Nothing in the pipeline queues unbounded work.
+
+- The **buffer ring** (§3) keeps exactly one `SpectrumBuffer` in flight. The
+  spectrum thread can emit only when a tick fires *and* it holds an empty buffer.
+  A slow visualizer starves the next tick instead of building a backlog; the tick
+  logs "skipping tick because no buffer is available" and moves on.
+- The **frame timer** guards itself with a `RenderingState`. If the previous
+  frame is still rendering, the tick is dropped, not queued.
+- The **ring buffer** is the one place that can overrun: if the spectrum thread
+  falls behind, `AudioSpectrumGenerator` skips forward to the newest window
+  rather than draining stale audio. Latency is bounded; old samples are dropped.
+
+---
+
+## 3. The data path: audio to pixels
+
+One sample's journey:
+
+1. **Capture** — `audio.rs`. `AudioProcessHandler::process` writes the input
+   port's `f32` samples into a JACK `RingBuffer` (128 KiB, lock-free SPSC) as
+   native-endian bytes. Nothing else happens on the RT thread.
+2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
+   `AudioSpectrumGenerator` peeks the newest window, applies a Hann window, runs
+   an `rustfft` forward DFT, and **bins the output into log-spaced frequency
+   buckets** so that every octave gets equal screen space. It keeps power
+   (amplitude²), which Parseval's theorem preserves, and interpolates power —
+   not amplitude — between adjacent bins.
+3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through an
+   ordered chain: `Diffuser` (spatial smoothing), `VolumeNormalizer` (auto-gain),
+   `DecibelConverter` (log scaling). Order and membership come from `Config`.
+4. **Accumulate** — `graphic/renderer.rs`. The graphic thread pushes the spectrum
+   onto a bounded `spectrum_history` whose length the active generator declares.
+5. **Draw** — `graphic/generators/spiral.rs`. On a render RPC, the generator
+   draws the history into a `GraphicBuffer`, a raw RGB24 byte vector backing a
+   cairo `ImageSurface`. The spiral maps log-frequency to radius and pitch class
+   to hue, so notes an octave apart line up on the same spoke.
+6. **Display** — `gui/visualization.rs`. The `DrawingArea` blits the finished
+   surface. A size change resizes the buffer in place on the GTK side.
+
+### JACK client and port wiring
+
+`AudioSourceController::new` opens the client with `NO_START_SERVER`, so **a JACK
+server must already be running or startup fails** — `AppController::new()` errors
+out before the window is ever built. The client registers exactly one audio
+**input** port, allocates the ring buffer, and calls `activate_async` with the
+notification and process handlers.
+
+Nothing is connected to that port at startup. The user picks a JACK output port
+in the control pane, and `AppController::connect_port` calls
+`client.connect_ports_by_name`. The control pane keeps its list current by
+subscribing to `InputsChanged`.
+
+The `JackSource` trait (`source.rs`) exists so a second source type could be
+slotted in behind the same interface. Only `Audio` is implemented.
+
+### Buffer recycling
+
+The steady state allocates nothing per frame. Two loops recycle buffers.
+
+**Spectrum buffers** cycle between the spectrum and graphic threads over a pair
+of `futures::mpsc` channels created in `AppController::new`:
+
+- `spectrum_graphic`: spectrum thread → graphic thread, carrying a filled
+  `Spectrum`.
+- `graphic_spectrum`: graphic thread → spectrum thread, returning an empty
+  `SpectrumBuffer` for reuse.
+
+The graphic thread seeds the loop with one empty buffer. Every spectrum it
+evicts from its history becomes the next empty buffer it sends back. Exactly one
+buffer moves in each direction, which is what makes the ring double as
+backpressure.
+
+**Graphic buffers** cycle between the GTK thread and the graphic thread. The
+`VisualizationController` holds the previous frame's buffer while idle, ships it
+inside the render closure, and receives the drawn `Graphic` back.
+
+`SpectrumParams` is shared as an `Arc` and compared with `Arc::ptr_eq`. A pointer
+mismatch means the parameters changed, so caches (the diffuser window, the
+spiral's precomputed edges, the graphic thread's history) rebuild themselves.
+This is how a parameter change propagates without an explicit invalidation
+message.
+
+---
+
+## 4. The control path
+
+### Config is the source of truth
+
+`app/config.rs::Config` holds every user-visible setting: frequency range,
+samples per octave, the generator choice, the transform chain, the graphic
+generator's parameters. It lives on the GTK thread inside `AppController`.
+
+The background threads do **not** hold a copy of `Config`. They hold *live
+objects* built from it — `Box<dyn SpectrumTransform>`, `Box<dyn
+GraphicGenerator>`. A UI change follows one path every time:
+
+```
+widget signal → controller mutates Config → controller ships a closure
+              → background thread applies it to its live object
+```
+
+The `Configurable` trait (`new(config)` / `set_config(config)`) and the
+`define_*_config!` macros generate the plumbing. `update()` downcasts the live
+object: if it already has the right concrete type it is reconfigured in place,
+otherwise it is replaced. This keeps a slider drag from reallocating a transform
+on every frame.
+
+### Three mechanisms, three jobs
+
+| Mechanism | Direction | Carries | Purpose |
+|---|---|---|---|
+| JACK `RingBuffer` | RT thread → spectrum thread | `f32` samples | Hot audio capture |
+| `mpsc` buffer ring | Spectrum thread ↔ graphic thread | `Spectrum` / `SpectrumBuffer` | DSP → render data path |
+| `AsyncProcessor` RPC | GTK thread → a background thread, with reply | `Box<dyn FnOnce(&mut T) + Send>` | Command and configure a renderer |
+| `PubSub` | Any thread → GTK thread, fan-out | `Box<dyn Any + Send>` | Notify views that state changed |
+
+**`AsyncProcessor<T>`** (`async_processor.rs`) is the whole cross-thread command
+surface. `exec(closure)` sends a boxed `FnOnce(&mut T)` to the thread that owns
+`T` and awaits the return value over a `oneshot`. "Reconfigure the diffuser" and
+"render a frame" are both just closures. Because the closure runs on the owning
+thread, there is no lock and no shared mutable state — the renderer's `&mut self`
+is genuinely exclusive.
+
+`stop()` closes the command channel, which is what ends a `process_loop`. Closing
+any of a thread's input channels terminates it cleanly.
+
+**`PubSub`** (`pubsub.rs`) is a type-erased event bus on the GTK main loop.
+Dispatch is keyed by `TypeId`, so a subscriber for `N` only ever sees `N`.
+`Notifier` is `Clone + Send` and pushes into an unbounded `async_channel`, so
+the JACK notification thread can publish without blocking; a task on the main
+context drains it, which is why every subscriber callback runs on the GTK
+thread. Subscriptions are held **weakly**: `subscribe()` returns a
+`SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
+prunes the subscription. This is why views stash their handles.
+
+Events today: `InputsChanged` and `SampleRateChanged` (from JACK),
+`SourcePortChanged` and `InsertSpectrumTransform` (from `AppController`),
+`GraphicUpdate` (from `VisualizationController`).
+
+### Controllers and views
+
+- **Controllers** (`src/controllers/`) own state and logic. `AppController` is
+  the root: it owns `Config`, the JACK source, and both `AsyncProcessor`s. Every
+  other controller holds an `Rc<RefCell<AppController>>`.
+- **Views** (`src/gui/`) are plain functions that inflate a `*.ui.xml`
+  GtkBuilder definition, connect signals to controller methods, and subscribe to
+  PubSub events. **A view holds no state.** If a view needs to remember
+  something, that something belongs in a controller.
+
+### Lifecycle
+
+**Startup** (`gui/window.rs::start`): `block_on(AppController::new())` spawns
+both renderer threads and the JACK client, then pushes the initial config to
+them. The window is built, the two panes are populated, and CSS is applied.
+
+**Shutdown**: `connect_destroy` spawns `AppController::shutdown()` on the main
+context. Doing it asynchronously is required — blocking the main loop while
+waiting for the renderer threads deadlocks.
+
+---
+
+## 5. Module map
+
+| Path | Responsibility |
+|---|---|
+| `main.rs` | Entry point; creates the `gtk::Application`. |
+| `audio.rs` | JACK client, RT process handler, notification handler. |
+| `source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
+| `async_processor.rs` | `AsyncProcessor<T>` — closure RPC to a background thread. |
+| `pubsub.rs` | Type-erased event bus (`PubSub`, `Notifier`). |
+| `note.rs` | Musical note and pitch-class math; the `note!` macro. |
+| `app/config.rs` | `Config` plus the config-enum macros. |
+| `controllers/` | State and logic; `app.rs` is the root. |
+| `gui/` | GTK views (`*.ui.xml` + signal wiring). Stateless. |
+| `spectrum/` | `Spectrum` types, spectrum thread, generators, transforms. |
+| `graphic/` | `Graphic`/`GraphicBuffer` (cairo), graphic thread, generators. |
+| `traits.rs` | `Configurable` — build or update a component from its config. |
+| `error.rs` | Crate-wide `Error`. |
+| `test_support.rs` | Glib main-loop driver for async tests. |
+
+---
+
+## 6. Invariants
+
+Rules that keep the design intact. Breaking one needs a note in this document.
+
+1. **The JACK RT thread does not block, allocate, or lock.** It copies samples
+   and returns.
+2. **Each pipeline stage has exactly one owner thread.** State crosses a thread
+   boundary by moving through a channel, never by being shared.
+3. **The GTK thread never blocks on background work.** It sends a command and
+   awaits it with `spawn_local`.
+4. **`Config` is the only source of truth.** A background thread's live objects
+   are derived from it and are never read back as authority.
+5. **Views hold no state and subscribe weakly.**
+6. **The data path never queues.** Every stage drops or stalls instead of
+   building a backlog.
+7. **Data flows forward, control flows back.** The DSP never reaches into the
+   GUI; the visualizer never reaches into the DSP.
+
+---
+
+## 7. Target state and gaps
+
+Where the code does not yet match the architecture above. Each item is a
+candidate for its own change.
+
+### Audio engine client
+
+- **JACK types leak across component boundaries.** `JackSource` exposes
+  `&jack::Client`; `AppController::connect_port` and `ControlPaneController`
+  call JACK directly; `AudioSpectrumGenerator` reads a `jack::RingBufferReader`
+  of raw bytes. The target is an **audio-engine-agnostic input port**: a trait
+  that yields `f32` frames plus a device/port list, with the JACK client as one
+  implementation. That is what makes PipeWire, ALSA, or a file source possible.
+- **The sample rate does not reach the DSP.** `SampleRateChanged` is published
+  but has no subscriber outside tests, and `AudioSpectrumGenerator` captures the
+  rate once at construction. A rate change silently mis-scales every frequency.
+- **`SourceType::MIDI` exists but nothing implements it.** Either build the MIDI
+  source or drop the variant.
+- **Two workarounds are load-bearing**: a `Mutex` around `RingBufferWriter`
+  (rust-jack#121) and a 10 ms poll after a port-unregister notification
+  (jack2#617). Both should be revisited against current upstream.
+- **JACK server shutdown is unhandled** — `NotificationHandler::shutdown` only
+  logs. The app should tell the user and stop the pipeline.
+
+### DSP chain
+
+- The chain is a `HashMap<u64, Box<dyn SpectrumTransform>>` plus a separate order
+  `Vec`, kept in sync by hand across `Config` and the renderer. An ordered
+  collection would make the desync impossible.
+- Transforms cannot be reordered or removed from the GUI — only appended.
+- `Diffuser::regenerate_window` prints to stdout; `spectrum_min_value` is dead.
+- The renderer loops have no tests. `test_support.rs` gives us a main-loop
+  driver, but a spectrum-in / spectrum-out test of the chain would be cheaper and
+  is missing.
+
+### Visualizer
+
+- `SpiralGenerator` is the only generator, and `history_len()` is hardcoded to 1,
+  so the history mechanism is never exercised. Either use it or simplify it away.
+- `ConfigurableGraphicGenerator` (`graphic/mod.rs`) is empty and unused.
+- `GraphicBuffer::with_image_surface` extends a slice's lifetime with
+  `mem::transmute` to satisfy `ImageSurface::create_for_data`. It is guarded and
+  documented, but it is the one piece of `unsafe` in the crate and deserves a
+  safer construction.
+
+### GUI
+
+- **The GTK 4 migration is incomplete.** The port list still uses the deprecated
+  `GtkTreeView`/`GtkListStore` behind `#![allow(deprecated)]`. `GtkColumnView` is
+  the target.
+- **Frame timing ignores the compositor.** A fixed 40 ms `glib::timeout_add_local`
+  should become GTK 4's frame clock (`add_tick_callback`), which aligns repaints
+  with vsync and reports the real frame deadline.
+- Errors from the renderer threads are logged, not surfaced. `error_dialog`
+  exists but the pipeline does not use it.
+- **`window.rs` holds a `RefCell` borrow across an `await`.** `shutdown()` is
+  called as `controller.borrow_mut().shutdown().await`, so the `AppController`
+  stays mutably borrowed for the whole teardown. Anything that touches the
+  controller from the main loop in that window panics. Clippy flags it.
+
+### Controls
+
+- **`Config` does not persist.** There is no serde derive, no load, no save. The
+  app starts from `Config::default()` every time. Persisting the config — and
+  named presets — is the largest single user-facing gap.
+- `Config::default()` documents `min_freq: 200.0` as "low-end of human hearing",
+  which is wrong; the value is a visualization choice, not a hearing limit.
+- Config changes reach the renderers as several independent RPCs
+  (`sync_spectrum_transforms`, `update_spectrum_params`,
+  `update_graphic_generator`). There is no single "apply this config" path, so a
+  new setting is easy to forget to wire up.
+
+### Cross-cutting
+
+- **`cargo test` aborts**, even though every test passes. The glib main-loop
+  tests share the process-global default `MainContext`, so a second test in the
+  same process trips glib's thread guard and the process takes a non-unwinding
+  panic. See [DEVELOPMENT.md](DEVELOPMENT.md#testing) for the workaround and the
+  fix this needs.
+- **69 clippy warnings**, mostly dead code left over from abandoned directions:
+  unused re-exports, `WindowShape::Rectangular`, `upcast_any_ref`, and the never
+  constructed `NoBuffer`/`ReceivedUnexpectedBuffer` error variants. The crate
+  should build clean under `-D warnings`.

@@ -4,7 +4,7 @@ USER root
 RUN apt update
 # build deps
 RUN apt install -y build-essential clang libgtk-4-dev libjack-jackd2-dev
-# headless GUI run/screenshot harness (scripts/run-headless.sh; see AGENTS.md §8)
+# headless GUI run/screenshot harness (scripts/run-headless.sh; see DEVELOPMENT.md)
 RUN apt install -y jackd2 xvfb dbus-x11 imagemagick
 
 USER agent

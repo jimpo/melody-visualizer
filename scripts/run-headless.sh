@@ -2,7 +2,7 @@
 #
 # Run the melody-visualizer GUI headlessly and capture a screenshot.
 #
-# The app is a GTK+3 program that *requires* both a display and a running JACK
+# The app is a GTK 4 program that *requires* both a display and a running JACK
 # server (it opens its client with NO_START_SERVER, so AppController::new fails
 # without one). This script brings up the two missing pieces in a headless
 # environment, launches the app, screenshots the virtual framebuffer, and (by

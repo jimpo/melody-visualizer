@@ -13,7 +13,6 @@ pub mod graphic;
 pub mod gui;
 pub mod note;
 pub mod pubsub;
-pub mod source;
 pub mod spectrum;
 #[cfg(any(test, feature = "testing"))]
 pub mod test_support;

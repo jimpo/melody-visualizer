@@ -7,9 +7,9 @@ use gtk::{TreeIter, prelude::*};
 use jack::{AudioOut, PortFlags, PortSpec};
 use std::{cell::RefCell, rc::Rc};
 
+use crate::audio::source::events::InputsChanged;
 use crate::controllers::app::AppController;
 use crate::pubsub::SubscriptionHandle;
-use crate::source::events::InputsChanged;
 
 pub const PORT_NAME_COL: i32 = 0;
 

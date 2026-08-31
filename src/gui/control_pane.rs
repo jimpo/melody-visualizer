@@ -9,6 +9,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
 use crate::app::config::{
 	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
 };
+use crate::audio::source::SourceType;
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
 	VolumeNormalizerController,
@@ -19,7 +20,6 @@ use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
-use crate::source::SourceType;
 use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");

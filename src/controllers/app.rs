@@ -4,10 +4,10 @@ use std::{any::Any, cell::RefCell, rc::Rc};
 use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::async_processor::AsyncProcessor;
 use crate::audio::AudioSourceController;
+use crate::audio::source::{JackSource, SourceType};
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
-use crate::source::{JackSource, SourceType};
 use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 use crate::spectrum::renderer::{self as spectrum_processor, SpectrumRenderer};
 

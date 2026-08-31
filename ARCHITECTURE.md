@@ -67,7 +67,7 @@ to JACK.
 ```
   ┌───────────────────────┐        ring buffer         ┌──────────────────────┐
   │  JACK RT thread       │      (lock-free SPSC)      │  Spectrum thread     │
-  │  audio.rs             │ ──────── f32 samples ────▶ │  spectrum/renderer   │
+  │  audio/               │ ──────── f32 samples ────▶ │  spectrum/renderer   │
   │  ProcessHandler       │                            │  FFT + transforms    │
   │  never blocks/allocs  │                            │  ▲ TICK = the clock  │
   └───────────────────────┘                            └──────────────────────┘
@@ -159,7 +159,7 @@ Nothing in the pipeline queues unbounded work.
 
 One sample's journey:
 
-1. **Capture** — `audio.rs`. `AudioProcessHandler::process` writes the input
+1. **Capture** — `audio/`. `AudioProcessHandler::process` writes the input
    port's `f32` samples into a JACK `RingBuffer` (128 KiB, lock-free SPSC) as
    native-endian bytes through a `SampleWriter`, and bumps that writer's atomic
    overrun count by whatever did not fit. Nothing else happens on the RT thread.
@@ -195,7 +195,7 @@ in the control pane, and `AppController::connect_port` calls
 `client.connect_ports_by_name`. The control pane keeps its list current by
 subscribing to `InputsChanged`.
 
-The `JackSource` trait (`source.rs`) exists so a second source type could be
+The `JackSource` trait (`audio/source.rs`) exists so a second source type could be
 slotted in behind the same interface. Only `Audio` is implemented.
 
 ### Buffer recycling
@@ -310,8 +310,9 @@ waiting for the renderer threads deadlocks.
 |---|---|
 | `lib.rs` | Library root; declares the public module tree. |
 | `main.rs` | Binary entry point; creates the `gtk::Application` and calls `gui::window::start`. |
-| `audio.rs` | JACK client, RT process handler, notification handler. |
-| `source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
+| `audio/mod.rs` | JACK client, RT process handler, notification handler. |
+| `audio/ring.rs` | Both ends of the capture ring, and the overrun count they share. |
+| `audio/source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
 | `async_processor.rs` | `AsyncProcessor<T>` — closure RPC to a background thread. |
 | `pubsub.rs` | Type-erased event bus (`PubSub`, `Notifier`). |
 | `note.rs` | Musical note and pitch-class math; the `note!` macro. |

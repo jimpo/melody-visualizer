@@ -7,6 +7,25 @@ use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;
 use std::sync::Arc;
 
+use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
+
+/// The default frequency range, sampled at `samples` exponentially spaced bins.
+///
+/// # Preconditions
+/// - `samples >= 2`
+pub fn spectrum_params(samples: usize) -> Arc<SpectrumParams> {
+	Arc::new(SpectrumParams::exp_spaced(samples, 200.0, 20000.0))
+}
+
+/// A spectrum holding `values`, on the grid [`spectrum_params`] builds for them.
+///
+/// # Preconditions
+/// - `values.len() >= 2`
+pub fn spectrum(values: &[f64]) -> Spectrum {
+	SpectrumBuffer::new(spectrum_params(values.len()))
+		.fill(|data, _params| data.copy_from_slice(values))
+}
+
 /// Run async test code inside a glib main loop.
 ///
 /// Several components (the `PubSub` event bus, the JACK notification handler)

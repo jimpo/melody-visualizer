@@ -7,8 +7,11 @@ use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;
 use std::{f64::consts::TAU, sync::Arc};
 
+use crate::app::config::{Config, SpectrumGeneratorConfig};
 use crate::audio::SampleReader;
 use crate::audio::ring::sample_ring;
+use crate::spectrum::generators::audio::AudioSpectrumGenerator;
+use crate::spectrum::renderer::SpectrumRenderer;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
 
 /// The default frequency range, sampled at `samples` exponentially spaced bins.
@@ -104,4 +107,26 @@ where
 	});
 
 	main_loop.run();
+}
+
+/// The DSP chain `config` describes, reading its audio from `reader`.
+///
+/// The same wiring `AppController` performs when it starts the spectrum thread,
+/// with no thread and no JACK client: the generator `config` names, then its
+/// transforms in configured order.
+pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> SpectrumRenderer {
+	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+
+	let mut renderer = SpectrumRenderer::new();
+	renderer.set_generator(Box::new(AudioSpectrumGenerator::new(
+		generator_config.clone(),
+		reader,
+		sample_rate,
+	)));
+	*renderer.transforms_mut() = config
+		.spectrum_transforms
+		.iter()
+		.map(|(id, transform_config)| (*id, transform_config.clone().create()))
+		.collect();
+	renderer
 }

@@ -174,9 +174,11 @@ One sample's journey:
    buckets** so that every octave gets equal screen space. It keeps power
    (amplitude²), which Parseval's theorem preserves, and interpolates power —
    not amplitude — between adjacent bins.
-3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through an
-   ordered chain: `Diffuser` (spatial smoothing), `VolumeNormalizer` (auto-gain),
-   `DecibelConverter` (log scaling). Order and membership come from `Config`.
+3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through a
+   `TransformChain`: `Diffuser` (spatial smoothing), `VolumeNormalizer`
+   (auto-gain), `DecibelConverter` (log scaling). Order is position in the
+   chain, and both order and membership come from `Config`. What the values
+   mean at each step is *Value ranges along the chain*, below.
 4. **Accumulate** — `graphic/renderer.rs`. The graphic thread pushes the spectrum
    onto a bounded `spectrum_history` whose length the active generator declares.
 5. **Draw** — `graphic/generators/spiral.rs`. On a render RPC, the generator
@@ -185,6 +187,51 @@ One sample's journey:
    to hue, so notes an octave apart line up on the same spoke.
 6. **Display** — `gui/visualization.rs`. The `DrawingArea` blits the finished
    surface. A size change resizes the buffer in place on the GTK side.
+
+### Value ranges along the chain
+
+Nothing in the types says what a `Spectrum`'s values mean or how large they get,
+and each stage changes both. What follows is the contract as the code stands.
+
+| Stage | Output units | Range |
+|---|---|---|
+| `AudioSpectrumGenerator` | power (amplitude², per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
+| `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both total power and range |
+| `VolumeNormalizer` | fraction of a running peak | nominally `[0, ~1]`, **not clamped** — a transient louder than the peak has caught up with exceeds 1 |
+| `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 6]` at the default `min_level` of 1e-6 |
+| `SpiralGenerator` (consumer) | — | **assumes** `[0, 1]`: `0.2 + 0.8 * spectrum[i].min(1.0)` |
+
+Two rules follow, and a new transform has to answer both:
+
+1. **A transform declares whether it preserves the range or rescales it.** The
+   diffuser preserves; the normalizer and the decibel converter rescale.
+2. **The chain's last stage owns the output range**, because the consumer
+   requires `[0, 1]` and clamps only from above. A negative value would pass
+   straight into HSV; nothing emits one today and nothing forbids one either.
+
+**The stages do not currently compose.** Only `VolumeNormalizer` produces
+roughly what the consumer expects:
+
+- The generator alone emits values around 0.06, so with no transforms the spiral
+  renders nearly black.
+- `DecibelConverter` emits up to 6.0. After the normalizer everything above 0.1
+  saturates to white; on its own, everything above 1.0 does. This is very likely
+  why `Config::default` has it commented out rather than deleted.
+
+The fix is one of: the decibel converter normalizes to its own output range, or
+the `[0, 1]` requirement moves onto the chain's output instead of living as the
+consumer's private assumption. That is a decision to take now the contract is
+written down, not a gap in the writing.
+
+### Parameter bounds
+
+| Parameter | Bound | Note |
+|---|---|---|
+| `Diffuser::width` | `0..10` octaves | `width_adjustment` declares only `upper`; GTK defaults `lower` to 0. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
+| `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
+| `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
+| `Config::samples_per_octave` | 180, internal | The quadratic cost driver. No GUI control, and exposing it is deferred |
+| `audio::Config::dft_window_size` | 2048, internal | Sets the tick rate through `interval()`, at half a window |
 
 ### JACK client and port wiring
 
@@ -241,6 +288,12 @@ mismatch means the parameters changed, so caches (the diffuser window, the
 spiral's precomputed edges, the graphic thread's history) rebuild themselves.
 This is how a parameter change propagates without an explicit invalidation
 message.
+
+On the spectrum side that comparison happens once per frame, in
+`TransformChain::set_params`, which hands the new grid to every transform in the
+chain — and to a transform the moment it joins one. `SpectrumTransform::set_params`
+is the hook, and it defaults to doing nothing, for a transform whose output
+depends only on the values it is given.
 
 ---
 
@@ -347,7 +400,7 @@ waiting for the renderer threads deadlocks.
 | `graphic/` | `Graphic`/`GraphicBuffer` (cairo), graphic thread, generators. |
 | `traits.rs` | `Configurable` — build or update a component from its config. |
 | `error.rs` | Crate-wide `Error`. |
-| `test_support.rs` | Glib main-loop driver for async tests. Public under the `testing` feature. |
+| `test_support.rs` | Shared fixtures: the glib main-loop driver, synthesized audio, and the wiring that builds a renderer from a `Config`. Public under the `testing` feature. |
 
 ---
 
@@ -397,14 +450,16 @@ candidate for its own change.
 
 ### DSP chain
 
-- The chain is a `HashMap<u64, Box<dyn SpectrumTransform>>` plus a separate order
-  `Vec`, kept in sync by hand across `Config` and the renderer. An ordered
-  collection would make the desync impossible.
-- Transforms cannot be reordered or removed from the GUI — only appended.
-- `Diffuser::regenerate_window` prints to stdout.
-- The renderer loops have no tests. `test_support.rs` gives us a main-loop
-  driver, but a spectrum-in / spectrum-out test of the chain would be cheaper and
-  is missing.
+- **The stages do not compose over their value ranges.** `DecibelConverter` emits
+  up to 6.0 into a consumer that assumes `[0, 1]`, which is why it is commented
+  out of `Config::default`. See *Value ranges along the chain* above for the two
+  ways out.
+- `TransformChain::remove` and `reorder` exist, but nothing in the GUI calls
+  them: transforms can still only be appended.
+- The spectrum thread's own loop — timing, backpressure, shutdown — has no
+  tests. The chain it drives is covered without one, since `SpectrumRenderer`
+  is drivable on its own, but `SpectrumProcessor` is reachable only by spawning
+  a thread.
 
 ### Visualizer
 

@@ -88,6 +88,253 @@ change at hand, and always with the reason in a comment.
 The codebase is indented with **hard tabs**. `rustfmt.toml` enforces this, so run
 `cargo fmt` rather than matching it by hand.
 
+## Style guide
+
+`rustfmt` and Clippy enforce the mechanical formatting rules; see [Running
+automated checks](#running-automated-checks). The conventions below are the ones
+tooling cannot check. They are **rules**: a change that breaks one needs a
+stated reason. The judgment calls — where two good options trade off against
+each other — are in [Principles](#principles).
+
+### Code comments
+
+**Comments explain current behavior, not change history.** Do not write comments
+that reference how the code used to work ("previously X", "changed from A to B",
+"no longer calls Y"). A comment must make sense against the current code alone,
+with no knowledge of what came before. What changed and why belongs in the
+commit message.
+
+### Documentation
+
+Write documentation and commit messages in the **present tense**.
+
+```
+❌ This function will return the right answer
+✅ This function returns the right answer
+
+❌ Fixed the overrun counter
+✅ Fix the overrun counter
+```
+
+Follow the [rustdoc book](https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html)
+on structure. Each item's docs read:
+
+```
+[short sentence explaining what it is]
+
+[more detailed explanation]
+
+[at least one code example that users can copy/paste to try it]
+
+[even more advanced explanations if necessary]
+```
+
+`src/lib.rs` carries crate-level `//!` documentation: a one-sentence summary of
+what the crate does, the main types with a one-line description each, and a
+pointer to [ARCHITECTURE.md](ARCHITECTURE.md) for the component and thread model.
+
+Add code examples to the parts of the crate that are reusable on their own —
+`pubsub`, `async_processor`, `traits`, and the `Spectrum` types — and to any
+non-obvious behavior or edge case. Doc examples run under `cargo test --doc`, so
+they double as regression tests. The GUI, controller, and app-wiring modules
+need prose, not examples: nothing calls them but the binary.
+
+### Naming
+
+Prefer **longer, descriptive names**, including for generic type parameters. Use
+CamelCase identifiers for type parameters rather than single letters, especially
+when a function or type has more than one.
+
+**Use namespacing.** An identifier that is unambiguous inside its module does not
+repeat the module's name. Every transform module holds a plain `Config` —
+`diffuser::Config`, not `DiffuserConfig` — because the module already says which
+one it is. A caller that needs the longer form renames on import:
+`use diffuser::Config as DiffuserConfig`.
+
+### Functional style
+
+Prefer iterator combinators (`map`, `filter`, `fold`, `sum`) over loops that
+drive mutable state, and `iter::zip(a, b)` over `a.iter().zip(&b)`. An algorithm
+with substantial mutable state — the DSP transforms that update a running
+envelope in place, for example — is the exception, and is clearer written
+imperatively.
+
+```rust
+// Good
+let total = data.iter().sum::<f64>();
+let scaled = iter::zip(data, weights)
+	.map(|(value, weight)| value * weight)
+	.collect::<Vec<_>>();
+
+// Poor
+let mut total = 0.0;
+for value in data.iter() {
+	total += value;
+}
+```
+
+### Error handling
+
+**Do not call `unwrap` outside of test code.** Return or propagate an `Err`, or
+call `expect` with an explanation of why the call cannot panic. `unwrap` is fine
+in `#[cfg(test)]` modules and in `tests/`.
+
+```rust
+// `chunk` comes from `chunks_exact(SAMPLE_SIZE)`, so the conversion is total.
+let sample = f32::from_ne_bytes(
+	chunk
+		.try_into()
+		.expect("chunks_exact yields chunks of SAMPLE_SIZE bytes"),
+);
+```
+
+> The GUI modules still hold roughly thirty `unwrap` calls that predate this
+> rule, most of them in `gui/control_pane.rs`. They are a cleanup backlog, not a
+> precedent. New code follows the rule; code you touch for another reason is a
+> good place to fix one.
+
+**Internal code documents preconditions and asserts them; it does not return
+`Result`.** Assertions keep the internal interfaces small and make the contract
+visible at the definition.
+
+```rust
+/// Scales every power value in place by the weight of its frequency bin.
+///
+/// # Preconditions
+/// - `data.len()` must equal `params.samples()`
+fn apply_weights(data: &mut [f64], params: &SpectrumParams) {
+	assert_eq!(data.len(), params.samples());
+	// ...
+}
+```
+
+**Return an error where input the crate does not control could otherwise cause a
+panic.** Those boundaries are:
+
+- **JACK.** The server can refuse a client, drop a port, or fail to activate at
+  any moment. `AudioSource::new` returns `Error::Jack` / `Error::JackStatus`;
+  it does not assert.
+- **Config.** A `Config` may name a transform that does not exist or an entry of
+  the wrong shape, so `app::config` returns `Error::MissingTransform` and
+  `Error::UnexpectedConfigEntry`.
+- **Cross-thread channels.** A peer thread may be gone by the time a message is
+  sent, which is `Error::Communication` and `Error::PubSub`.
+- **Allocation with a size the user chose**, such as the capture ring buffer:
+  `Error::RingBufferAllocFailure`.
+
+Inside those boundaries — a transform applied to a spectrum the pipeline built,
+a renderer handed a surface the GUI owns — use preconditions. The JACK real-time
+callback is stricter still: it may not block, allocate, or lock, so it may not
+panic either (ARCHITECTURE.md, invariant 1).
+
+### Turbofish over type annotations
+
+Resolve type ambiguity with a turbofish rather than an annotation on the local,
+so the type sits at the call site that needs it.
+
+```rust
+// Good
+let names = ports.iter().map(|port| port.name()).collect::<Vec<_>>();
+
+// Bad
+let names: Vec<_> = ports.iter().map(|port| port.name()).collect();
+```
+
+### Visibility
+
+Control visibility at the **ancestor module**, not per item. An item that should
+not escape the crate can be plain `pub` inside a module that is not itself
+`pub` — the private ancestor already blocks external reach, and no item needs an
+annotation. Reach for `pub(crate)` or `pub(super)` only where that cannot express
+the intent:
+
+- a `pub mod` that exposes an API but holds helpers other modules must call;
+- a field of a `pub` struct that the crate must read and callers must not, since
+  fields have no module-level escape hatch.
+
+### Generic functions over trait methods
+
+Write a generic function unless the logic must vary by implementor. Add a trait
+method with a default implementation only when at least one implementor
+overrides it.
+
+### Dependencies
+
+Before adding a crate, check that it is widely used (downloads and recent
+releases on `crates.io`), still maintained, and backed by an organization rather
+than a single person.
+
+### Tests
+
+New functionality comes with tests for the expected behavior and the edge cases.
+Two conventions keep the suite reproducible:
+
+- **Seed randomness deterministically.** Draw from `StdRng::seed_from_u64(0)`
+  rather than from entropy, so a failure reproduces.
+- **Reuse the shared fixtures.** `src/test_support.rs` reaches `tests/` and
+  `benches/` through the `testing` feature. Extend it rather than rebuilding
+  common setup per test.
+
+## Principles
+
+The style rules above are pass/fail. The principles here are **tradeoff
+guidelines**. Each reads *Prefer X over Y*, and the **Why** and **Reconsider
+when** are the substance — a change that leans the other way is a discussion,
+not a defect.
+
+### Simplicity
+
+Simplicity is the foundational design goal. It is how easy the code is to
+understand and how fast that understanding transfers to someone else.
+
+Simple code is **loosely coupled**: to understand a module you need the public
+interfaces of its dependencies and almost nothing about their implementations.
+The component boundaries in [ARCHITECTURE.md](ARCHITECTURE.md) exist to hold
+that property. The principles below are all consequences of it.
+
+### No backwards compatibility
+
+- **Prefer** *strongly* clean, targeted interfaces **over** interfaces kept
+  compatible with their old shape.
+- **Why:** nothing outside this repo consumes the crate. A deprecated path kept
+  alive costs every future reader. Isolate a breaking interface change into its
+  own commit so the mechanical part is legible on its own.
+- **Reconsider when:** the break turns into a whole-codebase edit that buys
+  little.
+
+### Avoid premature generalization
+
+- **Prefer** *weakly* simple, locally readable logic **over** perfectly DRY code.
+- **Why:** readability matters more here than extensibility. Structure repeated
+  in a few places with small variations beats one combined, parameterized,
+  confusing instance.
+- **Reconsider when:** the generalization is just as simple as the copies, and
+  decouples the logic in a way that makes both sides easier to understand.
+
+### Don't trade loose coupling for method-call convenience
+
+- **Prefer** keeping a function where the module boundary separates
+  responsibilities **over** making it a method on a type it happens to take as an
+  argument.
+- **Why:** converting a free function to a method is a win only when the type
+  genuinely owns that responsibility. When several arguments are equally central,
+  or when the move makes a plain data module import the machinery it had no
+  reason to know about, the `x.method()` syntax is bought with real coupling.
+  This is what keeps the transforms out of `Spectrum` and the views free of
+  controller state.
+- **Reconsider when:** the type really is the one thing the function is about,
+  and moving it adds no import across the data/algorithm boundary.
+
+### Cohesive commits
+
+- **Prefer** several small, logically cohesive commits **over** one large
+  monolithic change.
+- **Why:** a focused commit is easier to review, to reason about in isolation,
+  and to revert. A sequence of well-scoped commits communicates the design
+  incrementally: each step stands on its own.
+- **Reconsider when:** the parts are genuinely inseparable — a mechanical rename
+  where any split leaves an intermediate commit that does not compile.
+
 ## Running the GUI headlessly
 
 The app is a GUI, but it runs and can be visually verified with **no physical

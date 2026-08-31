@@ -3,7 +3,6 @@ use jack::{
 	ProcessHandler, ProcessScope, RingBuffer, RingBufferReader, RingBufferWriter,
 };
 use log::error;
-use std::sync::Mutex;
 
 use crate::error::Error;
 use crate::pubsub::Notifier;
@@ -113,29 +112,20 @@ impl NotificationHandler for AudioNotificationHandler {
 
 struct AudioProcessHandler {
 	port: Port<AudioIn>,
-	// This should not need a Mutex, but it does.
-	// https://github.com/RustAudio/rust-jack/issues/121
-	ring_buffer: Mutex<RingBufferWriter>,
+	ring_buffer: RingBufferWriter,
 }
 
 impl AudioProcessHandler {
 	fn new(port: Port<AudioIn>, ring_buffer: RingBufferWriter) -> Self {
-		AudioProcessHandler {
-			port,
-			ring_buffer: Mutex::new(ring_buffer),
-		}
+		AudioProcessHandler { port, ring_buffer }
 	}
 }
 
 impl ProcessHandler for AudioProcessHandler {
 	fn process(&mut self, _client: &Client, scope: &ProcessScope) -> Control {
-		let mut ring_buffer = self
-			.ring_buffer
-			.lock()
-			.expect("I shouldn't even need a Mutex...");
 		// Samples that do not fit are dropped whole. The reader skips ahead to the
 		// newest window on every tick, so it would never have read them anyway.
-		let _dropped = write_samples(&mut ring_buffer, self.port.as_slice(scope));
+		let _dropped = write_samples(&mut self.ring_buffer, self.port.as_slice(scope));
 		Control::Continue
 	}
 }

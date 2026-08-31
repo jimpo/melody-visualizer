@@ -360,9 +360,8 @@ candidate for its own change.
   rate once at construction. A rate change silently mis-scales every frequency.
 - **`SourceType::MIDI` exists but nothing implements it.** Either build the MIDI
   source or drop the variant.
-- **Two workarounds are load-bearing**: a `Mutex` around `RingBufferWriter`
-  (rust-jack#121) and a 10 ms poll after a port-unregister notification
-  (jack2#617). Both should be revisited against current upstream.
+- **A workaround is load-bearing**: a 10 ms poll after a port-unregister
+  notification (jack2#617). It should be revisited against current upstream.
 - **JACK server shutdown is unhandled** — `NotificationHandler::shutdown` only
   logs. The app should tell the user and stop the pipeline.
 

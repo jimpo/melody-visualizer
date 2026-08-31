@@ -143,12 +143,11 @@ band. `scripts/connect-test-tone.sh --disconnect` stops driving the input.
 
 ## Known upstream workarounds
 
-Two workarounds are load-bearing. Both should be re-checked against current
-upstream before being copied or extended.
+One workaround is load-bearing. It should be re-checked against current upstream
+before being copied or extended.
 
 | Where | Why |
 |---|---|
-| `audio.rs` — a `Mutex` around `RingBufferWriter` on the RT thread | [rust-jack#121](https://github.com/RustAudio/rust-jack/issues/121). It is never actually contended. |
 | `controllers/control_pane.rs` — a 10 ms poll after a port-unregister event | [jack2#617](https://github.com/jackaudio/jack2/issues/617). The port list is not immediately consistent after the notification. |
 
 ## Key Terminology

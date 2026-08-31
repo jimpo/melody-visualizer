@@ -2,7 +2,7 @@ use futures::{channel::mpsc, executor, prelude::*, select};
 use log::{debug, error};
 use std::{any::Any, collections::VecDeque, sync::Arc, thread};
 
-use crate::async_processor::AsyncProcessor;
+use crate::async_processor::{AsyncProcessor, ExecCommand, ExecReceiver};
 use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
@@ -153,7 +153,7 @@ pub fn start_with_thread_name(
 }
 
 struct GraphicProcessor {
-	exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
+	exec_rx: ExecReceiver<GraphicRenderer>,
 	spectrum_input: mpsc::Receiver<Spectrum>,
 	spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	current_buffer: Option<GraphicBuffer>,
@@ -162,7 +162,7 @@ struct GraphicProcessor {
 
 impl GraphicProcessor {
 	fn new(
-		exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
+		exec_rx: ExecReceiver<GraphicRenderer>,
 		spectrum_input: mpsc::Receiver<Spectrum>,
 		spectrum_output: mpsc::Sender<SpectrumBuffer>,
 	) -> Self {
@@ -211,7 +211,7 @@ impl GraphicProcessor {
 
 	fn handle_exec(
 		&mut self,
-		exec: Option<Box<dyn FnOnce(&mut GraphicRenderer) + Send>>,
+		exec: Option<ExecCommand<GraphicRenderer>>,
 	) -> Result<bool, GraphicProcessingError> {
 		if let Some(exec) = exec {
 			exec(&mut self.renderer);

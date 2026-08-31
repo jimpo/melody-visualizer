@@ -12,12 +12,17 @@ pub enum CommunicationError {
 	ResponseFailure,
 }
 
+/// A unit of work shipped to the thread that owns the `T`.
+pub type ExecCommand<T> = Box<dyn FnOnce(&mut T) + Send>;
+pub type ExecSender<T> = mpsc::Sender<ExecCommand<T>>;
+pub type ExecReceiver<T> = mpsc::Receiver<ExecCommand<T>>;
+
 pub struct AsyncProcessor<T: ?Sized> {
-	exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>,
+	exec_tx: ExecSender<T>,
 }
 
 impl<T: ?Sized> AsyncProcessor<T> {
-	pub fn new(exec_tx: mpsc::Sender<Box<dyn FnOnce(&mut T) + Send>>) -> Self {
+	pub fn new(exec_tx: ExecSender<T>) -> Self {
 		AsyncProcessor { exec_tx }
 	}
 

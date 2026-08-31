@@ -6,6 +6,10 @@ use std::{
 	rc::{Rc, Weak},
 };
 
+/// A subscriber callback with its notification type erased. `notify` only calls
+/// it with the notification type the subscriber registered for.
+type SubscriberCallback = dyn Fn(&(dyn Any + Send));
+
 pub struct PubSub {
 	subscribers: Rc<RefCell<HashMap<TypeId, Vec<Subscription>>>>,
 	notifier: Notifier,
@@ -50,13 +54,13 @@ impl PubSub {
 		N: Any + Send,
 		F: Fn(&N) + 'static,
 	{
-		let callback: Rc<Box<dyn Fn(&(dyn Any + Send))>> = Rc::new(Box::new(move |notification| {
+		let callback: Rc<SubscriberCallback> = Rc::new(move |notification| {
 			let notification = notification.downcast_ref::<N>().expect(
 				"all subscribers registered for a notification by TypeId will only be called \
 					with notifications of the type matching that TypeId",
 			);
 			callback(notification);
-		}));
+		});
 
 		self.subscribers
 			.borrow_mut()
@@ -87,7 +91,7 @@ fn notify(subscribers: &mut HashMap<TypeId, Vec<Subscription>>, notification: Bo
 }
 
 struct Subscription {
-	callback: Weak<Box<dyn Fn(&(dyn Any + Send))>>,
+	callback: Weak<SubscriberCallback>,
 }
 
 impl Subscription {
@@ -133,7 +137,7 @@ impl Notifier {
 pub struct SubscriptionHandle {
 	/// Subscriptions hold a `Weak` to this callback, so dropping the handle
 	/// unsubscribes.
-	_callback: Rc<Box<dyn Fn(&(dyn Any + Send))>>,
+	_callback: Rc<SubscriberCallback>,
 }
 
 #[cfg(test)]

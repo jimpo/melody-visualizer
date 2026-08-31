@@ -1,6 +1,6 @@
 use std::{any::Any, mem, sync::Arc};
 
-use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumTransform};
+use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumParams, SpectrumTransform};
 use crate::traits::Configurable;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +48,6 @@ impl Diffuser {
 		assert!(dist_between_samples.is_finite() && dist_between_samples.is_sign_positive());
 
 		let half_width = self.config.width / 2.0;
-		println!("{} {} {}", max_log_freq, min_log_freq, params.samples());
 		let samples_per_side = (half_width / dist_between_samples) as usize;
 		self.window.resize(samples_per_side * 2 + 1, 0.0);
 
@@ -65,10 +64,6 @@ impl Diffuser {
 
 impl SpectrumTransform for Diffuser {
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum {
-		if !Arc::ptr_eq(self.buffer.params(), spectrum.params()) {
-			self.buffer = SpectrumBuffer::new(spectrum.params().clone());
-			self.regenerate_window();
-		}
 		let buffer = mem::take(&mut self.buffer);
 		let new_spectrum = buffer.fill(|samples, _| {
 			// Window is symmetric around origin and has odd size.
@@ -79,11 +74,12 @@ impl SpectrumTransform for Diffuser {
 		new_spectrum
 	}
 
-	fn upcast_any_ref(&self) -> &dyn Any {
-		self
+	fn set_params(&mut self, params: &Arc<SpectrumParams>) {
+		self.buffer = SpectrumBuffer::new(params.clone());
+		self.regenerate_window();
 	}
 
-	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+	fn as_any_mut(&mut self) -> &mut dyn Any {
 		self
 	}
 }

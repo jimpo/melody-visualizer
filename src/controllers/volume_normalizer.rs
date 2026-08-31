@@ -4,21 +4,22 @@ use std::{cell::RefCell, rc::Rc};
 use crate::app::config::SpectrumTransformConfig;
 use crate::controllers::app::AppController;
 use crate::error::Error;
+use crate::spectrum::TransformId;
 
 pub struct VolumeNormalizerController {
-	id: u64,
+	id: TransformId,
 	app_controller: Rc<RefCell<AppController>>,
 }
 
 impl VolumeNormalizerController {
-	pub fn new(id: u64, app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
+	pub fn new(id: TransformId, app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
 		Rc::new(RefCell::new(VolumeNormalizerController {
 			id,
 			app_controller,
 		}))
 	}
 
-	pub fn id(&self) -> u64 {
+	pub fn id(&self) -> TransformId {
 		self.id
 	}
 
@@ -39,12 +40,7 @@ impl VolumeNormalizerController {
 
 	fn set_rate(&mut self, rate: f64) -> Result<(), Error> {
 		let mut app_controller = self.app_controller.borrow_mut();
-		let config = app_controller
-			.config
-			.spectrum_transforms
-			.get_mut(&self.id)
-			.ok_or_else(|| Error::MissingTransform { id: self.id })?;
-		match config {
+		match app_controller.config.spectrum_transform_mut(self.id)? {
 			SpectrumTransformConfig::VolumeNormalizer(config) => {
 				config.rate = rate;
 				Ok(())

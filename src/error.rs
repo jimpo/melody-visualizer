@@ -3,6 +3,7 @@ use std::any::Any;
 use std::io;
 
 use crate::async_processor::CommunicationError;
+use crate::spectrum::TransformId;
 
 #[derive(Debug, derive_more::Display, derive_more::From, derive_more::Error)]
 pub enum Error {
@@ -32,7 +33,7 @@ pub enum Error {
 	#[display("config references missing transform with ID {}", id)]
 	#[from(skip)]
 	MissingTransform {
-		id: u64,
+		id: TransformId,
 	},
 	#[display("invalid config entry reference: {}", _0)]
 	UnexpectedConfigEntry(#[error(not(source))] String),

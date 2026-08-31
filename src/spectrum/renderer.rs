@@ -2,7 +2,6 @@ use futures::{channel::mpsc, executor, prelude::*, select};
 use futures_timer::Delay;
 use log::{debug, error};
 use std::{
-	collections::HashMap,
 	fmt::Debug,
 	thread,
 	time::{Duration, Instant},
@@ -10,7 +9,7 @@ use std::{
 
 use crate::async_processor::{AsyncProcessor, ExecCommand, ExecReceiver};
 use crate::error::Error;
-use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumTransform};
+use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, TransformChain};
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
@@ -19,7 +18,6 @@ enum SpectrumProcessingError {
 	ReceivedUnexpectedBuffer,
 	#[display("skipping tick because no buffer is available")]
 	NoBuffer,
-	Other(Error),
 }
 
 #[derive(Debug)]
@@ -35,18 +33,21 @@ impl SpectrumGenerator for DefaultSpectrumGenerator {
 	}
 }
 
+/// The DSP chain: a generator and the transforms its spectra pass through.
+///
+/// Holds the state the chain needs and nothing else. [`SpectrumProcessor`] owns
+/// one and drives it on the spectrum thread.
+#[derive(Debug)]
 pub struct SpectrumRenderer {
 	generator: Box<dyn SpectrumGenerator>,
-	transforms: HashMap<u64, Box<dyn SpectrumTransform>>,
-	transform_order: Vec<u64>,
+	transforms: TransformChain,
 }
 
 impl SpectrumRenderer {
-	fn new() -> Self {
+	pub fn new() -> Self {
 		SpectrumRenderer {
 			generator: Box::new(DefaultSpectrumGenerator),
-			transforms: HashMap::new(),
-			transform_order: Vec::new(),
+			transforms: TransformChain::default(),
 		}
 	}
 
@@ -62,27 +63,14 @@ impl SpectrumRenderer {
 		self.generator = generator;
 	}
 
-	pub fn transform_by_index_mut(
-		&mut self,
-		index: usize,
-	) -> Result<Option<(u64, &mut dyn SpectrumTransform)>, Error> {
-		if let Some(&id) = self.transform_order.get(index) {
-			let config = self
-				.transforms
-				.get_mut(&id)
-				.ok_or_else(|| Error::MissingTransform { id })?;
-			Ok(Some((id, config.as_mut())))
-		} else {
-			Ok(None)
-		}
-	}
-
-	pub fn transforms_mut(&mut self) -> &mut HashMap<u64, Box<dyn SpectrumTransform>> {
+	pub fn transforms_mut(&mut self) -> &mut TransformChain {
 		&mut self.transforms
 	}
+}
 
-	pub fn transform_order_mut(&mut self) -> &mut Vec<u64> {
-		&mut self.transform_order
+impl Default for SpectrumRenderer {
+	fn default() -> Self {
+		Self::new()
 	}
 }
 
@@ -168,7 +156,7 @@ impl SpectrumProcessor {
 		self.next_tick_time += self.renderer.generator.interval();
 
 		if let Some(buffer) = self.current_buffer.take() {
-			let spectrum = self.render(buffer)?;
+			let spectrum = self.render(buffer);
 			if let Err(err) = self.spectrum_output.send(spectrum).await {
 				return if err.is_disconnected() {
 					debug!("spectrum output channel disconnected, stopping spectrum processing");
@@ -183,16 +171,10 @@ impl SpectrumProcessor {
 		}
 	}
 
-	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, Error> {
-		let initial_spectrum = self.renderer.generator.generate(buffer);
-		// log::debug!("render n_transforms = {}", self.renderer.transform_order.len());
-		(0..self.renderer.transform_order.len()).try_fold(initial_spectrum, |spectrum, index| {
-			let (_id, transform) = self
-				.renderer
-				.transform_by_index_mut(index)?
-				.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
-			Ok(transform.transform(spectrum))
-		})
+	fn render(&mut self, buffer: SpectrumBuffer) -> Spectrum {
+		self.renderer.transforms.set_params(buffer.params());
+		let spectrum = self.renderer.generator.generate(buffer);
+		self.renderer.transforms.apply(spectrum)
 	}
 }
 

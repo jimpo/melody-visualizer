@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::audio::source::SourceType;
 use crate::error::Error;
 use crate::graphic::{
@@ -7,7 +5,7 @@ use crate::graphic::{
 	generators::spiral::{self, SpiralGenerator as Spiral},
 };
 use crate::spectrum::{
-	Hz, SpectrumParams, SpectrumTransform,
+	Hz, SpectrumParams, SpectrumTransform, TransformId,
 	generators::audio,
 	transforms::{
 		decibel_converter::DecibelConverter,
@@ -24,8 +22,10 @@ pub struct Config {
 	// Frequency domain samples per octave.
 	pub samples_per_octave: usize,
 	pub spectrum_generator: SpectrumGeneratorConfig,
-	pub spectrum_transforms: HashMap<u64, SpectrumTransformConfig>,
-	pub spectrum_transform_order: Vec<u64>,
+	/// The transform chain, in the order it is applied. Mirrors the shape of
+	/// [`TransformChain`](crate::spectrum::TransformChain), so the two cannot
+	/// disagree about order or membership.
+	pub spectrum_transforms: Vec<(TransformId, SpectrumTransformConfig)>,
 	pub graphic_generator: GraphicGeneratorConfig,
 }
 
@@ -104,16 +104,22 @@ macro_rules! define_spectrum_transform_config {
 				}
 			}
 
-			pub fn update(self, transform: &mut Box<dyn SpectrumTransform>) {
+			pub fn update(self, transform: &mut dyn SpectrumTransform) -> Result<(), Error> {
 				match self {
 					$(
 						Self::$variant(config) => {
 							match transform
-								.upcast_any_mut()
+								.as_any_mut()
 								.downcast_mut::<$variant>()
 							{
-								Some(transform) => transform.set_config(config),
-								None => *transform = Box::new($variant::new(config)),
+								Some(transform) => {
+									transform.set_config(config);
+									Ok(())
+								}
+								None => Err(Error::UnexpectedConfigEntry(format!(
+									"config names a {}, but the chain holds another transform",
+									stringify!($variant),
+								))),
 							}
 						}
 					)+
@@ -141,7 +147,6 @@ impl Default for Config {
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];
-		let n_transforms = transforms.len();
 		Config {
 			min_freq: 200.0,   // Low-end of human hearing
 			max_freq: 20000.0, // High-end of human hearing
@@ -152,9 +157,8 @@ impl Default for Config {
 			spectrum_transforms: transforms
 				.into_iter()
 				.enumerate()
-				.map(|(i, config)| (i as u64, config))
+				.map(|(index, config)| (TransformId(index as u64), config))
 				.collect(),
-			spectrum_transform_order: (0..n_transforms).into_iter().map(|i| i as u64).collect(),
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
 				key_log_freq: 263.74, // C
 				outer_pad: 20.0,
@@ -173,26 +177,32 @@ impl Config {
 		SpectrumParams::exp_spaced(samples, self.min_freq, self.max_freq)
 	}
 
-	pub fn unused_transform_id(&self) -> u64 {
-		let mut id = 0;
-		while self.spectrum_transforms.contains_key(&id) {
-			id += 1;
-		}
-		id
+	/// An id no transform in the chain holds.
+	pub fn unused_transform_id(&self) -> TransformId {
+		let highest = self
+			.spectrum_transforms
+			.iter()
+			.map(|(TransformId(id), _config)| *id)
+			.max();
+		TransformId(highest.map_or(0, |id| id + 1))
 	}
 
-	pub fn spectrum_transform_by_index(
-		&self,
-		index: usize,
-	) -> Result<Option<(u64, &SpectrumTransformConfig)>, Error> {
-		if let Some(&id) = self.spectrum_transform_order.get(index) {
-			let config = self
-				.spectrum_transforms
-				.get(&id)
-				.ok_or_else(|| Error::MissingTransform { id })?;
-			Ok(Some((id, config)))
-		} else {
-			Ok(None)
-		}
+	pub fn spectrum_transform(&self, id: TransformId) -> Result<&SpectrumTransformConfig, Error> {
+		self.spectrum_transforms
+			.iter()
+			.find(|(entry_id, _config)| *entry_id == id)
+			.map(|(_id, config)| config)
+			.ok_or(Error::MissingTransform { id })
+	}
+
+	pub fn spectrum_transform_mut(
+		&mut self,
+		id: TransformId,
+	) -> Result<&mut SpectrumTransformConfig, Error> {
+		self.spectrum_transforms
+			.iter_mut()
+			.find(|(entry_id, _config)| *entry_id == id)
+			.map(|(_id, config)| config)
+			.ok_or(Error::MissingTransform { id })
 	}
 }

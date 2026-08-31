@@ -63,11 +63,7 @@ impl SpectrumTransform for VolumeNormalizer {
 		spectrum
 	}
 
-	fn upcast_any_ref(&self) -> &dyn Any {
-		self
-	}
-
-	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+	fn as_any_mut(&mut self) -> &mut dyn Any {
 		self
 	}
 }

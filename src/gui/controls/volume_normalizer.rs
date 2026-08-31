@@ -21,22 +21,14 @@ pub fn new(
 
 	let controller = controller.borrow();
 	let app_controller = controller.app_controller().borrow();
-	let initial_value = match app_controller
-		.config
-		.spectrum_transforms
-		.get(&controller.id())
-	{
-		Some(SpectrumTransformConfig::VolumeNormalizer(config)) => config.rate,
-		Some(_) => {
+	let initial_value = match app_controller.config.spectrum_transform(controller.id())? {
+		SpectrumTransformConfig::VolumeNormalizer(config) => config.rate,
+		config => {
 			return Err(Error::UnexpectedConfigEntry(format!(
-				"expected volume normalizer transform with id {}",
-				controller.id()
+				"expected a VolumeNormalizer config for transform {}, found {:?}",
+				controller.id(),
+				config,
 			)));
-		}
-		None => {
-			return Err(Error::MissingTransform {
-				id: controller.id(),
-			});
 		}
 	};
 

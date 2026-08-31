@@ -138,16 +138,26 @@ fn init_menu(
 	let menu: gtk::ListBox = builder.object("control_menu").unwrap();
 
 	let control_stack: gtk::Stack = builder.object("control_stack").unwrap();
-	let source_control: gtk::Frame = builder.object("source_control").unwrap();
-	let spectrum_generator_control: gtk::Frame =
-		builder.object("spectrum_generator_control").unwrap();
-	let visualization_control: gtk::Frame = builder.object("visualization_control").unwrap();
-	let add_transform_control: gtk::Frame = builder.object("add_transform_control").unwrap();
 
-	let source_row: gtk::ListBoxRow = builder.object("source_row").unwrap();
-	let spectrum_generator_row: gtk::ListBoxRow = builder.object("spectrum_generator_row").unwrap();
-	let visualization_row: gtk::ListBoxRow = builder.object("visualization_row").unwrap();
-	let add_transform_row: gtk::ListBoxRow = builder.object("add_transform_row").unwrap();
+	let sections = MenuSections {
+		source: MenuSection {
+			row: builder.object("source_row").unwrap(),
+			control: builder.object("source_control").unwrap(),
+		},
+		spectrum_generator: MenuSection {
+			row: builder.object("spectrum_generator_row").unwrap(),
+			control: builder.object("spectrum_generator_control").unwrap(),
+		},
+		add_transform: MenuSection {
+			row: builder.object("add_transform_row").unwrap(),
+			control: builder.object("add_transform_control").unwrap(),
+		},
+		visualization: MenuSection {
+			row: builder.object("visualization_row").unwrap(),
+			control: builder.object("visualization_control").unwrap(),
+		},
+	};
+	let add_transform_row = sections.add_transform.row.clone();
 
 	let source_name: gtk::Label = builder.object("source_name").unwrap();
 	let spectrum_generator_name: gtk::Label = builder.object("spectrum_generator_name").unwrap();
@@ -186,22 +196,13 @@ fn init_menu(
 			});
 
 	let app_controller_clone = app_controller_ref.clone();
-	let add_transform_row_clone = add_transform_row.clone();
-	let add_transform_control_clone = add_transform_control.clone();
 	let control_stack_clone = control_stack.clone();
 	menu.connect_row_activated(move |_, row| {
 		on_control_row_activated(
 			&app_controller_clone.borrow(),
 			row,
 			&control_stack_clone,
-			&source_row,
-			&spectrum_generator_row,
-			&visualization_row,
-			&add_transform_row_clone,
-			&source_control,
-			&spectrum_generator_control,
-			&visualization_control,
-			&add_transform_control_clone,
+			&sections,
 		);
 	});
 
@@ -258,18 +259,27 @@ fn on_insert_spectrum_transform(
 	Ok(())
 }
 
+/// A control-menu row and the pane the control stack shows when it is selected.
+struct MenuSection {
+	row: gtk::ListBoxRow,
+	control: gtk::Frame,
+}
+
+/// The control-menu sections that are always present, in menu order. The rows
+/// for the configured spectrum transforms sit between `spectrum_generator` and
+/// `add_transform`.
+struct MenuSections {
+	source: MenuSection,
+	spectrum_generator: MenuSection,
+	add_transform: MenuSection,
+	visualization: MenuSection,
+}
+
 fn on_control_row_activated(
 	app_controller: &AppController,
 	row: &gtk::ListBoxRow,
 	control_stack: &gtk::Stack,
-	source_row: &gtk::ListBoxRow,
-	spectrum_generator_row: &gtk::ListBoxRow,
-	visualization_row: &gtk::ListBoxRow,
-	add_transform_row_clone: &gtk::ListBoxRow,
-	source_control: &gtk::Frame,
-	spectrum_generator_control: &gtk::Frame,
-	visualization_control: &gtk::Frame,
-	add_transform_control_clone: &gtk::Frame,
+	sections: &MenuSections,
 ) {
 	let transform_count = app_controller.config.spectrum_transform_order.len();
 
@@ -281,11 +291,11 @@ fn on_control_row_activated(
 	let row_index = row_index as usize;
 
 	if row_index == 0 {
-		assert_eq!(row, source_row);
-		control_stack.set_visible_child(source_control);
+		assert_eq!(row, &sections.source.row);
+		control_stack.set_visible_child(&sections.source.control);
 	} else if row_index == 1 {
-		assert_eq!(row, spectrum_generator_row);
-		control_stack.set_visible_child(spectrum_generator_control);
+		assert_eq!(row, &sections.spectrum_generator.row);
+		control_stack.set_visible_child(&sections.spectrum_generator.control);
 	} else if row_index < 2 + transform_count {
 		let transform_id = app_controller.config.spectrum_transform_order[row_index - 2];
 		let row_name = get_spectrum_transform_row_name(transform_id);
@@ -295,11 +305,11 @@ fn on_control_row_activated(
 			log::error!("control stack children out of sync with transforms");
 		}
 	} else if row_index == 2 + transform_count {
-		assert_eq!(row, add_transform_row_clone);
-		control_stack.set_visible_child(add_transform_control_clone);
+		assert_eq!(row, &sections.add_transform.row);
+		control_stack.set_visible_child(&sections.add_transform.control);
 	} else if row_index == 3 + transform_count {
-		assert_eq!(row, visualization_row);
-		control_stack.set_visible_child(visualization_control);
+		assert_eq!(row, &sections.visualization.row);
+		control_stack.set_visible_child(&sections.visualization.control);
 	} else {
 		log::error!("unknown control menu row activated: index = {}", row_index);
 	}

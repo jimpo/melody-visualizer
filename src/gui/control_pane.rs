@@ -117,7 +117,7 @@ pub fn new(
 
 	let selection = port_view.selection();
 	let controller_clone = app_controller.clone();
-	selection.connect_changed(move |selection| on_port_selected(&*controller_clone, selection));
+	selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
 
 	{
 		// Set initial control values.
@@ -155,9 +155,9 @@ fn init_menu(
 
 	// Initialize menu labels.
 	let app_controller = app_controller_ref.borrow();
-	source_name.set_label(get_source_name(&*app_controller));
-	spectrum_generator_name.set_label(get_spectrum_generator_name(&*app_controller));
-	visualization_name.set_label(get_visualization_name(&*app_controller));
+	source_name.set_label(get_source_name(&app_controller));
+	spectrum_generator_name.set_label(get_spectrum_generator_name(&app_controller));
+	visualization_name.set_label(get_visualization_name(&app_controller));
 
 	// Initialize transform rows.
 	for index in 0..app_controller.config.spectrum_transform_order.len() {
@@ -182,7 +182,7 @@ fn init_menu(
 			.pubsub()
 			.subscribe(move |_: &SourcePortChanged| {
 				let app_controller = app_controller_clone.borrow();
-				source_name_clone.set_label(get_source_name(&*app_controller));
+				source_name_clone.set_label(get_source_name(&app_controller));
 			});
 
 	let app_controller_clone = app_controller_ref.clone();
@@ -191,7 +191,7 @@ fn init_menu(
 	let control_stack_clone = control_stack.clone();
 	menu.connect_row_activated(move |_, row| {
 		on_control_row_activated(
-			&*app_controller_clone.borrow(),
+			&app_controller_clone.borrow(),
 			row,
 			&control_stack_clone,
 			&source_row,
@@ -244,7 +244,7 @@ fn on_insert_spectrum_transform(
 	let app_controller = app_controller_ref.borrow();
 	if let Some((id, config)) = app_controller.config.spectrum_transform_by_index(index)? {
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(id, config, &app_controller_ref)?;
+		let new_control = build_transform_control(id, config, app_controller_ref)?;
 		menu.insert(&new_row, 2 + index as i32);
 		control_stack.add_named(
 			&new_control,

@@ -64,7 +64,7 @@ impl Note {
 		}
 	}
 
-	fn to_half_step_count(&self) -> isize {
+	fn to_half_step_count(self) -> isize {
 		let pitch_class_half_steps = match self.pitch_class {
 			PitchClass::C => 0,
 			PitchClass::Db => 1,
@@ -189,7 +189,7 @@ mod tests {
 	#[test]
 	fn note_iterator() {
 		for note in iter(note!(A, 2)..note!(B, 3)) {
-			println!("{}", &note);
+			println!("{}", note);
 		}
 	}
 }

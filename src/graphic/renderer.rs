@@ -114,8 +114,8 @@ impl GraphicRenderer {
 			.generate(buffer, &self.spectrum_params, &self.spectrum_history)
 	}
 
-	pub fn generator(&self) -> &Box<dyn GraphicGenerator> {
-		&self.generator
+	pub fn generator(&self) -> &dyn GraphicGenerator {
+		&*self.generator
 	}
 
 	pub fn generator_mut(&mut self) -> &mut Box<dyn GraphicGenerator> {

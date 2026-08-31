@@ -12,11 +12,10 @@ pub struct DecibelConverterController {
 
 impl DecibelConverterController {
 	pub fn new(id: u64, app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
-		let controller = Rc::new(RefCell::new(DecibelConverterController {
+		Rc::new(RefCell::new(DecibelConverterController {
 			id,
 			app_controller,
-		}));
-		controller
+		}))
 	}
 
 	pub fn id(&self) -> u64 {

@@ -61,7 +61,7 @@ impl PubSub {
 		self.subscribers
 			.borrow_mut()
 			.entry(TypeId::of::<N>())
-			.or_insert_with(Vec::new)
+			.or_default()
 			.push(Subscription {
 				callback: Rc::downgrade(&callback),
 			});

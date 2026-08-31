@@ -69,7 +69,7 @@ impl SpectrumTransform for Diffuser {
 			self.buffer = SpectrumBuffer::new(spectrum.params().clone());
 			self.regenerate_window();
 		}
-		let buffer = mem::replace(&mut self.buffer, SpectrumBuffer::default());
+		let buffer = mem::take(&mut self.buffer);
 		let new_spectrum = buffer.fill(|samples, _| {
 			// Window is symmetric around origin and has odd size.
 			let offset = -((self.window.len() / 2) as isize);

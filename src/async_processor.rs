@@ -53,10 +53,10 @@ impl<T: ?Sized> AsyncProcessor<T> {
 	}
 
 	pub async fn stop(&mut self) -> Result<(), CommunicationError> {
-		if let Err(err) = self.exec_tx.close().await {
-			if !err.is_disconnected() {
-				return Err(err.into());
-			}
+		if let Err(err) = self.exec_tx.close().await
+			&& !err.is_disconnected()
+		{
+			return Err(err.into());
 		}
 		Ok(())
 	}

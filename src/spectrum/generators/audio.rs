@@ -114,8 +114,8 @@ impl WindowShape {
 		let size = xs.len();
 		match self {
 			Self::Hann => {
-				for i in 0..size {
-					xs[i] = (PI * i as f64 / (size - 1) as f64).sin().powi(2);
+				for (i, x) in xs.iter_mut().enumerate() {
+					*x = (PI * i as f64 / (size - 1) as f64).sin().powi(2);
 				}
 			}
 		}

@@ -91,7 +91,8 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 			.tuples::<(_, _, _, _)>()
 			.map(|(&b1, &b2, &b3, &b4)| f32::from_ne_bytes([b1, b2, b3, b4]) as f64);
 
-		self.analyzer.fill_spectrum(buffer, samples)
+		self.analyzer.run_dft(samples);
+		self.analyzer.fill_bins(buffer)
 	}
 
 	fn interval(&self) -> Duration {
@@ -103,8 +104,10 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 	}
 }
 
+/// The shape the samples are tapered to before the DFT, to keep a frequency
+/// between two bins from leaking across the whole spectrum.
 #[derive(Debug)]
-enum WindowShape {
+pub enum WindowShape {
 	Hann,
 }
 
@@ -121,7 +124,13 @@ impl WindowShape {
 	}
 }
 
-struct Analyzer {
+/// The DFT half of the generator: windowing and the transform, then folding the
+/// output into log-spaced power bins.
+///
+/// The two steps are separate because only one of them is ours — the transform
+/// is `rustfft`'s — and they convert different things: samples to complex bins,
+/// then complex bins to log-spaced ones.
+pub struct Analyzer {
 	window_shape: WindowShape,
 	sample_rate: u32,
 	dft: Arc<dyn Fft<f64>>,
@@ -130,6 +139,8 @@ struct Analyzer {
 }
 
 impl Analyzer {
+	/// An analyzer with no window size yet; call
+	/// [`set_window_size`](Self::set_window_size) before using it.
 	pub fn new(window_shape: WindowShape, sample_rate: u32) -> Self {
 		Analyzer {
 			window_shape,
@@ -140,6 +151,7 @@ impl Analyzer {
 		}
 	}
 
+	/// The number of samples one DFT covers.
 	pub fn window_size(&self) -> usize {
 		self.dft_window.len()
 	}
@@ -151,13 +163,12 @@ impl Analyzer {
 		self.window_shape.generate(&mut self.windowing);
 	}
 
-	fn fill_spectrum(
-		&mut self,
-		buffer: SpectrumBuffer,
-		samples: impl Iterator<Item = f64>,
-	) -> Spectrum {
-		let n = self.dft_window.len();
-
+	/// Tapers `samples` to the window shape and runs the forward DFT over them,
+	/// leaving the result in the analyzer.
+	///
+	/// Samples beyond the window size are ignored; a short iterator leaves the
+	/// tail of the previous window in place.
+	pub fn run_dft(&mut self, samples: impl Iterator<Item = f64>) {
 		let windowed_samples = samples.zip(self.windowing.iter()).map(|(a, &b)| a * b);
 
 		for (sample, dst) in windowed_samples.zip(self.dft_window.iter_mut()) {
@@ -165,6 +176,15 @@ impl Analyzer {
 		}
 
 		self.dft.process(&mut self.dft_window);
+	}
+
+	/// Folds the DFT output into `buffer`'s log-spaced power bins.
+	///
+	/// # Preconditions
+	/// - [`run_dft`](Self::run_dft) has been called since the window size last
+	///   changed.
+	pub fn fill_bins(&self, buffer: SpectrumBuffer) -> Spectrum {
+		let n = self.dft_window.len();
 
 		buffer.fill(|spectrum, spectrum_params| {
 			// Use slice::fill when stable.

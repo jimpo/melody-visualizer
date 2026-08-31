@@ -228,6 +228,160 @@ mod tests {
 
 	use rand::{RngExt, SeedableRng, rngs::StdRng};
 
+	use crate::spectrum::SpectrumParams;
+	use crate::test_support::{sample_reader, sine_wave, spectrum_params};
+
+	const SAMPLE_RATE: u32 = 48_000;
+	const WINDOW: usize = 2048;
+
+	/// A generator over `samples`, at the default window size and sample rate.
+	fn generator(samples: &[f32]) -> AudioSpectrumGenerator {
+		AudioSpectrumGenerator::new(
+			Config {
+				dft_window_size: WINDOW,
+			},
+			sample_reader(samples),
+			SAMPLE_RATE,
+		)
+	}
+
+	/// The spectrum of `components`, on a grid of `samples` bins.
+	fn analyze(components: &[(f64, f64)], samples: usize) -> Spectrum {
+		let params = spectrum_params(samples);
+		let signal = sine_wave(components, SAMPLE_RATE, WINDOW);
+		generator(&signal).generate(SpectrumBuffer::new(params))
+	}
+
+	/// The index of the largest value in the spectrum.
+	fn peak_index(spectrum: &Spectrum) -> usize {
+		spectrum
+			.values()
+			.iter()
+			.enumerate()
+			.max_by(|(_, left), (_, right)| left.partial_cmp(right).expect("no value is NaN"))
+			.expect("the spectrum has at least one bin")
+			.0
+	}
+
+	/// The width of a DFT bin: the finest frequency the analysis resolves.
+	const DFT_BIN_HZ: f64 = SAMPLE_RATE as f64 / WINDOW as f64;
+
+	#[test]
+	fn a_sine_lands_in_the_bin_for_its_frequency() {
+		// Across the range, because the log grid is much finer than a DFT bin
+		// at the bottom of it and about as fine at the top.
+		for frequency in [250.0, 440.0, 5000.0] {
+			let spectrum = analyze(&[(frequency, 1.0)], 1196);
+			let peak = spectrum.params().frequencies()[peak_index(&spectrum)];
+
+			assert!(
+				(peak - frequency).abs() <= DFT_BIN_HZ,
+				"a {frequency} Hz sine peaked at {peak} Hz, more than one DFT bin away",
+			);
+		}
+	}
+
+	#[test]
+	fn binning_preserves_the_power_below_nyquist() {
+		let signal = sine_wave(&[(1000.0, 1.0)], SAMPLE_RATE, WINDOW);
+		let spectrum = generator(&signal).generate(SpectrumBuffer::new(spectrum_params(1196)));
+
+		// The generator windows the samples before the DFT, so the power to
+		// account for is the windowed signal's.
+		let windowed_power = signal
+			.iter()
+			.enumerate()
+			.map(|(index, &sample)| {
+				let window = (PI * index as f64 / (WINDOW - 1) as f64).sin().powi(2);
+				(sample as f64 * window).powi(2)
+			})
+			.sum::<f64>()
+			/ WINDOW as f64;
+		let binned_power = spectrum.values().iter().sum::<f64>();
+
+		// Half, because the DFT of a real signal is symmetric about the Nyquist
+		// frequency and the binning loop takes only the lower half. Counting the
+		// mirror image as well would double this.
+		let expected = windowed_power / 2.0;
+		assert!(
+			(binned_power / expected - 1.0).abs() < 0.01,
+			"binned {binned_power}, expected about {expected}",
+		);
+	}
+
+	#[test]
+	fn power_is_split_between_the_bins_a_frequency_falls_between() {
+		// Two octaves per bin, so the tone sits far from either bin centre and
+		// the split is not rounding.
+		let params = Arc::new(SpectrumParams::exp_spaced(3, 200.0, 3200.0));
+		// A quarter of the way from 200 Hz to 800 Hz in log frequency.
+		let frequency = (200.0f64)
+			.log2()
+			.mul_add(0.75, (800.0f64).log2() * 0.25)
+			.exp2();
+
+		let signal = sine_wave(&[(frequency, 1.0)], SAMPLE_RATE, WINDOW);
+		let spectrum = generator(&signal).generate(SpectrumBuffer::new(params));
+
+		let values = spectrum.values();
+		let lower_share = values[0] / (values[0] + values[1]);
+		assert!(
+			(lower_share - 0.75).abs() < 0.05,
+			"the nearer bin should take three quarters of the power, took {lower_share}",
+		);
+		assert!(
+			values[2] < 1e-9,
+			"no power belongs two octaves above the tone",
+		);
+	}
+
+	#[test]
+	fn dc_has_no_log_frequency_and_reaches_no_bin() {
+		let spectrum = generator(&[1.0; WINDOW]).generate(SpectrumBuffer::new(spectrum_params(64)));
+
+		// A constant signal carries its power at DC, which the binning loop
+		// skips because zero has no logarithm. What is left is the window's own
+		// numerical leakage, orders of magnitude below the signal.
+		let binned_power = spectrum.values().iter().sum::<f64>();
+		let signal_power = 1.0;
+		assert!(
+			binned_power / signal_power < 1e-9,
+			"a constant signal put {binned_power} into the spectrum",
+		);
+	}
+
+	#[test]
+	fn silence_produces_an_empty_spectrum() {
+		let spectrum = analyze(&[], 1196);
+
+		assert!(spectrum.values().iter().all(|&value| value == 0.0));
+	}
+
+	#[test]
+	fn a_spectrum_with_no_bins_is_returned_untouched() {
+		let signal = sine_wave(&[(440.0, 1.0)], SAMPLE_RATE, WINDOW);
+
+		let spectrum = generator(&signal).generate(SpectrumBuffer::default());
+
+		assert_eq!(spectrum.values(), []);
+	}
+
+	#[test]
+	fn the_tick_interval_is_half_a_window() {
+		for window in [512, 1024, 2048, 4096] {
+			let mut generator = generator(&[]);
+			generator.set_window_size(window);
+
+			// Whole microseconds: the tick clock has no finer resolution.
+			let half_window_micros = (1_000_000 * window as u64) / (2 * SAMPLE_RATE as u64);
+			assert_eq!(
+				generator.interval(),
+				Duration::from_micros(half_window_micros),
+				"consecutive windows overlap by half",
+			);
+		}
+	}
+
 	#[test]
 	fn fft_preserves_power() {
 		let n = 2048;

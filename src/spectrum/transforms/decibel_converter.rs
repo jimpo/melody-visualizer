@@ -49,3 +49,49 @@ impl SpectrumTransform for DecibelConverter {
 		self
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use crate::test_support::spectrum;
+
+	const FLOOR: f64 = 1.0e-6;
+
+	fn converter() -> DecibelConverter {
+		DecibelConverter::new(Config { min_level: FLOOR })
+	}
+
+	#[test]
+	fn values_at_or_below_the_floor_map_to_zero() {
+		let output = converter().transform(spectrum(&[0.0, 1.0e-9, FLOOR, 1.0e-3]));
+
+		assert_eq!(&output.values()[..3], [0.0, 0.0, 0.0]);
+		assert!(output.values()[3] > 0.0);
+	}
+
+	#[test]
+	fn each_decade_above_the_floor_counts_one() {
+		let output = converter().transform(spectrum(&[1.0e-5, 1.0e-4, 1.0e-2]));
+
+		for (value, decades) in std::iter::zip(output.values(), [1.0, 2.0, 4.0]) {
+			assert!(
+				(value - decades).abs() < 1e-12,
+				"{value} decades above the floor"
+			);
+		}
+	}
+
+	#[test]
+	fn the_conversion_is_monotonic() {
+		let input = [0.0, FLOOR, 1.0e-5, 1.0e-4, 1.0e-2, 1.0, 1.0e3];
+
+		let output = converter().transform(spectrum(&input));
+
+		assert!(
+			output.values().windows(2).all(|pair| pair[0] <= pair[1]),
+			"a louder bin never converts to a quieter one: {:?}",
+			output.values(),
+		);
+	}
+}

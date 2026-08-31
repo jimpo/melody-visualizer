@@ -110,12 +110,20 @@ fn normalize(xs: &mut [f64]) {
 mod tests {
 	use super::*;
 
+	use std::iter;
+
 	use crate::test_support::{spectrum, spectrum_params};
+
+	/// A diffuser of the given width, on a grid of `samples` bins.
+	fn diffuser(width: LogHz, samples: usize) -> Diffuser {
+		let mut diffuser = Diffuser::new(Config { width });
+		diffuser.set_params(&spectrum_params(samples));
+		diffuser
+	}
 
 	#[test]
 	fn an_impulse_comes_out_as_the_window() {
-		let mut diffuser = Diffuser::new(Config { width: 1.0 });
-		diffuser.set_params(&spectrum_params(129));
+		let mut diffuser = diffuser(1.0, 129);
 		let window = diffuser.window.clone();
 
 		// A single loud bin, far enough from either end for the window to fit
@@ -130,5 +138,50 @@ mod tests {
 			window,
 			"the smoothed bin stays where it was, with the window around it",
 		);
+	}
+
+	#[test]
+	fn a_zero_width_diffuser_is_the_identity() {
+		let mut diffuser = diffuser(0.0, 5);
+
+		let output = diffuser.transform(spectrum(&[0.0, 1.0, 0.0, 2.0, 0.0]));
+
+		assert_eq!(
+			output.values(),
+			[0.0, 1.0, 0.0, 2.0, 0.0],
+			"a window narrower than a bin collapses to [1.0]",
+		);
+	}
+
+	#[test]
+	fn the_window_is_symmetric_and_sums_to_one() {
+		let diffuser = diffuser(1.0, 129);
+
+		let window = &diffuser.window;
+		assert!(window.len() > 1, "an octave spans more than one bin");
+		assert_eq!(window.len() % 2, 1, "the window is centred on a bin");
+		for (left, right) in iter::zip(window, window.iter().rev()) {
+			assert_eq!(left, right, "the window is symmetric about its centre");
+		}
+		assert!(
+			(window.iter().sum::<f64>() - 1.0).abs() < 1e-12,
+			"a window summing to 1 makes the transform a weighted average",
+		);
+	}
+
+	#[test]
+	fn total_power_is_preserved() {
+		let mut diffuser = diffuser(1.0, 129);
+		// Away from the ends, where the window would hang off the edge and the
+		// power under it would be dropped.
+		let mut values = vec![0.0; 129];
+		for (offset, value) in values[40..90].iter_mut().enumerate() {
+			*value = (offset % 7) as f64;
+		}
+		let power = values.iter().sum::<f64>();
+
+		let output = diffuser.transform(spectrum(&values));
+
+		assert!((output.values().iter().sum::<f64>() - power).abs() < 1e-12);
 	}
 }

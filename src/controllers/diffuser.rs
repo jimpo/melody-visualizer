@@ -12,8 +12,7 @@ pub struct DiffuserController {
 
 impl DiffuserController {
 	pub fn new(id: u64, app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
-		let controller = Rc::new(RefCell::new(DiffuserController { id, app_controller }));
-		controller
+		Rc::new(RefCell::new(DiffuserController { id, app_controller }))
 	}
 
 	pub fn id(&self) -> u64 {

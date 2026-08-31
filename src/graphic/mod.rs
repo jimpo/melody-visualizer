@@ -107,7 +107,7 @@ impl GraphicBuffer {
 			self.stride,
 		)?;
 
-		let result = f(&*surface);
+		let result = f(&surface);
 
 		// ImageSurface::get_data checks that there are no additional references and the data
 		// is safe to modify. If there is an error, we clone the data to avoid corruption.

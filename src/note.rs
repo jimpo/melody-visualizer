@@ -64,7 +64,7 @@ impl Note {
 		}
 	}
 
-	fn to_half_step_count(&self) -> isize {
+	fn to_half_step_count(self) -> isize {
 		let pitch_class_half_steps = match self.pitch_class {
 			PitchClass::C => 0,
 			PitchClass::Db => 1,
@@ -137,7 +137,7 @@ impl Sub for Note {
 	}
 }
 
-struct NoteIterator {
+pub struct NoteIterator {
 	next: Option<Note>,
 	end: Note,
 }
@@ -175,23 +175,6 @@ pub fn iter(range: impl RangeBounds<Note>) -> NoteIterator {
 	NoteIterator { next, end }
 }
 
-fn pitch_class_to_index(pitch_class: PitchClass) -> isize {
-	match pitch_class {
-		PitchClass::Ab => 0,
-		PitchClass::A => 1,
-		PitchClass::Bb => 2,
-		PitchClass::B => 3,
-		PitchClass::C => 4,
-		PitchClass::Db => 5,
-		PitchClass::D => 6,
-		PitchClass::Eb => 7,
-		PitchClass::E => 8,
-		PitchClass::F => 9,
-		PitchClass::Gb => 10,
-		PitchClass::G => 11,
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::iter;
@@ -206,7 +189,7 @@ mod tests {
 	#[test]
 	fn note_iterator() {
 		for note in iter(note!(A, 2)..note!(B, 3)) {
-			println!("{}", &note);
+			println!("{}", note);
 		}
 	}
 }

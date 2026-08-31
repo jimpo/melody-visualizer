@@ -1,5 +1,4 @@
 use futures::prelude::*;
-use gtk::prelude::*;
 use std::{
 	any::Any,
 	cell::RefCell,
@@ -89,7 +88,7 @@ fn start_render_timer(controller: &Rc<RefCell<VisualizationController>>) {
 				{
 					let mut controller = controller.borrow_mut();
 					new_frame_rate = controller.frame_interval_ms;
-					if !start_render(&mut *controller, controller_ref.clone()) {
+					if !start_render(&mut controller, controller_ref.clone()) {
 						log::debug!("skipping frame because last frame is still rendering");
 					}
 				};

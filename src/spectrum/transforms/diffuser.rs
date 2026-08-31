@@ -69,7 +69,7 @@ impl SpectrumTransform for Diffuser {
 			self.buffer = SpectrumBuffer::new(spectrum.params().clone());
 			self.regenerate_window();
 		}
-		let buffer = mem::replace(&mut self.buffer, SpectrumBuffer::default());
+		let buffer = mem::take(&mut self.buffer);
 		let new_spectrum = buffer.fill(|samples, _| {
 			// Window is symmetric around origin and has odd size.
 			let offset = -((self.window.len() / 2) as isize);
@@ -91,13 +91,13 @@ impl SpectrumTransform for Diffuser {
 // g takes values in [-g_offset, -g_offset + g.len())
 fn convolve(out: &mut [f64], f: &[f64], g: &[f64], g_offset: isize) {
 	assert_eq!(out.len(), f.len());
-	for n in 0..out.len() {
-		out[n] = 0.0;
-		for i in 0..g.len() {
+	for (n, out_n) in out.iter_mut().enumerate() {
+		*out_n = 0.0;
+		for (i, g_i) in g.iter().enumerate() {
 			let m = i as isize - g_offset;
 			let j = n as isize - m;
 			if j >= 0 && (j as usize) < f.len() {
-				out[n] += f[j as usize] * g[i];
+				*out_n += f[j as usize] * g_i;
 			}
 		}
 	}

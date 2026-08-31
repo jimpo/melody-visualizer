@@ -106,7 +106,6 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 
 #[derive(Debug)]
 enum WindowShape {
-	Rectangular,
 	Hann,
 }
 
@@ -114,14 +113,9 @@ impl WindowShape {
 	pub fn generate(&self, xs: &mut [f64]) {
 		let size = xs.len();
 		match self {
-			Self::Rectangular => {
-				for i in 0..size {
-					xs[i] = 1.0;
-				}
-			}
 			Self::Hann => {
-				for i in 0..size {
-					xs[i] = (PI * i as f64 / (size - 1) as f64).sin().powi(2);
+				for (i, x) in xs.iter_mut().enumerate() {
+					*x = (PI * i as f64 / (size - 1) as f64).sin().powi(2);
 				}
 			}
 		}

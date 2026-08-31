@@ -25,7 +25,7 @@ impl SpectrumBuffer {
 	}
 
 	pub fn fill(mut self, f: impl Fn(&mut [f64], &SpectrumParams)) -> Spectrum {
-		f(&mut self.data, &*self.params);
+		f(&mut self.data, &self.params);
 		Spectrum { buffer: self }
 	}
 

@@ -121,7 +121,7 @@ fn on_input_ports_changed(
 	// https://github.com/jackaudio/jack2/issues/617
 	let controller = controller_ref.clone();
 	glib::timeout_add_local(std::time::Duration::from_millis(10), move || {
-		if is_inputs_update_pending(&*controller.borrow(), update.clone()) {
+		if is_inputs_update_pending(&controller.borrow(), update.clone()) {
 			glib::ControlFlow::Continue
 		} else {
 			controller.borrow().refresh_inputs();

@@ -8,7 +8,7 @@ use std::{
 	time::{Duration, Instant},
 };
 
-use crate::async_processor::AsyncProcessor;
+use crate::async_processor::{AsyncProcessor, ExecCommand, ExecReceiver};
 use crate::error::Error;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumTransform};
 
@@ -89,7 +89,7 @@ impl SpectrumRenderer {
 struct SpectrumProcessor {
 	renderer: SpectrumRenderer,
 	current_buffer: Option<SpectrumBuffer>,
-	exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>,
+	exec_rx: ExecReceiver<SpectrumRenderer>,
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
 	next_tick_time: Instant,
@@ -97,7 +97,7 @@ struct SpectrumProcessor {
 
 impl SpectrumProcessor {
 	fn new(
-		exec_rx: mpsc::Receiver<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>,
+		exec_rx: ExecReceiver<SpectrumRenderer>,
 		spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 		spectrum_output: mpsc::Sender<Spectrum>,
 	) -> Self {
@@ -136,7 +136,7 @@ impl SpectrumProcessor {
 
 	fn handle_exec(
 		&mut self,
-		exec: Option<Box<dyn FnOnce(&mut SpectrumRenderer) + Send>>,
+		exec: Option<ExecCommand<SpectrumRenderer>>,
 	) -> Result<bool, SpectrumProcessingError> {
 		if let Some(exec) = exec {
 			exec(&mut self.renderer);

@@ -6,6 +6,10 @@ use std::{
 	rc::{Rc, Weak},
 };
 
+/// A subscriber callback with its notification type erased. `notify` only calls
+/// it with the notification type the subscriber registered for.
+type SubscriberCallback = dyn Fn(&(dyn Any + Send));
+
 pub struct PubSub {
 	subscribers: Rc<RefCell<HashMap<TypeId, Vec<Subscription>>>>,
 	notifier: Notifier,
@@ -50,23 +54,25 @@ impl PubSub {
 		N: Any + Send,
 		F: Fn(&N) + 'static,
 	{
-		let callback: Rc<Box<dyn Fn(&(dyn Any + Send))>> = Rc::new(Box::new(move |notification| {
+		let callback: Rc<SubscriberCallback> = Rc::new(move |notification| {
 			let notification = notification.downcast_ref::<N>().expect(
 				"all subscribers registered for a notification by TypeId will only be called \
 					with notifications of the type matching that TypeId",
 			);
 			callback(notification);
-		}));
+		});
 
 		self.subscribers
 			.borrow_mut()
 			.entry(TypeId::of::<N>())
-			.or_insert_with(Vec::new)
+			.or_default()
 			.push(Subscription {
 				callback: Rc::downgrade(&callback),
 			});
 
-		SubscriptionHandle(callback)
+		SubscriptionHandle {
+			_callback: callback,
+		}
 	}
 }
 
@@ -85,7 +91,7 @@ fn notify(subscribers: &mut HashMap<TypeId, Vec<Subscription>>, notification: Bo
 }
 
 struct Subscription {
-	callback: Weak<Box<dyn Fn(&(dyn Any + Send))>>,
+	callback: Weak<SubscriberCallback>,
 }
 
 impl Subscription {
@@ -128,7 +134,11 @@ impl Notifier {
 }
 
 #[derive(Clone)]
-pub struct SubscriptionHandle(Rc<Box<dyn Fn(&(dyn Any + Send))>>);
+pub struct SubscriptionHandle {
+	/// Subscriptions hold a `Weak` to this callback, so dropping the handle
+	/// unsubscribes.
+	_callback: Rc<SubscriberCallback>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -147,7 +157,7 @@ mod tests {
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
-			let handle = pubsub.subscribe(move |notification: &TestNotification| {
+			let _handle = pubsub.subscribe(move |notification: &TestNotification| {
 				assert_eq!(notification, &TestNotification);
 				*subscription_called_clone.borrow_mut() = true;
 			});
@@ -169,7 +179,7 @@ mod tests {
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
-			pubsub.subscribe(move |notification: &TestNotification| {
+			pubsub.subscribe(move |_notification: &TestNotification| {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
@@ -189,7 +199,7 @@ mod tests {
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
-			pubsub.subscribe(move |notification: &TestNotification| {
+			pubsub.subscribe(move |_notification: &TestNotification| {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 

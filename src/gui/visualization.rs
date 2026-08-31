@@ -52,7 +52,7 @@ fn on_draw(
 }
 
 fn resize_surface(graphic: &mut Graphic, x_max: i32, y_max: i32) -> Result<(), Error> {
-	let old_graphic = mem::replace(graphic, Graphic::default());
+	let old_graphic = mem::take(graphic);
 	let new_graphic = old_graphic.into_buffer().resize(x_max, y_max).draw(|ctx| {
 		// Set the new surface to all black.
 		// TODO: Attempt to modify the old surface maybe?

@@ -10,7 +10,7 @@ use crate::spectrum::{
 	Hz, SpectrumParams, SpectrumTransform,
 	generators::audio,
 	transforms::{
-		decibel_converter::{self, DecibelConverter},
+		decibel_converter::DecibelConverter,
 		diffuser::{self, Diffuser},
 		volume_normalizer::{self, VolumeNormalizer},
 	},

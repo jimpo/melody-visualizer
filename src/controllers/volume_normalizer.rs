@@ -12,11 +12,10 @@ pub struct VolumeNormalizerController {
 
 impl VolumeNormalizerController {
 	pub fn new(id: u64, app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
-		let controller = Rc::new(RefCell::new(VolumeNormalizerController {
+		Rc::new(RefCell::new(VolumeNormalizerController {
 			id,
 			app_controller,
-		}));
-		controller
+		}))
 	}
 
 	pub fn id(&self) -> u64 {

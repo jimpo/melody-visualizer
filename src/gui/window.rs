@@ -1,6 +1,7 @@
 use futures::executor;
 use gtk::Application;
 use gtk::prelude::*;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::controllers::{AppController, ControlPaneController, VisualizationController};
 use crate::error::Error;
@@ -30,12 +31,7 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 		// On shutdown we want to wait for the controller to shut down background processing
 		// threads. This must be done asynchronously to avoid deadlocking.
 		let main_context = glib::MainContext::default();
-		let controller_clone = app_controller.clone();
-		main_context.spawn_local(async move {
-			if let Err(err) = controller_clone.borrow_mut().shutdown().await {
-				log::error!("error shutting down controller: {}", err);
-			}
-		});
+		main_context.spawn_local(shutdown(app_controller.clone()));
 	});
 
 	// Apply the CSS style.
@@ -48,4 +44,19 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 	);
 
 	Ok(())
+}
+
+/// Stops the controller's background processing threads.
+///
+/// The controller stays borrowed across the await. Taking the stop futures out
+/// of the borrow would mean moving the renderers out of the controller:
+/// `AsyncProcessor::stop` disconnects one sender, so stopping a clone would
+/// leave the controller's own sender open and the renderer threads running.
+/// Nothing else borrows the controller here, because the window that owns every
+/// other borrow is already destroyed.
+#[allow(clippy::await_holding_refcell_ref)]
+async fn shutdown(controller: Rc<RefCell<AppController>>) {
+	if let Err(err) = controller.borrow_mut().shutdown().await {
+		log::error!("error shutting down controller: {}", err);
+	}
 }

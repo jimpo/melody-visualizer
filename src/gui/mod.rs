@@ -4,7 +4,6 @@ pub mod visualization;
 pub mod window;
 
 use futures::prelude::*;
-use gtk::prelude::*;
 
 use crate::error::Error;
 

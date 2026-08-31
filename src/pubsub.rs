@@ -66,7 +66,9 @@ impl PubSub {
 				callback: Rc::downgrade(&callback),
 			});
 
-		SubscriptionHandle(callback)
+		SubscriptionHandle {
+			_callback: callback,
+		}
 	}
 }
 
@@ -128,7 +130,11 @@ impl Notifier {
 }
 
 #[derive(Clone)]
-pub struct SubscriptionHandle(Rc<Box<dyn Fn(&(dyn Any + Send))>>);
+pub struct SubscriptionHandle {
+	/// Subscriptions hold a `Weak` to this callback, so dropping the handle
+	/// unsubscribes.
+	_callback: Rc<Box<dyn Fn(&(dyn Any + Send))>>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -147,7 +153,7 @@ mod tests {
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
-			let handle = pubsub.subscribe(move |notification: &TestNotification| {
+			let _handle = pubsub.subscribe(move |notification: &TestNotification| {
 				assert_eq!(notification, &TestNotification);
 				*subscription_called_clone.borrow_mut() = true;
 			});
@@ -169,7 +175,7 @@ mod tests {
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
-			pubsub.subscribe(move |notification: &TestNotification| {
+			pubsub.subscribe(move |_notification: &TestNotification| {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 
@@ -189,7 +195,7 @@ mod tests {
 			let subscription_called = Rc::new(RefCell::new(false));
 
 			let subscription_called_clone = subscription_called.clone();
-			pubsub.subscribe(move |notification: &TestNotification| {
+			pubsub.subscribe(move |_notification: &TestNotification| {
 				*subscription_called_clone.borrow_mut() = true;
 			});
 

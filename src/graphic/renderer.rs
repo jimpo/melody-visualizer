@@ -37,10 +37,6 @@ use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum GraphicProcessingError {
 	SendError(mpsc::SendError),
-	#[display("skipping tick because no buffer is available")]
-	NoBuffer,
-	#[display("received an unexpected buffer while one is already available")]
-	ReceivedUnexpectedBuffer,
 	Other(Error),
 }
 

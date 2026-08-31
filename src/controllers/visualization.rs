@@ -1,5 +1,4 @@
 use futures::prelude::*;
-use gtk::prelude::*;
 use std::{
 	any::Any,
 	cell::RefCell,

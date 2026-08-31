@@ -429,19 +429,9 @@ fn on_key_freq_change(
 	let async_update = {
 		let controller = controller_ref.borrow_mut();
 		let mut app_controller = controller.app_controller().borrow_mut();
-		match &mut app_controller.config.graphic_generator {
-			GraphicGeneratorConfig::Spiral(config) => {
-				config.key_log_freq = value.log2();
-				app_controller.update_graphic_generator()
-			}
-			config => {
-				log::error!(
-					"spiral control signal fired when other graphic generator is configured: {:?}",
-					config
-				);
-				return glib::Propagation::Proceed;
-			}
-		}
+		let GraphicGeneratorConfig::Spiral(config) = &mut app_controller.config.graphic_generator;
+		config.key_log_freq = value.log2();
+		app_controller.update_graphic_generator()
 	};
 
 	handle_async_err(async_update);

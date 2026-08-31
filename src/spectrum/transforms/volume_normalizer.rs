@@ -56,18 +56,6 @@ impl SpectrumTransform for VolumeNormalizer {
 	}
 }
 
-fn spectrum_min_value(spectrum: &mut Spectrum) -> f64 {
-	// f64 does not impl Ord because of NaN's and other weird edge cases.
-	// We also depend here on the fact that spectrum values must be positive.
-	spectrum.values().iter().fold(0.0, |min, val| {
-		if let Some(Ordering::Greater) = min.partial_cmp(val) {
-			*val
-		} else {
-			min
-		}
-	})
-}
-
 fn spectrum_max_value(spectrum: &mut Spectrum) -> f64 {
 	// f64 does not impl Ord because of NaN's and other weird edge cases.
 	// We also depend here on the fact that spectrum values must be positive.

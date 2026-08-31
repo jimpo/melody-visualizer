@@ -49,14 +49,14 @@ $ cargo nextest run -E 'test(pubsub)'    # Run the tests matching a filter expre
 $ cargo nextest run --run-ignored all    # Include the tests that need a JACK server
 ```
 
-> **`cargo test` currently aborts, even though every test passes.** Several tests
-> (`pubsub::tests::*`, `audio::tests::notification_handler_*`) drive a glib main
-> loop through `test_support::run_in_glib_main_loop`, and that loop runs on the
-> process-global default `MainContext`. libtest runs many tests in one process,
-> so the second such test either touches a value glib pinned to another thread or
-> polls a task the first test left behind. Either way glib panics inside a
-> non-unwinding context and the process takes a `SIGABRT`. nextest's
-> process-per-test isolation sidesteps it entirely.
+> **`cargo test` currently aborts, even though every test passes.** The
+> `pubsub::tests::*` tests drive a glib main loop through
+> `test_support::run_in_glib_main_loop`, and that loop runs on the process-global
+> default `MainContext`. libtest runs many tests in one process, so the second
+> such test either touches a value glib pinned to another thread or polls a task
+> the first test left behind. Either way glib panics inside a non-unwinding
+> context and the process takes a `SIGABRT`. nextest's process-per-test isolation
+> sidesteps it entirely.
 >
 > The real fix is for `run_in_glib_main_loop` to build a fresh `MainContext`
 > instead of using the thread default, and to drop its leftover yield task when

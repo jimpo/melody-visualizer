@@ -49,6 +49,9 @@ Each boundary carries exactly one kind of value. Keep it that way.
   about pixels; the visualizer never knows about audio.
 - **Controls → DSP and Visualizer**: a command, never shared mutable state. See
   [§4](#4-the-control-path).
+- **Audio engine → Controls**: a JACK event on the source's own channel. The
+  audio client knows nothing about PubSub; `AppController` republishes what it
+  reads onto the bus.
 - **Controls → GUI**: a typed event on the PubSub bus. Views subscribe; they are
   never called directly.
 
@@ -97,7 +100,8 @@ to JACK.
    `AudioProcessHandler::process`. It may not block, allocate, or lock. Its only
    job is to copy samples into the ring buffer.
 3. **JACK notification thread.** Delivers sample-rate and port events. It only
-   pushes them onto the PubSub bus, which marshals them to the GTK thread.
+   pushes them onto the source's event channel, which a task on the GTK thread
+   drains.
 4. **Spectrum thread** (`SpectrumProcessor`). Reads samples, runs the FFT, bins
    into log-spaced buckets, applies the transform chain.
 5. **Graphic thread** (`GraphicProcessor`). Keeps the recent spectra and, when
@@ -188,7 +192,8 @@ One sample's journey:
 server must already be running or startup fails** — `AppController::new()` errors
 out before the window is ever built. The client registers exactly one audio
 **input** port, allocates the ring buffer, and calls `activate_async` with the
-notification and process handlers.
+notification and process handlers. It hands back the sample reader and an
+unbounded channel of `events::Event`, both of which close when the source drops.
 
 Nothing is connected to that port at startup. The user picks a JACK output port
 in the control pane and `AppController::connect_port` asks the source to
@@ -203,7 +208,7 @@ subtracts it, forgetting it again once JACK's own list agrees.
 
 **Which port is connected is never cached.** `JackSource::connected_input`
 reads it back off the port every time, and the `ports_connected` callback
-publishes `ConnectionChanged` whenever the graph around the input port moves.
+reports `ConnectionChanged` whenever the graph around the input port moves.
 A connection made with `jack_connect`, or by any other client, therefore shows
 in the control pane exactly like one the app made itself.
 
@@ -262,11 +267,12 @@ object: if it already has the right concrete type it is reconfigured in place,
 otherwise it is replaced. This keeps a slider drag from reallocating a transform
 on every frame.
 
-### Three mechanisms, three jobs
+### Each mechanism and its job
 
 | Mechanism | Direction | Carries | Purpose |
 |---|---|---|---|
 | JACK `RingBuffer` | RT thread → spectrum thread | `f32` samples | Hot audio capture |
+| `async_channel` | JACK notification thread → GTK thread | `audio::source::events::Event` | Report what JACK did to the source |
 | `mpsc` buffer ring | Spectrum thread ↔ graphic thread | `Spectrum` / `SpectrumBuffer` | DSP → render data path |
 | `AsyncProcessor` RPC | GTK thread → a background thread, with reply | `Box<dyn FnOnce(&mut T) + Send>` | Command and configure a renderer |
 | `PubSub` | Any thread → GTK thread, fan-out | `Box<dyn Any + Send>` | Notify views that state changed |
@@ -284,15 +290,20 @@ any of a thread's input channels terminates it cleanly.
 **`PubSub`** (`pubsub.rs`) is a type-erased event bus on the GTK main loop.
 Dispatch is keyed by `TypeId`, so a subscriber for `N` only ever sees `N`.
 `Notifier` is `Clone + Send` and pushes into an unbounded `async_channel`, so
-the JACK notification thread can publish without blocking; a task on the main
-context drains it, which is why every subscriber callback runs on the GTK
-thread. Subscriptions are held **weakly**: `subscribe()` returns a
+any thread can publish without blocking; a task on the main context drains it,
+which is why every subscriber callback runs on the GTK thread. Subscriptions are held **weakly**: `subscribe()` returns a
 `SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
 prunes the subscription. This is why views stash their handles.
 
 Events today: `PortsChanged`, `ConnectionChanged` and `SampleRateChanged` (from
 JACK), `InsertSpectrumTransform` (from `AppController`), `GraphicUpdate` (from
 `VisualizationController`).
+
+The JACK three do not reach the bus from the audio module. `AudioSource::new`
+returns a channel of `events::Event`, and `AppController` spawns one task on the
+main context that drains it and republishes each event under its own type. That
+task is the only place the audio module and PubSub meet, which is what keeps
+`src/audio/` free of any GUI dependency.
 
 ### Controllers and views
 
@@ -374,8 +385,8 @@ candidate for its own change.
   frames as well as a device/port list, with the JACK client as one
   implementation. That is what makes PipeWire, ALSA, or a file source possible.
 - **The sample rate does not reach the DSP.** `SampleRateChanged` is published
-  but has no subscriber outside tests, and `AudioSpectrumGenerator` captures the
-  rate once at construction. A rate change silently mis-scales every frequency.
+  but nothing subscribes to it, and `AudioSpectrumGenerator` captures the rate
+  once at construction. A rate change silently mis-scales every frequency.
 - **`SourceType::MIDI` exists but nothing implements it.** Either build the MIDI
   source or drop the variant.
 - **A workaround is load-bearing**: unregistered port names are retired inside

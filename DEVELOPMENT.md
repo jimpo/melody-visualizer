@@ -151,7 +151,7 @@ before being copied or extended.
 
 | Where | Why |
 |---|---|
-| `controllers/control_pane.rs` — a 10 ms poll after a port-unregister event | [jack2#617](https://github.com/jackaudio/jack2/issues/617). The port list is not immediately consistent after the notification. |
+| `audio/ports.rs` — `RetiredPorts` hides an unregistered port until JACK stops listing it | [jack2#617](https://github.com/jackaudio/jack2/issues/617). The port list is not immediately consistent after the notification. |
 
 ## Key Terminology
 

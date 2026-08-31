@@ -4,7 +4,7 @@ use std::{any::Any, cell::RefCell, rc::Rc};
 use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::async_processor::AsyncProcessor;
 use crate::audio::AudioSourceController;
-use crate::audio::source::{JackSource, SourceType};
+use crate::audio::source::{JackSource, PortName, SourceType};
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
@@ -150,8 +150,13 @@ impl AppController {
 		}
 	}
 
-	pub fn jack_client(&self) -> Option<&jack::Client> {
-		self.source.as_ref().map(|source| source.client())
+	/// The ports that can be connected to the source's input, as JACK reports
+	/// them right now. Empty when there is no source.
+	pub fn available_inputs(&self) -> Vec<PortName> {
+		self.source
+			.as_ref()
+			.map(|source| source.available_inputs())
+			.unwrap_or_default()
 	}
 
 	pub fn source_port_name(&self) -> Option<&str> {

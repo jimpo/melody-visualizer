@@ -4,10 +4,10 @@
 
 use glib::Type;
 use gtk::{TreeIter, prelude::*};
-use jack::{AudioOut, PortFlags, PortSpec};
 use std::{cell::RefCell, rc::Rc};
 
-use crate::audio::source::events::InputsChanged;
+use crate::audio::source::PortName;
+use crate::audio::source::events::PortsChanged;
 use crate::controllers::app::AppController;
 use crate::pubsub::SubscriptionHandle;
 
@@ -16,7 +16,7 @@ pub const PORT_NAME_COL: i32 = 0;
 pub struct ControlPaneController {
 	app_controller: Rc<RefCell<AppController>>,
 	port_store: gtk::ListStore,
-	inputs_changed_subscription: Option<SubscriptionHandle>,
+	ports_changed_subscription: Option<SubscriptionHandle>,
 }
 
 impl ControlPaneController {
@@ -27,23 +27,19 @@ impl ControlPaneController {
 		let controller = Rc::new(RefCell::new(ControlPaneController {
 			app_controller: app_controller.clone(),
 			port_store,
-			inputs_changed_subscription: None,
+			ports_changed_subscription: None,
 		}));
 
-		// Refresh port list when JACK inputs change.
+		// Refresh port list when JACK's set of ports changes.
 		let controller_clone = controller.clone();
-		let subscription =
-			app_controller
-				.borrow()
-				.pubsub()
-				.subscribe(move |notification: &InputsChanged| {
-					on_input_ports_changed(&controller_clone, notification.clone());
-					controller_clone.borrow().refresh_inputs()
-				});
+		let subscription = app_controller
+			.borrow()
+			.pubsub()
+			.subscribe(move |_: &PortsChanged| controller_clone.borrow().refresh_inputs());
 
 		{
 			let mut controller = controller.borrow_mut();
-			controller.inputs_changed_subscription = Some(subscription);
+			controller.ports_changed_subscription = Some(subscription);
 
 			// Populate the initial port list.
 			controller.refresh_inputs();
@@ -60,21 +56,13 @@ impl ControlPaneController {
 		&self.app_controller
 	}
 
+	/// Bring the list store in line with the ports JACK offers.
+	///
+	/// Rows are added and removed rather than rebuilt so that the row the user
+	/// selected keeps its selection.
 	fn refresh_inputs(&self) {
 		let port_store = &self.port_store;
-
-		let ports = self
-			.app_controller
-			.borrow()
-			.jack_client()
-			.map(|client| {
-				client.ports(
-					None,
-					Some(AudioOut::default().jack_port_type()),
-					PortFlags::IS_OUTPUT,
-				)
-			})
-			.unwrap_or_default();
+		let ports = self.app_controller.borrow().available_inputs();
 
 		// Remove rows from ListStore.
 		if let Some(mut iter) = port_store.iter_first() {
@@ -107,63 +95,16 @@ impl ControlPaneController {
 			};
 			if !found {
 				let iter = port_store.append();
-				port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.to_value());
+				port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.as_str().to_value());
 			}
 		}
 	}
 }
 
-fn on_input_ports_changed(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	update: InputsChanged,
-) {
-	// TODO: Unfortunately, we need to poll until port_update is reflected.
-	// https://github.com/jackaudio/jack2/issues/617
-	let controller = controller_ref.clone();
-	glib::timeout_add_local(std::time::Duration::from_millis(10), move || {
-		if is_inputs_update_pending(&controller.borrow(), update.clone()) {
-			glib::ControlFlow::Continue
-		} else {
-			controller.borrow().refresh_inputs();
-			glib::ControlFlow::Break
-		}
-	});
-}
-
-fn is_inputs_update_pending(controller: &ControlPaneController, update: InputsChanged) -> bool {
-	controller
-		.app_controller
-		.borrow()
-		.jack_client()
-		.map(move |client| {
-			match update {
-				// https://github.com/jackaudio/jack2/issues/617
-				InputsChanged::Unregistered(port_id) => {
-					if let Some(port) = client.port_by_id(port_id) {
-						match port.name() {
-							Ok(name) => {
-								client.ports(None, None, PortFlags::empty()).contains(&name)
-							}
-							Err(err) => {
-								log::warn!("JACK port {} has no name: {}", port_id, err);
-								// Whatever, let's just say it's updated.
-								false
-							}
-						}
-					} else {
-						false
-					}
-				}
-				// I don't think we need to double-check any other cases.
-				_ => false,
-			}
-		})
-		.unwrap_or(false)
-}
-
-fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> String {
+fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> PortName {
 	port_store
 		.get_value(iter, PORT_NAME_COL)
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
+		.into()
 }

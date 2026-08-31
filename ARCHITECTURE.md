@@ -193,7 +193,13 @@ notification and process handlers.
 Nothing is connected to that port at startup. The user picks a JACK output port
 in the control pane, and `AppController::connect_port` calls
 `client.connect_ports_by_name`. The control pane keeps its list current by
-subscribing to `InputsChanged`.
+subscribing to `PortsChanged` and re-reading `JackSource::available_inputs`.
+
+That list is correct the moment the notification arrives. JACK keeps listing a
+port for a few milliseconds after announcing that it was unregistered
+([jack2#617](https://github.com/jackaudio/jack2/issues/617)), so the
+notification handler retires the name in `audio/ports.rs` and the enumeration
+subtracts it, forgetting it again once JACK's own list agrees.
 
 The `JackSource` trait (`audio/source.rs`) exists so a second source type could be
 slotted in behind the same interface. Only `Audio` is implemented.
@@ -278,7 +284,7 @@ thread. Subscriptions are held **weakly**: `subscribe()` returns a
 `SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
 prunes the subscription. This is why views stash their handles.
 
-Events today: `InputsChanged` and `SampleRateChanged` (from JACK),
+Events today: `PortsChanged` and `SampleRateChanged` (from JACK),
 `SourcePortChanged` and `InsertSpectrumTransform` (from `AppController`),
 `GraphicUpdate` (from `VisualizationController`).
 
@@ -311,6 +317,7 @@ waiting for the renderer threads deadlocks.
 | `lib.rs` | Library root; declares the public module tree. |
 | `main.rs` | Binary entry point; creates the `gtk::Application` and calls `gui::window::start`. |
 | `audio/mod.rs` | JACK client, RT process handler, notification handler. |
+| `audio/ports.rs` | Port enumeration, and the jack2#617 settling workaround. |
 | `audio/ring.rs` | Both ends of the capture ring, and the overrun count they share. |
 | `audio/source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
 | `async_processor.rs` | `AsyncProcessor<T>` — closure RPC to a background thread. |
@@ -365,8 +372,9 @@ candidate for its own change.
   rate once at construction. A rate change silently mis-scales every frequency.
 - **`SourceType::MIDI` exists but nothing implements it.** Either build the MIDI
   source or drop the variant.
-- **A workaround is load-bearing**: a 10 ms poll after a port-unregister
-  notification (jack2#617). It should be revisited against current upstream.
+- **A workaround is load-bearing**: unregistered port names are retired inside
+  `audio/ports.rs` because JACK keeps listing them (jack2#617). It should be
+  revisited against current upstream.
 - **JACK server shutdown is unhandled** — `NotificationHandler::shutdown` only
   logs. The app should tell the user and stop the pipeline.
 

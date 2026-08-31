@@ -66,9 +66,11 @@ impl SpectrumTransform for Diffuser {
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum {
 		let buffer = mem::take(&mut self.buffer);
 		let new_spectrum = buffer.fill(|samples, _| {
-			// Window is symmetric around origin and has odd size.
-			let offset = -((self.window.len() / 2) as isize);
-			convolve(samples, spectrum.values(), &self.window, offset);
+			// The window has odd size and is symmetric about its centre, so
+			// indexing it from its centre spans [-half, half] and leaves the
+			// weighted average sitting on the bin it was taken around.
+			let half_width = (self.window.len() / 2) as isize;
+			convolve(samples, spectrum.values(), &self.window, half_width);
 		});
 		self.buffer = spectrum.into_buffer();
 		new_spectrum
@@ -102,4 +104,31 @@ fn convolve(out: &mut [f64], f: &[f64], g: &[f64], g_offset: isize) {
 fn normalize(xs: &mut [f64]) {
 	let sum: f64 = xs.iter().sum();
 	xs.iter_mut().for_each(|x| *x /= sum);
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use crate::test_support::{spectrum, spectrum_params};
+
+	#[test]
+	fn an_impulse_comes_out_as_the_window() {
+		let mut diffuser = Diffuser::new(Config { width: 1.0 });
+		diffuser.set_params(&spectrum_params(129));
+		let window = diffuser.window.clone();
+
+		// A single loud bin, far enough from either end for the window to fit
+		// beside it.
+		let mut values = vec![0.0; 129];
+		values[64] = 1.0;
+		let output = diffuser.transform(spectrum(&values));
+
+		let half_width = window.len() / 2;
+		assert_eq!(
+			&output.values()[64 - half_width..=64 + half_width],
+			window,
+			"the smoothed bin stays where it was, with the window around it",
+		);
+	}
 }

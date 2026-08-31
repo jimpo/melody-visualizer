@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use jack::{Frames, RingBufferReader};
+use jack::Frames;
 use rustfft::{Fft, FftPlanner, num_complex::Complex64};
 use std::{
 	f64::consts::PI,
@@ -8,6 +8,7 @@ use std::{
 	time::Duration,
 };
 
+use crate::audio::SampleReader;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 
 // Half of the DFT window should overlap with the previous.
@@ -19,8 +20,11 @@ pub struct Config {
 }
 
 pub struct AudioSpectrumGenerator {
-	audio_buffer: RingBufferReader,
+	audio_buffer: SampleReader,
 	analyzer: Analyzer,
+	/// The overrun count as of the last tick that logged one. The counter itself
+	/// only ever grows; this is what turns it into a per-tick delta.
+	reported_overruns: u64,
 }
 
 impl Debug for AudioSpectrumGenerator {
@@ -32,10 +36,11 @@ impl Debug for AudioSpectrumGenerator {
 }
 
 impl AudioSpectrumGenerator {
-	pub fn new(config: Config, audio_buffer: RingBufferReader, sample_rate: Frames) -> Self {
+	pub fn new(config: Config, audio_buffer: SampleReader, sample_rate: Frames) -> Self {
 		let mut generator = AudioSpectrumGenerator {
 			audio_buffer,
 			analyzer: Analyzer::new(WindowShape::Hann, sample_rate),
+			reported_overruns: 0,
 		};
 		generator.set_window_size(config.dft_window_size);
 		generator
@@ -43,6 +48,23 @@ impl AudioSpectrumGenerator {
 
 	pub fn set_window_size(&mut self, dft_window_size: usize) {
 		self.analyzer.set_window_size(dft_window_size);
+	}
+
+	/// Log any audio the real-time thread dropped since the last tick.
+	///
+	/// The ring holds ~0.7 s of audio and this thread drains it every tick, so an
+	/// overrun means the spectrum thread stalled long enough to lose sound. That
+	/// is a starved pipeline, not a quiet one, and nothing else would show it.
+	fn report_overruns(&mut self) {
+		let overruns = self.audio_buffer.overruns();
+		if overruns > self.reported_overruns {
+			log::warn!(
+				"audio ring overrun: {} samples dropped ({} since startup)",
+				overruns - self.reported_overruns,
+				overruns,
+			);
+			self.reported_overruns = overruns;
+		}
 	}
 }
 
@@ -53,15 +75,18 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 			return buffer.fill(|_, _| ());
 		}
 
+		self.report_overruns();
+
 		let n = self.analyzer.window_size();
 
-		let available = self.audio_buffer.space();
+		let available = self.audio_buffer.buffer.space();
 		if available > n * 4 {
-			self.audio_buffer.advance(available - n * 4);
+			self.audio_buffer.buffer.advance(available - n * 4);
 		}
 
 		let samples = self
 			.audio_buffer
+			.buffer
 			.peek_iter()
 			.take(n * 4)
 			.tuples::<(_, _, _, _)>()

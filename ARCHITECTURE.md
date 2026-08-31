@@ -149,7 +149,9 @@ Nothing in the pipeline queues unbounded work.
   falls behind, `AudioSpectrumGenerator` skips forward to the newest window
   rather than draining stale audio. Latency is bounded; old samples are dropped.
   Should the ring fill anyway, the RT thread drops whole samples rather than
-  writing part of one, so the reader's byte stream stays sample-aligned.
+  writing part of one, so the reader's byte stream stays sample-aligned. It adds
+  what it dropped to an atomic counter, which the spectrum thread reads each tick
+  and logs — dropped audio would otherwise be indistinguishable from silence.
 
 ---
 
@@ -159,7 +161,9 @@ One sample's journey:
 
 1. **Capture** — `audio.rs`. `AudioProcessHandler::process` writes the input
    port's `f32` samples into a JACK `RingBuffer` (128 KiB, lock-free SPSC) as
-   native-endian bytes. Nothing else happens on the RT thread.
+   native-endian bytes through a `SampleWriter`, and bumps that writer's atomic
+   overrun count by whatever did not fit. Nothing else happens on the RT thread.
+   The matching `SampleReader` carries both ends to the spectrum thread.
 2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
    `AudioSpectrumGenerator` peeks the newest window, applies a Hann window, runs
    an `rustfft` forward DFT, and **bins the output into log-spaced frequency

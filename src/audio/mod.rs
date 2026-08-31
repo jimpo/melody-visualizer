@@ -39,11 +39,10 @@ impl AudioSourceController {
 
 		let (writer, reader) = sample_ring(buffer_size)?;
 		let retired_ports = RetiredPorts::default();
+		let notification_handler =
+			AudioNotificationHandler::new(notifier, retired_ports.clone(), input_port.name()?);
 		let client = client
-			.activate_async(
-				AudioNotificationHandler::new(notifier, retired_ports.clone()),
-				AudioProcessHandler::new(port, writer),
-			)
+			.activate_async(notification_handler, AudioProcessHandler::new(port, writer))
 			.map_err(Error::Jack)?;
 		let controller = AudioSourceController {
 			client,
@@ -57,13 +56,15 @@ impl AudioSourceController {
 struct AudioNotificationHandler {
 	notifier: Notifier,
 	retired_ports: RetiredPorts,
+	input_port_name: String,
 }
 
 impl AudioNotificationHandler {
-	fn new(notifier: Notifier, retired_ports: RetiredPorts) -> Self {
+	fn new(notifier: Notifier, retired_ports: RetiredPorts, input_port_name: String) -> Self {
 		AudioNotificationHandler {
 			notifier,
 			retired_ports,
+			input_port_name,
 		}
 	}
 
@@ -100,6 +101,24 @@ impl AudioNotificationHandler {
 			error!("failed to notify of JACK port change: {}", err);
 		}
 	}
+
+	/// Announce a connection change that touches the source's input port.
+	///
+	/// JACK reports every connection in the graph, and the ones between other
+	/// clients are none of the app's business. A port JACK can no longer name
+	/// counts as one of ours: it may be the one that was feeding the input, and
+	/// re-reading the connection costs nothing.
+	fn notify_ports_connected(&self, port_a: Option<String>, port_b: Option<String>) {
+		let touches_input = [port_a, port_b]
+			.into_iter()
+			.any(|port| port.is_none_or(|name| name == self.input_port_name));
+		if !touches_input {
+			return;
+		}
+		if let Err(err) = self.notifier.send(events::ConnectionChanged) {
+			error!("failed to notify of JACK connection change: {}", err);
+		}
+	}
 }
 
 impl NotificationHandler for AudioNotificationHandler {
@@ -130,6 +149,16 @@ impl NotificationHandler for AudioNotificationHandler {
 		self.notify_ports_changed();
 		Control::Continue
 	}
+
+	fn ports_connected(
+		&mut self,
+		client: &Client,
+		port_id_a: PortId,
+		port_id_b: PortId,
+		_are_connected: bool,
+	) {
+		self.notify_ports_connected(port_name(client, port_id_a), port_name(client, port_id_b));
+	}
 }
 
 /// The fully-qualified name of the port JACK identified by `port_id`.
@@ -159,20 +188,39 @@ impl ProcessHandler for AudioProcessHandler {
 }
 
 impl JackSource for AudioSourceController {
-	fn client(&self) -> &jack::Client {
-		self.client.as_client()
-	}
-
-	fn input_port(&self) -> &jack::Port<jack::Unowned> {
-		&self.input_port
-	}
-
 	fn source_type(&self) -> SourceType {
 		SourceType::Audio
 	}
 
+	fn sample_rate(&self) -> u32 {
+		self.client.as_client().sample_rate()
+	}
+
 	fn available_inputs(&self) -> Vec<PortName> {
 		ports::audio_outputs(self.client.as_client(), &self.retired_ports)
+	}
+
+	fn connected_input(&self) -> Option<PortName> {
+		// JACK lets several ports feed one input. The app models a single
+		// source, so it reports the first and ignores any others.
+		self.input_port
+			.get_connections()
+			.into_iter()
+			.next()
+			.map(PortName)
+	}
+
+	fn connect(&self, port: &PortName) -> Result<(), Error> {
+		self.disconnect()?;
+		self.client
+			.as_client()
+			.connect_ports_by_name(port.as_str(), &self.input_port.name()?)?;
+		Ok(())
+	}
+
+	fn disconnect(&self) -> Result<(), Error> {
+		self.client.as_client().disconnect(&self.input_port)?;
+		Ok(())
 	}
 }
 
@@ -182,7 +230,7 @@ mod tests {
 	use crate::pubsub::PubSub;
 	use crate::test_support::run_in_glib_main_loop;
 	use futures::prelude::*;
-	use source::events::{PortsChanged, SampleRateChanged};
+	use source::events::{ConnectionChanged, PortsChanged, SampleRateChanged};
 	use std::cell::RefCell;
 	use std::rc::Rc;
 
@@ -190,6 +238,12 @@ mod tests {
 	//
 	// These drive `AudioNotificationHandler`'s client-free logic methods and
 	// assert the events reach a `PubSub` subscriber. No JACK server required.
+
+	const INPUT_PORT: &str = "Melody Visualizer:input";
+
+	fn test_handler(notifier: crate::pubsub::Notifier) -> AudioNotificationHandler {
+		AudioNotificationHandler::new(notifier, RetiredPorts::default(), INPUT_PORT.to_string())
+	}
 
 	#[test]
 	fn notification_handler_forwards_sample_rate() {
@@ -202,7 +256,7 @@ mod tests {
 				*received_clone.borrow_mut() = Some(event.clone());
 			});
 
-			let handler = AudioNotificationHandler::new(pubsub.notifier(), RetiredPorts::default());
+			let handler = test_handler(pubsub.notifier());
 			handler.notify_sample_rate(48_000);
 			yield_rx.next().await.unwrap();
 
@@ -221,7 +275,7 @@ mod tests {
 				received_clone.borrow_mut().push(event.clone());
 			});
 
-			let handler = AudioNotificationHandler::new(pubsub.notifier(), RetiredPorts::default());
+			let handler = test_handler(pubsub.notifier());
 			handler.notify_port_registration(Some("tone:output1".to_string()), true);
 			handler.notify_port_registration(Some("tone:output1".to_string()), false);
 			handler.notify_ports_changed();
@@ -239,7 +293,11 @@ mod tests {
 	fn notification_handler_retires_an_unregistered_port() {
 		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 		let retired_ports = RetiredPorts::default();
-		let handler = AudioNotificationHandler::new(pubsub.notifier(), retired_ports.clone());
+		let handler = AudioNotificationHandler::new(
+			pubsub.notifier(),
+			retired_ports.clone(),
+			INPUT_PORT.to_string(),
+		);
 
 		handler.notify_port_registration(Some("tone:output1".to_string()), false);
 
@@ -248,6 +306,34 @@ mod tests {
 			[],
 			"an unregistered port is hidden from the moment JACK announces it",
 		);
+	}
+
+	#[test]
+	fn notification_handler_forwards_only_its_own_connections() {
+		run_in_glib_main_loop(|mut yield_rx| async move {
+			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
+			let received = Rc::new(RefCell::new(0));
+
+			let received_clone = received.clone();
+			let _handle = pubsub.subscribe(move |_: &ConnectionChanged| {
+				*received_clone.borrow_mut() += 1;
+			});
+
+			let handler = test_handler(pubsub.notifier());
+			let tone = || Some("tone:output1".to_string());
+			handler.notify_ports_connected(tone(), Some(INPUT_PORT.to_string()));
+			handler.notify_ports_connected(Some(INPUT_PORT.to_string()), tone());
+			handler.notify_ports_connected(tone(), Some("system:playback_1".to_string()));
+			handler.notify_ports_connected(tone(), None);
+			yield_rx.next().await.unwrap();
+
+			assert_eq!(
+				*received.borrow(),
+				3,
+				"a connection is reported when it names the input port, or a port \
+				 JACK could not name — but not when it is between two other clients",
+			);
+		});
 	}
 
 	// --- Integration: real JACK server ------------------------------------
@@ -268,24 +354,32 @@ mod tests {
 			.expect("should connect to the running JACK server and register its input port");
 
 		assert_eq!(controller.source_type(), SourceType::Audio);
-		// The input port was really registered with the server, so it has a name.
-		assert!(
-			controller.input_port().name().is_ok(),
-			"registered input port should have a name",
-		);
+		assert!(controller.sample_rate() > 0, "the server has a sample rate");
+
 		// Every JACK server has capture ports, and they are what the app connects
 		// to its input. Its own input port is not among them: it is an input.
 		let inputs = controller.available_inputs();
+		let capture = inputs
+			.iter()
+			.find(|port| port.as_str().starts_with("system:capture_"))
+			.unwrap_or_else(|| {
+				panic!("the server's capture ports should be offered as inputs, got {inputs:?}")
+			})
+			.clone();
 		assert!(
-			inputs
-				.iter()
-				.any(|port| port.as_str().starts_with("system:capture_")),
-			"the server's capture ports should be offered as inputs, got {:?}",
-			inputs,
-		);
-		assert!(
-			!inputs.contains(&PortName(controller.input_port().name().unwrap())),
+			!inputs.contains(&PortName(TITLE.to_string() + ":input")),
 			"the source's own input port is not something it can connect to",
 		);
+
+		// Connection state is read back from the server, not remembered.
+		assert_eq!(
+			controller.connected_input(),
+			None,
+			"nothing is connected yet"
+		);
+		controller.connect(&capture).expect("should connect");
+		assert_eq!(controller.connected_input(), Some(capture));
+		controller.disconnect().expect("should disconnect");
+		assert_eq!(controller.connected_input(), None);
 	}
 }

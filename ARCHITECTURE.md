@@ -191,9 +191,15 @@ out before the window is ever built. The client registers exactly one audio
 notification and process handlers.
 
 Nothing is connected to that port at startup. The user picks a JACK output port
-in the control pane, and `AppController::connect_port` calls
-`client.connect_ports_by_name`. The control pane keeps its list current by
-subscribing to `PortsChanged` and re-reading `JackSource::available_inputs`.
+in the control pane and `AppController::connect_port` asks the source to
+connect it. The control pane keeps its list current by subscribing to
+`PortsChanged` and re-reading `JackSource::available_inputs`.
+
+**Which port is connected is never cached.** `JackSource::connected_input`
+reads it back off the port every time, and the `ports_connected` callback
+publishes `ConnectionChanged` whenever the graph around the input port moves.
+A connection made with `jack_connect`, or by any other client, therefore shows
+in the control pane exactly like one the app made itself.
 
 That list is correct the moment the notification arrives. JACK keeps listing a
 port for a few milliseconds after announcing that it was unregistered
@@ -284,9 +290,9 @@ thread. Subscriptions are held **weakly**: `subscribe()` returns a
 `SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
 prunes the subscription. This is why views stash their handles.
 
-Events today: `PortsChanged` and `SampleRateChanged` (from JACK),
-`SourcePortChanged` and `InsertSpectrumTransform` (from `AppController`),
-`GraphicUpdate` (from `VisualizationController`).
+Events today: `PortsChanged`, `ConnectionChanged` and `SampleRateChanged` (from
+JACK), `InsertSpectrumTransform` (from `AppController`), `GraphicUpdate` (from
+`VisualizationController`).
 
 ### Controllers and views
 
@@ -361,11 +367,11 @@ candidate for its own change.
 
 ### Audio engine client
 
-- **JACK types leak across component boundaries.** `JackSource` exposes
-  `&jack::Client`; `AppController::connect_port` and `ControlPaneController`
-  call JACK directly; `AudioSpectrumGenerator` reads a `jack::RingBufferReader`
-  of raw bytes. The target is an **audio-engine-agnostic input port**: a trait
-  that yields `f32` frames plus a device/port list, with the JACK client as one
+- **One JACK type still leaks across a component boundary.**
+  `AudioSpectrumGenerator` reads a `jack::RingBufferReader` of raw bytes off
+  `SampleReader`. Ports and connections are behind `JackSource` now, but the
+  target is an **audio-engine-agnostic input port**: a trait that yields `f32`
+  frames as well as a device/port list, with the JACK client as one
   implementation. That is what makes PipeWire, ALSA, or a file source possible.
 - **The sample rate does not reach the DSP.** `SampleRateChanged` is published
   but has no subscriber outside tests, and `AudioSpectrumGenerator` captures the

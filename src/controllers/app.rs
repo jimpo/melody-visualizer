@@ -16,7 +16,6 @@ const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
 pub struct AppController {
 	pub config: Config,
 	source: Option<Box<dyn JackSource>>,
-	source_port_name: Option<String>,
 	pubsub: PubSub,
 	notifier: Notifier,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
@@ -45,7 +44,6 @@ impl AppController {
 		let mut controller = AppController {
 			config: Config::default(),
 			source: None,
-			source_port_name: None,
 			pubsub,
 			notifier,
 			graphic_renderer,
@@ -77,17 +75,13 @@ impl AppController {
 	fn activate_source(&mut self) -> impl Future<Output = Result<(), Error>> + use<> {
 		// Drop old source first in case new source cannot be constructed.
 		self.source = None;
-		if self.source_port_name.is_some() {
-			self.source_port_name = None;
-			self.notify_and_log_err(events::SourcePortChanged);
-		}
 
 		let (new_source, new_generator) = match self.config.spectrum_generator {
 			SpectrumGeneratorConfig::Audio(ref config) => {
 				match AudioSourceController::new(BUFFER_SIZE, self.pubsub.notifier()) {
 					Ok((source, reader)) => {
 						log::debug!("Audio source activated");
-						let sample_rate = source.client().sample_rate() as jack::Frames;
+						let sample_rate = source.sample_rate();
 						let generator =
 							AudioSpectrumGenerator::new(config.clone(), reader, sample_rate);
 						(Box::new(source), Box::new(generator))
@@ -159,32 +153,32 @@ impl AppController {
 			.unwrap_or_default()
 	}
 
-	pub fn source_port_name(&self) -> Option<&str> {
-		self.source_port_name.as_ref().map(AsRef::as_ref)
+	/// The port feeding the source's input, as JACK reports it now. Nothing is
+	/// cached, so a connection made outside the app is reported too.
+	pub fn connected_input(&self) -> Option<PortName> {
+		self.source
+			.as_ref()
+			.and_then(|source| source.connected_input())
 	}
 
-	pub fn connect_port(&mut self, output_port: Option<String>) -> Result<(), Error> {
-		if let Some(ref source) = self.source {
-			let client = source.client();
-			let input_port = source.input_port();
-
-			client.disconnect(input_port)?;
-			self.source_port_name = None;
-			self.notify_and_log_err(events::SourcePortChanged);
-
-			if let Some(output_port_name) = output_port {
-				client.connect_ports_by_name(&output_port_name, &input_port.name()?)?;
-				log::debug!("Connected port {}", output_port_name);
-				self.source_port_name = Some(output_port_name);
-				self.notify_and_log_err(events::SourcePortChanged);
-			} else {
+	/// Feed the source's input from `output_port`, or from nothing at all.
+	///
+	/// The change is announced by JACK, not from here: the server calls back
+	/// with a [`ConnectionChanged`](crate::audio::source::events::ConnectionChanged)
+	/// once the graph really holds it.
+	pub fn connect_port(&self, output_port: Option<PortName>) -> Result<(), Error> {
+		let source = self.source.as_ref().ok_or(Error::NoJackSource)?;
+		match output_port {
+			Some(output_port) => {
+				source.connect(&output_port)?;
+				log::debug!("Connected port {}", output_port);
+			}
+			None => {
+				source.disconnect()?;
 				log::debug!("Disconnected all ports");
 			}
-
-			Ok(())
-		} else {
-			Err(Error::NoJackSource)
 		}
+		Ok(())
 	}
 
 	pub fn sync_spectrum_transforms(&self) -> impl Future<Output = Result<(), Error>> + use<> {
@@ -239,9 +233,6 @@ impl AppController {
 }
 
 pub mod events {
-	#[derive(Debug, Clone)]
-	pub struct SourcePortChanged;
-
 	#[derive(Debug, Clone)]
 	pub struct InsertSpectrumTransform {
 		pub index: usize,

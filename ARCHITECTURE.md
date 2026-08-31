@@ -184,7 +184,7 @@ One sample's journey:
 
 ### JACK client and port wiring
 
-`AudioSourceController::new` opens the client with `NO_START_SERVER`, so **a JACK
+`AudioSource::new` opens the client with `NO_START_SERVER`, so **a JACK
 server must already be running or startup fails** — `AppController::new()` errors
 out before the window is ever built. The client registers exactly one audio
 **input** port, allocates the ring buffer, and calls `activate_async` with the
@@ -195,17 +195,17 @@ in the control pane and `AppController::connect_port` asks the source to
 connect it. The control pane keeps its list current by subscribing to
 `PortsChanged` and re-reading `JackSource::available_inputs`.
 
-**Which port is connected is never cached.** `JackSource::connected_input`
-reads it back off the port every time, and the `ports_connected` callback
-publishes `ConnectionChanged` whenever the graph around the input port moves.
-A connection made with `jack_connect`, or by any other client, therefore shows
-in the control pane exactly like one the app made itself.
-
 That list is correct the moment the notification arrives. JACK keeps listing a
 port for a few milliseconds after announcing that it was unregistered
 ([jack2#617](https://github.com/jackaudio/jack2/issues/617)), so the
 notification handler retires the name in `audio/ports.rs` and the enumeration
 subtracts it, forgetting it again once JACK's own list agrees.
+
+**Which port is connected is never cached.** `JackSource::connected_input`
+reads it back off the port every time, and the `ports_connected` callback
+publishes `ConnectionChanged` whenever the graph around the input port moves.
+A connection made with `jack_connect`, or by any other client, therefore shows
+in the control pane exactly like one the app made itself.
 
 The `JackSource` trait (`audio/source.rs`) exists so a second source type could be
 slotted in behind the same interface. Only `Audio` is implemented.

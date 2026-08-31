@@ -18,13 +18,13 @@ pub use ring::SampleReader;
 
 const TITLE: &str = "Melody Visualizer";
 
-pub struct AudioSourceController {
+pub struct AudioSource {
 	client: jack::AsyncClient<AudioNotificationHandler, AudioProcessHandler>,
 	input_port: jack::Port<jack::Unowned>,
 	retired_ports: RetiredPorts,
 }
 
-impl AudioSourceController {
+impl AudioSource {
 	pub fn new(buffer_size: usize, notifier: Notifier) -> Result<(Self, SampleReader), Error> {
 		let (client, status) =
 			jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER).map_err(Error::Jack)?;
@@ -44,12 +44,12 @@ impl AudioSourceController {
 		let client = client
 			.activate_async(notification_handler, AudioProcessHandler::new(port, writer))
 			.map_err(Error::Jack)?;
-		let controller = AudioSourceController {
+		let source = AudioSource {
 			client,
 			input_port,
 			retired_ports,
 		};
-		Ok((controller, reader))
+		Ok((source, reader))
 	}
 }
 
@@ -187,7 +187,7 @@ impl ProcessHandler for AudioProcessHandler {
 	}
 }
 
-impl JackSource for AudioSourceController {
+impl JackSource for AudioSource {
 	fn source_type(&self) -> SourceType {
 		SourceType::Audio
 	}
@@ -241,7 +241,7 @@ mod tests {
 
 	const INPUT_PORT: &str = "Melody Visualizer:input";
 
-	fn test_handler(notifier: crate::pubsub::Notifier) -> AudioNotificationHandler {
+	fn test_handler(notifier: Notifier) -> AudioNotificationHandler {
 		AudioNotificationHandler::new(notifier, RetiredPorts::default(), INPUT_PORT.to_string())
 	}
 
@@ -347,18 +347,18 @@ mod tests {
 
 	#[test]
 	#[ignore = "requires a running JACK server (e.g. `jackd -d dummy`)"]
-	fn audio_source_controller_connects_to_running_jack_server() {
+	fn audio_source_connects_to_running_jack_server() {
 		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 
-		let (controller, _reader) = AudioSourceController::new(128 * 1024, pubsub.notifier())
+		let (source, _reader) = AudioSource::new(128 * 1024, pubsub.notifier())
 			.expect("should connect to the running JACK server and register its input port");
 
-		assert_eq!(controller.source_type(), SourceType::Audio);
-		assert!(controller.sample_rate() > 0, "the server has a sample rate");
+		assert_eq!(source.source_type(), SourceType::Audio);
+		assert!(source.sample_rate() > 0, "the server has a sample rate");
 
 		// Every JACK server has capture ports, and they are what the app connects
 		// to its input. Its own input port is not among them: it is an input.
-		let inputs = controller.available_inputs();
+		let inputs = source.available_inputs();
 		let capture = inputs
 			.iter()
 			.find(|port| port.as_str().starts_with("system:capture_"))
@@ -372,14 +372,10 @@ mod tests {
 		);
 
 		// Connection state is read back from the server, not remembered.
-		assert_eq!(
-			controller.connected_input(),
-			None,
-			"nothing is connected yet"
-		);
-		controller.connect(&capture).expect("should connect");
-		assert_eq!(controller.connected_input(), Some(capture));
-		controller.disconnect().expect("should disconnect");
-		assert_eq!(controller.connected_input(), None);
+		assert_eq!(source.connected_input(), None, "nothing is connected yet");
+		source.connect(&capture).expect("should connect");
+		assert_eq!(source.connected_input(), Some(capture));
+		source.disconnect().expect("should disconnect");
+		assert_eq!(source.connected_input(), None);
 	}
 }

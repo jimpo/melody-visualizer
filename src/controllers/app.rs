@@ -3,7 +3,7 @@ use std::{any::Any, cell::RefCell, rc::Rc};
 
 use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::async_processor::AsyncProcessor;
-use crate::audio::AudioSourceController;
+use crate::audio::AudioSource;
 use crate::audio::source::{JackSource, PortName, SourceType};
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
@@ -78,7 +78,7 @@ impl AppController {
 
 		let (new_source, new_generator) = match self.config.spectrum_generator {
 			SpectrumGeneratorConfig::Audio(ref config) => {
-				match AudioSourceController::new(BUFFER_SIZE, self.pubsub.notifier()) {
+				match AudioSource::new(BUFFER_SIZE, self.pubsub.notifier()) {
 					Ok((source, reader)) => {
 						log::debug!("Audio source activated");
 						let sample_rate = source.sample_rate();

@@ -1,19 +1,5 @@
-mod app;
-mod async_processor;
-mod audio;
-mod controllers;
-mod error;
-mod graphic;
-mod gui;
-mod note;
-mod pubsub;
-mod source;
-mod spectrum;
-#[cfg(test)]
-mod test_support;
-mod traits;
-
 use gio::prelude::*;
+use melody_visualizer::gui;
 
 const APP_NAME: &str = "info.jimpo.melody-visualizer";
 

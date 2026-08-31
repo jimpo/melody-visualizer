@@ -23,5 +23,12 @@ palette = "0.7"
 rustfft = "6"
 async-channel = "2.5.0"
 
+[features]
+# Exposes `test_support` to dependents. The self dev-dependency below turns it
+# on for this crate's own test and bench targets, so `tests/` can use the
+# fixtures without any extra flag on the command line.
+testing = []
+
 [dev-dependencies]
+melody-visualizer = { path = ".", features = ["testing"] }
 rand = "0.10"

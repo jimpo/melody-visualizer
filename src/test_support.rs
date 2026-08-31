@@ -1,6 +1,7 @@
 //! Shared test-only helpers.
 //!
-//! This module is compiled only under `#[cfg(test)]` (see `main.rs`).
+//! Compiled for the crate's own tests, and for dependents that enable the
+//! `testing` feature.
 
 use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;

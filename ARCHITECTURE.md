@@ -302,7 +302,8 @@ waiting for the renderer threads deadlocks.
 
 | Path | Responsibility |
 |---|---|
-| `main.rs` | Entry point; creates the `gtk::Application`. |
+| `lib.rs` | Library root; declares the public module tree. |
+| `main.rs` | Binary entry point; creates the `gtk::Application` and calls `gui::window::start`. |
 | `audio.rs` | JACK client, RT process handler, notification handler. |
 | `source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
 | `async_processor.rs` | `AsyncProcessor<T>` — closure RPC to a background thread. |
@@ -315,7 +316,7 @@ waiting for the renderer threads deadlocks.
 | `graphic/` | `Graphic`/`GraphicBuffer` (cairo), graphic thread, generators. |
 | `traits.rs` | `Configurable` — build or update a component from its config. |
 | `error.rs` | Crate-wide `Error`. |
-| `test_support.rs` | Glib main-loop driver for async tests. |
+| `test_support.rs` | Glib main-loop driver for async tests. Public under the `testing` feature. |
 
 ---
 

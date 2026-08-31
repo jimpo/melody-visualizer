@@ -154,7 +154,7 @@ fn start_render(
 	}
 }
 
-mod events {
+pub mod events {
 	#[derive(Debug, Clone)]
 	pub struct GraphicUpdate;
 }

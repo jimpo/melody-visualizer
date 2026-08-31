@@ -32,6 +32,12 @@ cargo run                      # Needs a display and a running JACK server
 
 ## Testing
 
+Unit tests live in `#[cfg(test)]` modules under `src/`; integration tests live in
+`tests/` and reach the crate as a library (`use melody_visualizer::…`). The
+`test_support` fixtures are public to `tests/` and `benches/` through the
+`testing` feature, which the self dev-dependency in `Cargo.toml` enables for
+those targets — no extra flag is needed on the command line.
+
 Run the tests with [cargo-nextest](https://nexte.st/). It executes each test in
 its own process, which this crate **requires** — see the warning below.
 
@@ -72,7 +78,7 @@ $ cargo fmt --check                            # verify without rewriting
 $ cargo clippy --all-targets
 ```
 
-Formatting is clean today. Clippy is **not**: the crate has ~69 warnings, mostly
+Formatting is clean today. Clippy is **not**: the crate has ~54 warnings, mostly
 dead code from abandoned directions. Do not add `-D warnings` to your loop until
 that backlog is cleared; do keep your own changes warning-free.
 

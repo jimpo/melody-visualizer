@@ -67,7 +67,7 @@ to JACK.
 ```
   ┌───────────────────────┐        ring buffer         ┌──────────────────────┐
   │  JACK RT thread       │      (lock-free SPSC)      │  Spectrum thread     │
-  │  audio.rs             │ ──────── f32 samples ────▶ │  spectrum/renderer   │
+  │  audio/               │ ──────── f32 samples ────▶ │  spectrum/renderer   │
   │  ProcessHandler       │                            │  FFT + transforms    │
   │  never blocks/allocs  │                            │  ▲ TICK = the clock  │
   └───────────────────────┘                            └──────────────────────┘
@@ -159,7 +159,7 @@ Nothing in the pipeline queues unbounded work.
 
 One sample's journey:
 
-1. **Capture** — `audio.rs`. `AudioProcessHandler::process` writes the input
+1. **Capture** — `audio/`. `AudioProcessHandler::process` writes the input
    port's `f32` samples into a JACK `RingBuffer` (128 KiB, lock-free SPSC) as
    native-endian bytes through a `SampleWriter`, and bumps that writer's atomic
    overrun count by whatever did not fit. Nothing else happens on the RT thread.
@@ -184,18 +184,30 @@ One sample's journey:
 
 ### JACK client and port wiring
 
-`AudioSourceController::new` opens the client with `NO_START_SERVER`, so **a JACK
+`AudioSource::new` opens the client with `NO_START_SERVER`, so **a JACK
 server must already be running or startup fails** — `AppController::new()` errors
 out before the window is ever built. The client registers exactly one audio
 **input** port, allocates the ring buffer, and calls `activate_async` with the
 notification and process handlers.
 
 Nothing is connected to that port at startup. The user picks a JACK output port
-in the control pane, and `AppController::connect_port` calls
-`client.connect_ports_by_name`. The control pane keeps its list current by
-subscribing to `InputsChanged`.
+in the control pane and `AppController::connect_port` asks the source to
+connect it. The control pane keeps its list current by subscribing to
+`PortsChanged` and re-reading `JackSource::available_inputs`.
 
-The `JackSource` trait (`source.rs`) exists so a second source type could be
+That list is correct the moment the notification arrives. JACK keeps listing a
+port for a few milliseconds after announcing that it was unregistered
+([jack2#617](https://github.com/jackaudio/jack2/issues/617)), so the
+notification handler retires the name in `audio/ports.rs` and the enumeration
+subtracts it, forgetting it again once JACK's own list agrees.
+
+**Which port is connected is never cached.** `JackSource::connected_input`
+reads it back off the port every time, and the `ports_connected` callback
+publishes `ConnectionChanged` whenever the graph around the input port moves.
+A connection made with `jack_connect`, or by any other client, therefore shows
+in the control pane exactly like one the app made itself.
+
+The `JackSource` trait (`audio/source.rs`) exists so a second source type could be
 slotted in behind the same interface. Only `Audio` is implemented.
 
 ### Buffer recycling
@@ -278,9 +290,9 @@ thread. Subscriptions are held **weakly**: `subscribe()` returns a
 `SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
 prunes the subscription. This is why views stash their handles.
 
-Events today: `InputsChanged` and `SampleRateChanged` (from JACK),
-`SourcePortChanged` and `InsertSpectrumTransform` (from `AppController`),
-`GraphicUpdate` (from `VisualizationController`).
+Events today: `PortsChanged`, `ConnectionChanged` and `SampleRateChanged` (from
+JACK), `InsertSpectrumTransform` (from `AppController`), `GraphicUpdate` (from
+`VisualizationController`).
 
 ### Controllers and views
 
@@ -310,8 +322,10 @@ waiting for the renderer threads deadlocks.
 |---|---|
 | `lib.rs` | Library root; declares the public module tree. |
 | `main.rs` | Binary entry point; creates the `gtk::Application` and calls `gui::window::start`. |
-| `audio.rs` | JACK client, RT process handler, notification handler. |
-| `source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
+| `audio/mod.rs` | JACK client, RT process handler, notification handler. |
+| `audio/ports.rs` | Port enumeration, and the jack2#617 settling workaround. |
+| `audio/ring.rs` | Both ends of the capture ring, and the overrun count they share. |
+| `audio/source.rs` | `JackSource` trait, `SourceType`, JACK event types. |
 | `async_processor.rs` | `AsyncProcessor<T>` — closure RPC to a background thread. |
 | `pubsub.rs` | Type-erased event bus (`PubSub`, `Notifier`). |
 | `note.rs` | Musical note and pitch-class math; the `note!` macro. |
@@ -353,19 +367,20 @@ candidate for its own change.
 
 ### Audio engine client
 
-- **JACK types leak across component boundaries.** `JackSource` exposes
-  `&jack::Client`; `AppController::connect_port` and `ControlPaneController`
-  call JACK directly; `AudioSpectrumGenerator` reads a `jack::RingBufferReader`
-  of raw bytes. The target is an **audio-engine-agnostic input port**: a trait
-  that yields `f32` frames plus a device/port list, with the JACK client as one
+- **One JACK type still leaks across a component boundary.**
+  `AudioSpectrumGenerator` reads a `jack::RingBufferReader` of raw bytes off
+  `SampleReader`. Ports and connections are behind `JackSource` now, but the
+  target is an **audio-engine-agnostic input port**: a trait that yields `f32`
+  frames as well as a device/port list, with the JACK client as one
   implementation. That is what makes PipeWire, ALSA, or a file source possible.
 - **The sample rate does not reach the DSP.** `SampleRateChanged` is published
   but has no subscriber outside tests, and `AudioSpectrumGenerator` captures the
   rate once at construction. A rate change silently mis-scales every frequency.
 - **`SourceType::MIDI` exists but nothing implements it.** Either build the MIDI
   source or drop the variant.
-- **A workaround is load-bearing**: a 10 ms poll after a port-unregister
-  notification (jack2#617). It should be revisited against current upstream.
+- **A workaround is load-bearing**: unregistered port names are retired inside
+  `audio/ports.rs` because JACK keeps listing them (jack2#617). It should be
+  revisited against current upstream.
 - **JACK server shutdown is unhandled** — `NotificationHandler::shutdown` only
   logs. The app should tell the user and stop the pipeline.
 

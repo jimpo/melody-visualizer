@@ -9,17 +9,16 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
 use crate::app::config::{
 	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
 };
+use crate::audio::source::events::ConnectionChanged;
+use crate::audio::source::{PortName, SourceType};
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
-	VolumeNormalizerController,
-	app::events::{InsertSpectrumTransform, SourcePortChanged},
-	control_pane::PORT_NAME_COL,
+	VolumeNormalizerController, app::events::InsertSpectrumTransform, control_pane::PORT_NAME_COL,
 };
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
-use crate::source::SourceType;
 use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
@@ -165,7 +164,7 @@ fn init_menu(
 
 	// Initialize menu labels.
 	let app_controller = app_controller_ref.borrow();
-	source_name.set_label(get_source_name(&app_controller));
+	source_name.set_label(&get_source_name(&app_controller));
 	spectrum_generator_name.set_label(get_spectrum_generator_name(&app_controller));
 	visualization_name.set_label(get_visualization_name(&app_controller));
 
@@ -190,9 +189,9 @@ fn init_menu(
 	let source_name_subscription =
 		app_controller
 			.pubsub()
-			.subscribe(move |_: &SourcePortChanged| {
+			.subscribe(move |_: &ConnectionChanged| {
 				let app_controller = app_controller_clone.borrow();
-				source_name_clone.set_label(get_source_name(&app_controller));
+				source_name_clone.set_label(&get_source_name(&app_controller));
 			});
 
 	let app_controller_clone = app_controller_ref.clone();
@@ -370,17 +369,17 @@ fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSel
 	let port_name = selection
 		.selected()
 		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
-	let mut app_controller = app_controller.borrow_mut();
-	if let Err(err) = app_controller.connect_port(port_name) {
+	if let Err(err) = app_controller.borrow().connect_port(port_name) {
 		error_dialog(err);
 	}
 }
 
-fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> String {
+fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> PortName {
 	port_store
 		.get_value(iter, PORT_NAME_COL)
 		.get::<String>()
 		.expect("values in PORT_NAME_COL are strings")
+		.into()
 }
 
 // fn on_source_type_toggled(
@@ -474,8 +473,10 @@ fn build_source_type_selectors(
 	selectors
 }
 
-fn get_source_name(app_controller: &AppController) -> &str {
-	app_controller.source_port_name().unwrap_or("None")
+fn get_source_name(app_controller: &AppController) -> String {
+	app_controller
+		.connected_input()
+		.map_or_else(|| "None".to_string(), |port| port.0)
 }
 
 fn get_spectrum_generator_name(app_controller: &AppController) -> &str {

@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use jack::Frames;
 use rustfft::{Fft, FftPlanner, num_complex::Complex64};
 use std::{
 	f64::consts::PI,
@@ -36,7 +35,7 @@ impl Debug for AudioSpectrumGenerator {
 }
 
 impl AudioSpectrumGenerator {
-	pub fn new(config: Config, audio_buffer: SampleReader, sample_rate: Frames) -> Self {
+	pub fn new(config: Config, audio_buffer: SampleReader, sample_rate: u32) -> Self {
 		let mut generator = AudioSpectrumGenerator {
 			audio_buffer,
 			analyzer: Analyzer::new(WindowShape::Hann, sample_rate),
@@ -124,14 +123,14 @@ impl WindowShape {
 
 struct Analyzer {
 	window_shape: WindowShape,
-	sample_rate: Frames,
+	sample_rate: u32,
 	dft: Arc<dyn Fft<f64>>,
 	dft_window: Vec<Complex64>,
 	windowing: Vec<f64>,
 }
 
 impl Analyzer {
-	pub fn new(window_shape: WindowShape, sample_rate: Frames) -> Self {
+	pub fn new(window_shape: WindowShape, sample_rate: u32) -> Self {
 		Analyzer {
 			window_shape,
 			sample_rate,

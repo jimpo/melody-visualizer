@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
+use crate::audio::source::SourceType;
 use crate::error::Error;
 use crate::graphic::{
 	GraphicGenerator,
 	generators::spiral::{self, SpiralGenerator as Spiral},
 };
-use crate::source::SourceType;
 use crate::spectrum::{
 	Hz, SpectrumParams, SpectrumTransform,
 	generators::audio,

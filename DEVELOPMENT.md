@@ -75,12 +75,15 @@ $ cargo nextest run --run-ignored all
 ```bash
 $ cargo fmt                                    # rustfmt.toml pins hard_tabs = true
 $ cargo fmt --check                            # verify without rewriting
-$ cargo clippy --all-targets
+$ cargo clippy --all-targets -- -D warnings
 ```
 
-Formatting is clean today. Clippy is **not**: the crate has ~54 warnings, mostly
-dead code from abandoned directions. Do not add `-D warnings` to your loop until
-that backlog is cleared; do keep your own changes warning-free.
+Formatting and clippy are both clean today. Keep them that way: run both before
+you hand work back.
+
+One lint is suppressed, at `gui::window::shutdown` — the doc comment there says
+why. Suppress a lint only where fixing it would mean a refactor beyond the
+change at hand, and always with the reason in a comment.
 
 The codebase is indented with **hard tabs**. `rustfmt.toml` enforces this, so run
 `cargo fmt` rather than matching it by hand.

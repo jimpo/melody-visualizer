@@ -375,7 +375,7 @@ candidate for its own change.
   `Vec`, kept in sync by hand across `Config` and the renderer. An ordered
   collection would make the desync impossible.
 - Transforms cannot be reordered or removed from the GUI — only appended.
-- `Diffuser::regenerate_window` prints to stdout; `spectrum_min_value` is dead.
+- `Diffuser::regenerate_window` prints to stdout.
 - The renderer loops have no tests. `test_support.rs` gives us a main-loop
   driver, but a spectrum-in / spectrum-out test of the chain would be cheaper and
   is missing.
@@ -400,10 +400,14 @@ candidate for its own change.
   with vsync and reports the real frame deadline.
 - Errors from the renderer threads are logged, not surfaced. `error_dialog`
   exists but the pipeline does not use it.
-- **`window.rs` holds a `RefCell` borrow across an `await`.** `shutdown()` is
-  called as `controller.borrow_mut().shutdown().await`, so the `AppController`
-  stays mutably borrowed for the whole teardown. Anything that touches the
-  controller from the main loop in that window panics. Clippy flags it.
+- **`window.rs` holds a `RefCell` borrow across an `await`.** The `shutdown`
+  function borrows the `AppController` mutably for the whole teardown, so
+  anything that touches the controller from the main loop in that window panics.
+  Nothing does today, because the window is already destroyed. Handing the stop
+  futures out of the borrow needs the renderers moved out of the controller:
+  `AsyncProcessor::stop` disconnects a single sender, so stopping a clone would
+  leave the controller's own sender open and the threads running. The clippy
+  lint is suppressed on that function until the ownership is reworked.
 
 ### Controls
 
@@ -424,7 +428,5 @@ candidate for its own change.
   same process trips glib's thread guard and the process takes a non-unwinding
   panic. See [DEVELOPMENT.md](DEVELOPMENT.md#testing) for the workaround and the
   fix this needs.
-- **69 clippy warnings**, mostly dead code left over from abandoned directions:
-  unused re-exports, `WindowShape::Rectangular`, `upcast_any_ref`, and the never
-  constructed `NoBuffer`/`ReceivedUnexpectedBuffer` error variants. The crate
-  should build clean under `-D warnings`.
+- The crate builds clean under `cargo clippy --all-targets -- -D warnings`, with
+  one suppressed lint (see **GUI**, above).

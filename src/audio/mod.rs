@@ -2,6 +2,7 @@ pub mod ports;
 pub mod ring;
 pub mod source;
 
+use async_channel::{Receiver, Sender};
 use jack::{
 	AudioIn, Client, ClientStatus, Control, Frames, NotificationHandler, Port, PortId,
 	ProcessHandler, ProcessScope,
@@ -9,7 +10,6 @@ use jack::{
 use log::error;
 
 use crate::error::Error;
-use crate::pubsub::Notifier;
 use ports::RetiredPorts;
 use ring::{SampleWriter, sample_ring};
 use source::{JackSource, PortName, SourceType, events};
@@ -25,7 +25,13 @@ pub struct AudioSource {
 }
 
 impl AudioSource {
-	pub fn new(buffer_size: usize, notifier: Notifier) -> Result<(Self, SampleReader), Error> {
+	/// Open the JACK client and start it.
+	///
+	/// The samples arrive on the returned [`SampleReader`], and the events JACK
+	/// reports about the source on the returned [`Receiver`]. The channel is
+	/// unbounded, so the notification thread never blocks on a consumer that is
+	/// slow to drain it; it closes when the source is dropped.
+	pub fn new(buffer_size: usize) -> Result<(Self, SampleReader, Receiver<events::Event>), Error> {
 		let (client, status) =
 			jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER).map_err(Error::Jack)?;
 		if !status.is_empty() {
@@ -38,9 +44,10 @@ impl AudioSource {
 		let input_port = port.clone_unowned();
 
 		let (writer, reader) = sample_ring(buffer_size)?;
+		let (event_tx, event_rx) = async_channel::unbounded();
 		let retired_ports = RetiredPorts::default();
 		let notification_handler =
-			AudioNotificationHandler::new(notifier, retired_ports.clone(), input_port.name()?);
+			AudioNotificationHandler::new(event_tx, retired_ports.clone(), input_port.name()?);
 		let client = client
 			.activate_async(notification_handler, AudioProcessHandler::new(port, writer))
 			.map_err(Error::Jack)?;
@@ -49,22 +56,37 @@ impl AudioSource {
 			input_port,
 			retired_ports,
 		};
-		Ok((source, reader))
+		Ok((source, reader, event_rx))
 	}
 }
 
 struct AudioNotificationHandler {
-	notifier: Notifier,
+	event_tx: Sender<events::Event>,
 	retired_ports: RetiredPorts,
 	input_port_name: String,
 }
 
 impl AudioNotificationHandler {
-	fn new(notifier: Notifier, retired_ports: RetiredPorts, input_port_name: String) -> Self {
+	fn new(
+		event_tx: Sender<events::Event>,
+		retired_ports: RetiredPorts,
+		input_port_name: String,
+	) -> Self {
 		AudioNotificationHandler {
-			notifier,
+			event_tx,
 			retired_ports,
 			input_port_name,
+		}
+	}
+
+	/// Report `event` to whoever is draining the channel.
+	///
+	/// The channel is unbounded, so `try_send` never blocks — which is what
+	/// makes this callable from the JACK notification thread. It fails only once
+	/// the receiver is gone, and then there is nobody left to tell.
+	fn send(&self, event: impl Into<events::Event>) {
+		if let Err(err) = self.event_tx.try_send(event.into()) {
+			error!("failed to report a JACK event: {}", err);
 		}
 	}
 
@@ -73,9 +95,7 @@ impl AudioNotificationHandler {
 	// The `NotificationHandler` trait impl is a thin wrapper around them.
 
 	fn notify_sample_rate(&self, sample_rate: Frames) {
-		if let Err(err) = self.notifier.send(events::SampleRateChanged(sample_rate)) {
-			error!("failed to notify of JACK sample rate change: {}", err);
-		}
+		self.send(events::SampleRateChanged(sample_rate));
 	}
 
 	/// Record what a port registration means for the port list, then announce
@@ -97,9 +117,7 @@ impl AudioNotificationHandler {
 	}
 
 	fn notify_ports_changed(&self) {
-		if let Err(err) = self.notifier.send(events::PortsChanged) {
-			error!("failed to notify of JACK port change: {}", err);
-		}
+		self.send(events::PortsChanged);
 	}
 
 	/// Announce a connection change that touches the source's input port.
@@ -115,9 +133,7 @@ impl AudioNotificationHandler {
 		if !touches_input {
 			return;
 		}
-		if let Err(err) = self.notifier.send(events::ConnectionChanged) {
-			error!("failed to notify of JACK connection change: {}", err);
-		}
+		self.send(events::ConnectionChanged);
 	}
 }
 
@@ -227,77 +243,69 @@ impl JackSource for AudioSource {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::pubsub::PubSub;
-	use crate::test_support::run_in_glib_main_loop;
-	use futures::prelude::*;
-	use source::events::{ConnectionChanged, PortsChanged, SampleRateChanged};
-	use std::cell::RefCell;
-	use std::rc::Rc;
+	use source::events::Event;
 
 	// --- JACK notification forwarding -------------------------------------
 	//
 	// These drive `AudioNotificationHandler`'s client-free logic methods and
-	// assert the events reach a `PubSub` subscriber. No JACK server required.
+	// assert the events reach the channel. No JACK server and no main loop: the
+	// handler sends on an unbounded channel, so every event is there to read the
+	// moment the call returns.
 
 	const INPUT_PORT: &str = "Melody Visualizer:input";
 
-	fn test_handler(notifier: Notifier) -> AudioNotificationHandler {
-		AudioNotificationHandler::new(notifier, RetiredPorts::default(), INPUT_PORT.to_string())
+	fn test_handler() -> (AudioNotificationHandler, Receiver<Event>) {
+		let (event_tx, event_rx) = async_channel::unbounded();
+		let handler = AudioNotificationHandler::new(
+			event_tx,
+			RetiredPorts::default(),
+			INPUT_PORT.to_string(),
+		);
+		(handler, event_rx)
+	}
+
+	/// Every event the handler has reported so far, in order.
+	fn drain(event_rx: &Receiver<Event>) -> Vec<Event> {
+		std::iter::from_fn(|| event_rx.try_recv().ok()).collect::<Vec<_>>()
 	}
 
 	#[test]
 	fn notification_handler_forwards_sample_rate() {
-		run_in_glib_main_loop(|mut yield_rx| async move {
-			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
-			let received = Rc::new(RefCell::new(None));
+		let (handler, event_rx) = test_handler();
 
-			let received_clone = received.clone();
-			let _handle = pubsub.subscribe(move |event: &SampleRateChanged| {
-				*received_clone.borrow_mut() = Some(event.clone());
-			});
+		handler.notify_sample_rate(48_000);
 
-			let handler = test_handler(pubsub.notifier());
-			handler.notify_sample_rate(48_000);
-			yield_rx.next().await.unwrap();
-
-			assert_eq!(*received.borrow(), Some(SampleRateChanged(48_000)));
-		});
+		assert_eq!(
+			drain(&event_rx),
+			[Event::SampleRateChanged(events::SampleRateChanged(48_000))],
+		);
 	}
 
 	#[test]
 	fn notification_handler_forwards_every_port_change() {
-		run_in_glib_main_loop(|mut yield_rx| async move {
-			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
-			let received = Rc::new(RefCell::new(Vec::new()));
+		let (handler, event_rx) = test_handler();
 
-			let received_clone = received.clone();
-			let _handle = pubsub.subscribe(move |event: &PortsChanged| {
-				received_clone.borrow_mut().push(event.clone());
-			});
+		handler.notify_port_registration(Some("tone:output1".to_string()), true);
+		handler.notify_port_registration(Some("tone:output1".to_string()), false);
+		handler.notify_ports_changed();
 
-			let handler = test_handler(pubsub.notifier());
-			handler.notify_port_registration(Some("tone:output1".to_string()), true);
-			handler.notify_port_registration(Some("tone:output1".to_string()), false);
-			handler.notify_ports_changed();
-			yield_rx.next().await.unwrap();
-
-			assert_eq!(
-				*received.borrow(),
-				vec![PortsChanged, PortsChanged, PortsChanged],
-				"a registration, an unregistration and a rename each announce the list",
-			);
-		});
+		assert_eq!(
+			drain(&event_rx),
+			[
+				Event::PortsChanged(events::PortsChanged),
+				Event::PortsChanged(events::PortsChanged),
+				Event::PortsChanged(events::PortsChanged),
+			],
+			"a registration, an unregistration and a rename each announce the list",
+		);
 	}
 
 	#[test]
 	fn notification_handler_retires_an_unregistered_port() {
-		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
+		let (event_tx, _event_rx) = async_channel::unbounded();
 		let retired_ports = RetiredPorts::default();
-		let handler = AudioNotificationHandler::new(
-			pubsub.notifier(),
-			retired_ports.clone(),
-			INPUT_PORT.to_string(),
-		);
+		let handler =
+			AudioNotificationHandler::new(event_tx, retired_ports.clone(), INPUT_PORT.to_string());
 
 		handler.notify_port_registration(Some("tone:output1".to_string()), false);
 
@@ -310,30 +318,20 @@ mod tests {
 
 	#[test]
 	fn notification_handler_forwards_only_its_own_connections() {
-		run_in_glib_main_loop(|mut yield_rx| async move {
-			let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
-			let received = Rc::new(RefCell::new(0));
+		let (handler, event_rx) = test_handler();
 
-			let received_clone = received.clone();
-			let _handle = pubsub.subscribe(move |_: &ConnectionChanged| {
-				*received_clone.borrow_mut() += 1;
-			});
+		let tone = || Some("tone:output1".to_string());
+		handler.notify_ports_connected(tone(), Some(INPUT_PORT.to_string()));
+		handler.notify_ports_connected(Some(INPUT_PORT.to_string()), tone());
+		handler.notify_ports_connected(tone(), Some("system:playback_1".to_string()));
+		handler.notify_ports_connected(tone(), None);
 
-			let handler = test_handler(pubsub.notifier());
-			let tone = || Some("tone:output1".to_string());
-			handler.notify_ports_connected(tone(), Some(INPUT_PORT.to_string()));
-			handler.notify_ports_connected(Some(INPUT_PORT.to_string()), tone());
-			handler.notify_ports_connected(tone(), Some("system:playback_1".to_string()));
-			handler.notify_ports_connected(tone(), None);
-			yield_rx.next().await.unwrap();
-
-			assert_eq!(
-				*received.borrow(),
-				3,
-				"a connection is reported when it names the input port, or a port \
-				 JACK could not name — but not when it is between two other clients",
-			);
-		});
+		assert_eq!(
+			drain(&event_rx).len(),
+			3,
+			"a connection is reported when it names the input port, or a port \
+			 JACK could not name — but not when it is between two other clients",
+		);
 	}
 
 	// --- Integration: real JACK server ------------------------------------
@@ -348,9 +346,7 @@ mod tests {
 	#[test]
 	#[ignore = "requires a running JACK server (e.g. `jackd -d dummy`)"]
 	fn audio_source_connects_to_running_jack_server() {
-		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
-
-		let (source, _reader) = AudioSource::new(128 * 1024, pubsub.notifier())
+		let (source, _reader, _events) = AudioSource::new(128 * 1024)
 			.expect("should connect to the running JACK server and register its input port");
 
 		assert_eq!(source.source_type(), SourceType::Audio);

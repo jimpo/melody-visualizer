@@ -1,10 +1,11 @@
+use async_channel::Receiver;
 use futures::{channel::mpsc, future::Either, prelude::*};
 use std::{any::Any, cell::RefCell, rc::Rc};
 
 use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::async_processor::AsyncProcessor;
 use crate::audio::AudioSource;
-use crate::audio::source::{JackSource, PortName, SourceType};
+use crate::audio::source::{JackSource, PortName, SourceType, events::Event as AudioSourceEvent};
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
@@ -77,18 +78,17 @@ impl AppController {
 		self.source = None;
 
 		let (new_source, new_generator) = match self.config.spectrum_generator {
-			SpectrumGeneratorConfig::Audio(ref config) => {
-				match AudioSource::new(BUFFER_SIZE, self.pubsub.notifier()) {
-					Ok((source, reader)) => {
-						log::debug!("Audio source activated");
-						let sample_rate = source.sample_rate();
-						let generator =
-							AudioSpectrumGenerator::new(config.clone(), reader, sample_rate);
-						(Box::new(source), Box::new(generator))
-					}
-					Err(err) => return Either::Left(future::err(err)),
+			SpectrumGeneratorConfig::Audio(ref config) => match AudioSource::new(BUFFER_SIZE) {
+				Ok((source, reader, events)) => {
+					log::debug!("Audio source activated");
+					republish_audio_events(events, self.pubsub.notifier());
+					let sample_rate = source.sample_rate();
+					let generator =
+						AudioSpectrumGenerator::new(config.clone(), reader, sample_rate);
+					(Box::new(source), Box::new(generator))
 				}
-			}
+				Err(err) => return Either::Left(future::err(err)),
+			},
 		};
 		self.source = Some(new_source);
 
@@ -230,6 +230,29 @@ impl AppController {
 		self.graphic_renderer.stop().await?;
 		Ok(())
 	}
+}
+
+/// Republish the events an audio source reports onto the app-wide bus.
+///
+/// This task is the one place the audio module and PubSub meet: the source
+/// reports on a plain channel, and each event goes out to the subscribers as its
+/// own type. It runs on the GTK main context and ends when the source is
+/// dropped, which closes the channel.
+fn republish_audio_events(events: Receiver<AudioSourceEvent>, notifier: Notifier) {
+	// Dropping the returned JoinHandle detaches the task; it keeps running until
+	// the channel closes.
+	glib::MainContext::ref_thread_default().spawn_local(async move {
+		while let Ok(event) = events.recv().await {
+			let published = match event {
+				AudioSourceEvent::PortsChanged(event) => notifier.send(event),
+				AudioSourceEvent::ConnectionChanged(event) => notifier.send(event),
+				AudioSourceEvent::SampleRateChanged(event) => notifier.send(event),
+			};
+			if let Err(err) = published {
+				log::error!("{}", Error::PubSub(err));
+			}
+		}
+	});
 }
 
 pub mod events {

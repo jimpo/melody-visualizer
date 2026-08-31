@@ -19,6 +19,24 @@ impl PortName {
 }
 
 pub mod events {
+	/// Everything the JACK notification thread reports about a source.
+	///
+	/// The variants carry the individual event types so that a consumer can
+	/// forward one on without restating what it is.
+	///
+	/// ```
+	/// use melody_visualizer::audio::source::events::{Event, SampleRateChanged};
+	///
+	/// let event = Event::from(SampleRateChanged(48_000));
+	/// assert_eq!(event, Event::SampleRateChanged(SampleRateChanged(48_000)));
+	/// ```
+	#[derive(Debug, Clone, PartialEq, Eq, derive_more::From)]
+	pub enum Event {
+		PortsChanged(PortsChanged),
+		ConnectionChanged(ConnectionChanged),
+		SampleRateChanged(SampleRateChanged),
+	}
+
 	/// The set of ports JACK knows about changed — one was registered,
 	/// unregistered, or renamed.
 	///

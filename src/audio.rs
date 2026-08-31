@@ -133,20 +133,36 @@ impl ProcessHandler for AudioProcessHandler {
 			.ring_buffer
 			.lock()
 			.expect("I shouldn't even need a Mutex...");
-		write_samples(&mut ring_buffer, self.port.as_slice(scope));
+		// Samples that do not fit are dropped whole. The reader skips ahead to the
+		// newest window on every tick, so it would never have read them anyway.
+		let _dropped = write_samples(&mut ring_buffer, self.port.as_slice(scope));
 		Control::Continue
 	}
 }
 
 /// Copy audio samples into the ring buffer as native-endian bytes.
 ///
+/// The ring holds whole samples only. `RingBufferWriter::write_buffer` writes as
+/// much as fits and returns short, so a sample is written only once the ring has
+/// room for all four of its bytes; the rest are dropped. A partial sample would
+/// shift the byte stream and every value the reader decodes after it.
+///
+/// Returns the number of samples dropped for want of space.
+///
 /// Pulled out of `AudioProcessHandler::process` so it can be unit-tested without
 /// a live JACK `ProcessScope` / `Port`.
-fn write_samples(ring_buffer: &mut RingBufferWriter, samples: &[f32]) {
+fn write_samples(ring_buffer: &mut RingBufferWriter, samples: &[f32]) -> usize {
 	// TODO: Create a custom ring buffer holding an [f32] that is more efficient.
+	let mut dropped = 0;
 	for sample in samples {
+		// `space` is a plain atomic read, so this stays real-time safe.
+		if ring_buffer.space() < size_of::<f32>() {
+			dropped += 1;
+			continue;
+		}
 		ring_buffer.write_buffer(&sample.to_ne_bytes());
 	}
+	dropped
 }
 
 impl JackSource for AudioSourceController {
@@ -251,7 +267,7 @@ mod tests {
 			.into_reader_writer();
 
 		let samples = [0.0f32, 1.0, -0.5, 123.456, f32::MIN, f32::MAX];
-		write_samples(&mut writer, &samples);
+		assert_eq!(write_samples(&mut writer, &samples), 0);
 
 		// Samples are serialized as native-endian f32 bytes, 4 bytes each.
 		let mut bytes = vec![0u8; samples.len() * 4];
@@ -263,6 +279,49 @@ mod tests {
 			.map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
 			.collect();
 		assert_eq!(read_back, samples);
+	}
+
+	#[test]
+	fn write_samples_drops_whole_samples_when_the_ring_fills() {
+		let (mut reader, mut writer) = RingBuffer::new(64)
+			.expect("ring buffer allocation is a userspace operation, needs no JACK server")
+			.into_reader_writer();
+
+		// JACK sizes the ring to a power of two and keeps one byte free, so the
+		// capacity is not a whole number of samples: the last few bytes are exactly
+		// the gap a short write would split an f32 across.
+		let capacity = writer.space();
+		let fits = capacity / size_of::<f32>();
+		let overflow = 3;
+
+		let samples = (0..(fits + overflow) as u32)
+			.map(|i| i as f32)
+			.collect::<Vec<_>>();
+		let dropped = write_samples(&mut writer, &samples);
+
+		assert_eq!(
+			dropped, overflow,
+			"only the samples that did not fit are dropped"
+		);
+		assert_eq!(
+			writer.space(),
+			capacity - fits * size_of::<f32>(),
+			"the bytes too few to hold a sample are left unwritten",
+		);
+
+		let mut bytes = vec![0u8; capacity];
+		let n = reader.read_buffer(&mut bytes);
+		assert_eq!(n % size_of::<f32>(), 0, "the ring holds only whole samples");
+
+		let read_back: Vec<f32> = bytes[..n]
+			.chunks_exact(4)
+			.map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+			.collect();
+		assert_eq!(
+			read_back,
+			samples[..fits],
+			"the reader decodes in alignment"
+		);
 	}
 
 	// --- Integration: real JACK server ------------------------------------

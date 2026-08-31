@@ -148,6 +148,8 @@ Nothing in the pipeline queues unbounded work.
 - The **ring buffer** is the one place that can overrun: if the spectrum thread
   falls behind, `AudioSpectrumGenerator` skips forward to the newest window
   rather than draining stale audio. Latency is bounded; old samples are dropped.
+  Should the ring fill anyway, the RT thread drops whole samples rather than
+  writing part of one, so the reader's byte stream stays sample-aligned.
 
 ---
 

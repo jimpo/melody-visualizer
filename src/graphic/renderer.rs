@@ -104,7 +104,7 @@ impl GraphicRenderer {
 	///
 	/// The returned buffer is the one the history evicts, which is what keeps the
 	/// steady state free of allocation (ARCHITECTURE.md § 3).
-	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
+	pub fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
 		let max_history_len = self.generator.history_len();
 		self.spectrum_history.truncate(max_history_len);
 

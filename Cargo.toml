@@ -41,3 +41,7 @@ rand = "0.10"
 [[bench]]
 name = "dsp"
 harness = false
+
+[[bench]]
+name = "graphic"
+harness = false

@@ -7,11 +7,12 @@ pub mod jackd;
 
 use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;
-use std::{f64::consts::TAU, sync::Arc};
+use std::{f64::consts::TAU, sync::Arc, time::Instant};
 
 use crate::app::config::{Config, SpectrumGeneratorConfig};
 use crate::audio::SampleReader;
 use crate::audio::ring::sample_ring;
+use crate::graphic::renderer::GraphicRenderer;
 use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 use crate::spectrum::renderer::SpectrumRenderer;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
@@ -131,4 +132,42 @@ pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> Spec
 		.map(|(id, transform_config)| (*id, transform_config.clone().create()))
 		.collect();
 	renderer
+}
+
+/// The graphic stage `config` describes, holding one frame of `values`.
+///
+/// The same wiring `AppController` performs when it starts the graphic thread,
+/// with no thread and no GTK: the generator `config` names, on the frequency
+/// grid `config` implies. The renderer learns its surface size from the first
+/// buffer [`render`](GraphicRenderer::render) is handed.
+///
+/// The spectrum is built on the renderer's own grid, so it lands in the history
+/// rather than taking the stale-grid path.
+///
+/// # Preconditions
+/// - `values.len()` equals `config.spectrum_params().samples()`
+pub fn graphic_renderer(config: &Config, values: &[f64]) -> GraphicRenderer {
+	let mut renderer = GraphicRenderer::new();
+	renderer.set_spectrum_params(config.spectrum_params());
+	renderer.update_generator(|generator| config.graphic_generator.clone().update(generator));
+
+	let buffer = SpectrumBuffer::new(renderer.spectrum_params().clone());
+	assert_eq!(values.len(), buffer.params().samples());
+	renderer.update_spectrum(buffer.fill(|data, _params| data.copy_from_slice(values)));
+	renderer
+}
+
+/// Seconds one call to `work` takes, averaged over a fixed run.
+///
+/// The measurement the budget tests and the benchmark summaries make: enough
+/// repetitions to average out scheduling noise, no criterion machinery.
+pub fn seconds_per_call(warmup: usize, runs: usize, mut work: impl FnMut()) -> f64 {
+	for _ in 0..warmup {
+		work();
+	}
+	let start = Instant::now();
+	for _ in 0..runs {
+		work();
+	}
+	start.elapsed().as_secs_f64() / runs as f64
 }

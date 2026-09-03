@@ -21,7 +21,7 @@
 //! Run with `cargo bench`. The summary alone is `cargo bench -- --test`.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -38,10 +38,13 @@ use melody_visualizer::spectrum::transforms::{
 use melody_visualizer::spectrum::{
 	Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumParams, SpectrumTransform,
 };
-use melody_visualizer::test_support::{renderer, sample_reader};
+use melody_visualizer::test_support::{renderer, sample_reader, seconds_per_call};
 use melody_visualizer::traits::Configurable;
 
 const SAMPLE_RATE: u32 = 48_000;
+/// Repetitions the summary averages one stage over.
+const WARMUP: usize = 50;
+const RUNS: usize = 500;
 /// The bin count the default configuration produces.
 const DEFAULT_BINS: usize = 1196;
 /// Broadband noise, seeded so every run measures the same work.
@@ -231,21 +234,6 @@ fn default_chain() -> (SpectrumRenderer, SpectrumBuffer) {
 	(renderer, buffer)
 }
 
-/// Seconds one call to `work` takes, averaged over a fixed run.
-fn seconds_per_call(mut work: impl FnMut()) -> f64 {
-	const WARMUP: usize = 50;
-	const RUNS: usize = 500;
-
-	for _ in 0..WARMUP {
-		work();
-	}
-	let start = Instant::now();
-	for _ in 0..RUNS {
-		work();
-	}
-	start.elapsed().as_secs_f64() / RUNS as f64
-}
-
 /// Print each stage's capacity, the capacity of the whole chain, and how much of
 /// the tick budget the chain uses.
 ///
@@ -267,7 +255,7 @@ fn print_summary() {
 	let mut buffer = SpectrumBuffer::new(grid.clone());
 	stages.push((
 		"generator",
-		seconds_per_call(|| {
+		seconds_per_call(WARMUP, RUNS, || {
 			buffer = generator
 				.generate(std::mem::take(&mut buffer))
 				.into_buffer();
@@ -276,7 +264,7 @@ fn print_summary() {
 
 	for (name, mut transform) in transforms(DEFAULT_BINS) {
 		let mut spectrum = spectrum(DEFAULT_BINS);
-		let seconds = seconds_per_call(|| apply(transform.as_mut(), &mut spectrum));
+		let seconds = seconds_per_call(WARMUP, RUNS, || apply(transform.as_mut(), &mut spectrum));
 		stages.push((
 			match name.as_str() {
 				"diffuser" => "diffuser",
@@ -288,7 +276,7 @@ fn print_summary() {
 	}
 
 	let (mut renderer, mut chain_buffer) = default_chain();
-	let composed = seconds_per_call(|| {
+	let composed = seconds_per_call(WARMUP, RUNS, || {
 		chain_buffer = renderer
 			.render(std::mem::take(&mut chain_buffer))
 			.into_buffer();

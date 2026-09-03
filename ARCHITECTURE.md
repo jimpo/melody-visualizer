@@ -184,7 +184,10 @@ One sample's journey:
 5. **Draw** — `graphic/generators/spiral.rs`. On a render RPC, the generator
    draws the history into a `GraphicBuffer`, a raw RGB24 byte vector backing a
    cairo `ImageSurface`. The spiral maps log-frequency to radius and pitch class
-   to hue, so notes an octave apart line up on the same spoke.
+   to hue, so notes an octave apart line up on the same spoke. This is the
+   pipeline's most expensive stage by two orders of magnitude, and the cost is
+   pixel area rather than bin count — see
+   [DEVELOPMENT.md](DEVELOPMENT.md#the-visualizer).
 6. **Display** — `gui/visualization.rs`. The `DrawingArea` blits the finished
    surface. A size change resizes the buffer in place on the GTK side.
 

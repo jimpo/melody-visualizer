@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::error::Error;
 use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
-use crate::spectrum::{Spectrum, SpectrumParams};
+use crate::spectrum::{LogHz, Spectrum, SpectrumParams};
 use crate::traits::Configurable;
 
 #[derive(Debug)]
@@ -25,9 +25,18 @@ pub struct SpiralGenerator {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+	/// Pixels between the outermost ring and the nearer edge of the surface.
 	pub outer_pad: f64,
+	/// Radius in pixels of the empty disc at the centre.
 	pub center_pad: f64,
-	pub key_log_freq: f64,
+	/// The pitch the colour wheel and the angle origin are aligned to, as
+	/// **log₂(Hz)** — the unit [`Note::log_frequency`](crate::note::Note::log_frequency)
+	/// and [`SpectrumParams::log_frequencies`] are both in, not Hz.
+	///
+	/// Every pitch class an octave apart from it sits on the same spoke, so only
+	/// the fractional part of the difference matters; a value in the wrong unit
+	/// still draws a spiral, just one keyed to an arbitrary pitch.
+	pub key_log_freq: LogHz,
 }
 
 #[derive(Debug)]
@@ -190,5 +199,72 @@ impl GraphicGenerator for SpiralGenerator {
 
 	fn as_any_mut(&mut self) -> &mut dyn Any {
 		self
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use crate::note;
+
+	const SIZE: i32 = 400;
+
+	/// A generator on a semitone grid from C3 to C6, keyed to C.
+	///
+	/// Three octaves at twelve bins each puts a bin on every semitone, so bins
+	/// 0, 12, 24 and 36 are the pitch class the key names.
+	fn keyed_to_c() -> SpiralGenerator {
+		let params = Arc::new(SpectrumParams::exp_spaced(
+			37,
+			note!(C, 3).frequency(),
+			note!(C, 6).frequency(),
+		));
+		let mut generator = SpiralGenerator::new(Config {
+			outer_pad: 20.0,
+			center_pad: 50.0,
+			key_log_freq: note!(C, 4).log_frequency(),
+		});
+		generator.set_size(SIZE, SIZE);
+		generator.set_params(&params);
+		generator
+	}
+
+	/// The angle of `edge` about the surface centre, clockwise from straight up.
+	///
+	/// In `(-π, π]`, so a spoke a hair either side of the origin reads as a small
+	/// angle rather than one close to a full turn.
+	fn angle(edge: &SegmentEdge) -> f64 {
+		let origin = SIZE as f64 / 2.0;
+		(edge.x_center - origin).atan2(origin - edge.y_center)
+	}
+
+	#[test]
+	fn pitch_class_c_sits_at_the_angle_origin_in_every_octave() {
+		let generator = keyed_to_c();
+		for index in [0, 12, 24, 36] {
+			let angle = angle(&generator.edges[index]);
+			assert!(
+				angle.abs() < 1e-6,
+				"bin {} is a C, so it belongs at angle 0, not {}",
+				index,
+				angle,
+			);
+		}
+	}
+
+	#[test]
+	fn frequencies_an_octave_apart_share_an_angle_and_a_hue() {
+		let generator = keyed_to_c();
+		// A tritone from the key, so neither the angle nor the hue sits on the
+		// wrap-around where two representations of the same direction differ.
+		let [first, second, third] = [6, 18, 30].map(|index: usize| &generator.edges[index]);
+		for other in [second, third] {
+			assert!((angle(first) - angle(other)).abs() < 1e-6);
+			assert!(
+				(first.hue.into_positive_degrees() - other.hue.into_positive_degrees()).abs()
+					< 1e-6,
+			);
+		}
 	}
 }

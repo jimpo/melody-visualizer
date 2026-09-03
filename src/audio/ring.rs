@@ -161,6 +161,32 @@ mod tests {
 		);
 	}
 
+	/// `count` samples counting up from zero.
+	///
+	/// A ramp rather than a constant because every property these tests assert —
+	/// order, alignment, which window was returned — is invisible in a signal
+	/// whose samples are all alike.
+	fn ramp(count: usize) -> Vec<f32> {
+		(0..count).map(|index| index as f32).collect()
+	}
+
+	#[test]
+	fn a_write_that_exactly_fills_the_ring_drops_nothing() {
+		let (mut writer, mut reader) = sample_ring(64).expect(RING_ALLOC_FAILED);
+
+		let capacity = writer.ring_buffer.space();
+		let fits = capacity / size_of::<f32>();
+		let samples = ramp(fits);
+		writer.write_samples(&samples);
+
+		assert_eq!(reader.overruns(), 0, "every sample fit");
+		assert!(
+			writer.ring_buffer.space() < size_of::<f32>(),
+			"and there is no room left for another",
+		);
+		assert_eq!(read_samples(&mut reader.buffer, capacity), samples);
+	}
+
 	#[test]
 	fn write_samples_drops_whole_samples_when_the_ring_fills() {
 		let (mut writer, mut reader) = sample_ring(64).expect(RING_ALLOC_FAILED);
@@ -232,6 +258,85 @@ mod tests {
 			read_samples(&mut reader.buffer, capacity),
 			third,
 			"the byte stream stays sample-aligned across an overrun",
+		);
+	}
+
+	// --- Window reads ------------------------------------------------------
+
+	#[test]
+	fn read_latest_takes_what_little_there_is_and_says_how_much() {
+		let (mut writer, mut reader) = sample_ring(1024).expect(RING_ALLOC_FAILED);
+		writer.write_samples(&ramp(3));
+
+		let mut window = [-1.0; 8];
+		assert_eq!(reader.read_latest(&mut window), 3);
+
+		assert_eq!(window[..3], [0.0, 1.0, 2.0]);
+		assert_eq!(
+			window[3..],
+			[-1.0; 5],
+			"a short read leaves the rest of the window untouched",
+		);
+	}
+
+	#[test]
+	fn read_latest_fills_a_window_the_ring_holds_exactly() {
+		let (mut writer, mut reader) = sample_ring(1024).expect(RING_ALLOC_FAILED);
+		let samples = ramp(8);
+		writer.write_samples(&samples);
+
+		let mut window = [0.0; 8];
+		assert_eq!(reader.read_latest(&mut window), 8);
+
+		assert_eq!(window[..], samples[..]);
+	}
+
+	#[test]
+	fn read_latest_returns_the_newest_window_and_discards_what_is_older() {
+		let (mut writer, mut reader) = sample_ring(1024).expect(RING_ALLOC_FAILED);
+		writer.write_samples(&ramp(100));
+
+		let mut window = [0.0; 4];
+		assert_eq!(reader.read_latest(&mut window), 4);
+		assert_eq!(window, [96.0, 97.0, 98.0, 99.0], "the four newest samples");
+
+		// The window itself stays in the ring, so a consumer reading faster than
+		// the audio arrives sees overlapping windows rather than empty ones.
+		assert_eq!(reader.read_latest(&mut window), 4);
+		assert_eq!(window, [96.0, 97.0, 98.0, 99.0]);
+	}
+
+	#[test]
+	fn read_latest_reads_a_window_that_straddles_the_end_of_the_ring() {
+		let (mut writer, mut reader) = sample_ring(64).expect(RING_ALLOC_FAILED);
+		let fits = writer.ring_buffer.space() / size_of::<f32>();
+
+		// Fill the ring and take a small window off it. That leaves the read
+		// pointer near the end of the buffer, so the next block written wraps
+		// round to the start.
+		writer.write_samples(&ramp(fits));
+		let kept = fits / 4;
+		assert_eq!(reader.read_latest(&mut vec![0.0; kept]), kept);
+
+		let refilled = writer.ring_buffer.space() / size_of::<f32>();
+		writer.write_samples(&ramp(fits + refilled)[fits..]);
+		assert_eq!(
+			reader.overruns(),
+			0,
+			"the refill was sized to what was free"
+		);
+		assert!(
+			!reader.buffer.get_vector().1.is_empty(),
+			"the readable bytes should span the end of the ring",
+		);
+
+		let mut window = vec![0.0; kept + refilled];
+		assert_eq!(reader.read_latest(&mut window), kept + refilled);
+
+		assert_eq!(
+			window,
+			ramp(fits + refilled)[fits - kept..],
+			"a window across the wrap decodes in order and in alignment",
 		);
 	}
 }

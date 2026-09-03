@@ -16,7 +16,8 @@ use source::{JackSource, PortName, SourceType, events};
 
 pub use ring::SampleReader;
 
-const TITLE: &str = "Melody Visualizer";
+/// The name the app registers with JACK, and the prefix of every port it owns.
+pub const CLIENT_NAME: &str = "Melody Visualizer";
 
 pub struct AudioSource {
 	client: jack::AsyncClient<AudioNotificationHandler, AudioProcessHandler>,
@@ -32,8 +33,8 @@ impl AudioSource {
 	/// unbounded, so the notification thread never blocks on a consumer that is
 	/// slow to drain it; it closes when the source is dropped.
 	pub fn new(buffer_size: usize) -> Result<(Self, SampleReader, Receiver<events::Event>), Error> {
-		let (client, status) =
-			jack::Client::new(TITLE, jack::ClientOptions::NO_START_SERVER).map_err(Error::Jack)?;
+		let (client, status) = jack::Client::new(CLIENT_NAME, jack::ClientOptions::NO_START_SERVER)
+			.map_err(Error::Jack)?;
 		if !status.is_empty() {
 			return Err(Error::JackStatus(status));
 		}
@@ -352,46 +353,5 @@ mod tests {
 			"a connection is reported when it names the input port, or a port \
 			 JACK could not name — but not when it is between two other clients",
 		);
-	}
-
-	// --- Integration: real JACK server ------------------------------------
-	//
-	// Exercises the parts the unit tests above cannot: real client creation,
-	// input-port registration, and `activate_async`. Ignored by default so plain
-	// `cargo test` stays deterministic with no server. Run against a dummy server:
-	//
-	//   jackd -r -d dummy &            # or `scripts/run-headless.sh`'s setup
-	//   cargo test -- --ignored
-
-	#[test]
-	#[ignore = "requires a running JACK server (e.g. `jackd -d dummy`)"]
-	fn audio_source_connects_to_running_jack_server() {
-		let (source, _reader, _events) = AudioSource::new(128 * 1024)
-			.expect("should connect to the running JACK server and register its input port");
-
-		assert_eq!(source.source_type(), SourceType::Audio);
-		assert!(source.sample_rate() > 0, "the server has a sample rate");
-
-		// Every JACK server has capture ports, and they are what the app connects
-		// to its input. Its own input port is not among them: it is an input.
-		let inputs = source.available_inputs();
-		let capture = inputs
-			.iter()
-			.find(|port| port.as_str().starts_with("system:capture_"))
-			.unwrap_or_else(|| {
-				panic!("the server's capture ports should be offered as inputs, got {inputs:?}")
-			})
-			.clone();
-		assert!(
-			!inputs.contains(&PortName(TITLE.to_string() + ":input")),
-			"the source's own input port is not something it can connect to",
-		);
-
-		// Connection state is read back from the server, not remembered.
-		assert_eq!(source.connected_input(), None, "nothing is connected yet");
-		source.connect(&capture).expect("should connect");
-		assert_eq!(source.connected_input(), Some(capture));
-		source.disconnect().expect("should disconnect");
-		assert_eq!(source.connected_input(), None);
 	}
 }

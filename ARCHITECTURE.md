@@ -400,7 +400,7 @@ waiting for the renderer threads deadlocks.
 | `graphic/` | `Graphic`/`GraphicBuffer` (cairo), graphic thread, generators. |
 | `traits.rs` | `Configurable` — build or update a component from its config. |
 | `error.rs` | Crate-wide `Error`. |
-| `test_support.rs` | Shared fixtures: the glib main-loop driver, synthesized audio, and the wiring that builds a renderer from a `Config`. Public under the `testing` feature. |
+| `test_support/` | Shared fixtures: the glib main-loop driver, synthesized audio, the wiring that builds a renderer from a `Config`, and a private JACK server (`jackd.rs`). Public under the `testing` feature. |
 
 ---
 

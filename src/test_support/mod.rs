@@ -3,6 +3,8 @@
 //! Compiled for the crate's own tests, and for dependents that enable the
 //! `testing` feature.
 
+pub mod jackd;
+
 use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;
 use std::{f64::consts::TAU, sync::Arc};

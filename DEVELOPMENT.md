@@ -13,8 +13,9 @@ The crate links against GTK 4 and JACK. On Debian/Ubuntu:
 sudo apt install build-essential clang libgtk-4-dev libjack-jackd2-dev
 ```
 
-To run the app headlessly (see [below](#running-the-gui-headlessly)) you also
-need:
+To run the test suite you also need `jackd` itself: the audio integration tests
+start a server of their own. To run the app headlessly (see
+[below](#running-the-gui-headlessly)) you need the rest of these too:
 
 ```bash
 sudo apt install jackd2 xvfb dbus-x11 imagemagick
@@ -46,7 +47,6 @@ $ cargo install cargo-nextest --locked   # one-time setup
 
 $ cargo nextest run                      # Run the test suite
 $ cargo nextest run -E 'test(pubsub)'    # Run the tests matching a filter expression
-$ cargo nextest run --run-ignored all    # Include the tests that need a JACK server
 ```
 
 > **`cargo test` currently aborts, even though every test passes.** The
@@ -62,13 +62,25 @@ $ cargo nextest run --run-ignored all    # Include the tests that need a JACK se
 > instead of using the thread default, and to drop its leftover yield task when
 > the test ends. Until then, use nextest.
 
-Tests that need a live JACK server are marked `#[ignore]`. Start a dummy server
-first:
+### The tests that need a JACK server
 
-```bash
-$ jackd -r -d dummy &
-$ cargo nextest run --run-ignored all
-```
+`tests/audio_source.rs` exercises `AudioSource` against a real server, and it
+runs as part of the ordinary suite — there is nothing to start first and nothing
+to opt into. Each test spawns a private `jackd -d dummy` through
+`test_support::jackd::Server`, so `jackd` must be installed (`apt install
+jackd2`, in `claude-sbx.Dockerfile` already) and a server you are running
+yourself is neither used nor disturbed.
+
+Which server a JACK client opens comes from the `JACK_DEFAULT_SERVER`
+environment variable — `ClientOptions::SERVER_NAME` cannot be used, because
+`Client::new` omits the varargs that flag reads the name from. A process has one
+environment, so **these tests need nextest's process-per-test isolation**;
+`Server::start` panics with that advice rather than silently talking to the
+wrong server.
+
+JACK also allows only a handful of servers at once, all sharing one
+shared-memory registry. `.config/nextest.toml` caps how many of these tests run
+side by side, which is what keeps a many-core machine from exhausting it.
 
 ## Running automated checks
 
@@ -457,7 +469,7 @@ before being copied or extended.
 
 | Where | Why |
 |---|---|
-| `audio/ports.rs` — `RetiredPorts` hides an unregistered port until JACK stops listing it | [jack2#617](https://github.com/jackaudio/jack2/issues/617). The port list is not immediately consistent after the notification. |
+| `audio/ports.rs` — `RetiredPorts` hides an unregistered port until JACK stops listing it | [jack2#617](https://github.com/jackaudio/jack2/issues/617). The port list is not immediately consistent after the notification. `a_port_leaves_the_input_list_the_moment_it_is_unregistered` is the test that fails if upstream fixes it and the workaround is dropped. |
 
 ## Key Terminology
 

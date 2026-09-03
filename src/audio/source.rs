@@ -35,6 +35,7 @@ pub mod events {
 		PortsChanged(PortsChanged),
 		ConnectionChanged(ConnectionChanged),
 		SampleRateChanged(SampleRateChanged),
+		ServerShutdown(ServerShutdown),
 	}
 
 	/// The set of ports JACK knows about changed — one was registered,
@@ -56,6 +57,17 @@ pub mod events {
 
 	#[derive(Debug, Clone, PartialEq, Eq)]
 	pub struct SampleRateChanged(pub u32);
+
+	/// The JACK server the source was talking to is gone, for the reason it
+	/// gave on its way out.
+	///
+	/// It is the last event a source reports. The client is dead by the time
+	/// JACK calls back, and the app is built around a server being up, so there
+	/// is nothing to reconnect to and nothing more to say.
+	#[derive(Debug, Clone, PartialEq, Eq)]
+	pub struct ServerShutdown {
+		pub reason: String,
+	}
 }
 
 pub trait JackSource {

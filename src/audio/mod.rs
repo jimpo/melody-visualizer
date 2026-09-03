@@ -98,6 +98,10 @@ impl AudioNotificationHandler {
 		self.send(events::SampleRateChanged(sample_rate));
 	}
 
+	fn notify_server_shutdown(&self, reason: String) {
+		self.send(events::ServerShutdown { reason });
+	}
+
 	/// Record what a port registration means for the port list, then announce
 	/// that the list changed.
 	///
@@ -138,12 +142,13 @@ impl AudioNotificationHandler {
 }
 
 impl NotificationHandler for AudioNotificationHandler {
-	// TODO: Handle shutdown gracefully
+	// TODO: Stop the pipeline and tell the user, rather than only reporting it.
 	unsafe fn shutdown(&mut self, status: ClientStatus, reason: &str) {
 		error!(
 			"JACK client shutdown: status = {:?}, reason = {}",
 			status, reason
 		);
+		self.notify_server_shutdown(reason.to_string());
 	}
 
 	fn sample_rate(&mut self, _client: &Client, sample_rate: Frames) -> Control {
@@ -278,6 +283,21 @@ mod tests {
 		assert_eq!(
 			drain(&event_rx),
 			[Event::SampleRateChanged(events::SampleRateChanged(48_000))],
+		);
+	}
+
+	#[test]
+	fn notification_handler_forwards_a_server_shutdown() {
+		let (handler, event_rx) = test_handler();
+
+		handler.notify_server_shutdown("jackd exited".to_string());
+
+		assert_eq!(
+			drain(&event_rx),
+			[Event::ServerShutdown(events::ServerShutdown {
+				reason: "jackd exited".to_string(),
+			})],
+			"the reason JACK gave is carried through to the app",
 		);
 	}
 

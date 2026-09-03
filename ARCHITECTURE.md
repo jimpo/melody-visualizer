@@ -348,11 +348,11 @@ which is why every subscriber callback runs on the GTK thread. Subscriptions are
 `SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
 prunes the subscription. This is why views stash their handles.
 
-Events today: `PortsChanged`, `ConnectionChanged` and `SampleRateChanged` (from
-JACK), `InsertSpectrumTransform` (from `AppController`), `GraphicUpdate` (from
-`VisualizationController`).
+Events today: `PortsChanged`, `ConnectionChanged`, `SampleRateChanged` and
+`ServerShutdown` (from JACK), `InsertSpectrumTransform` (from `AppController`),
+`GraphicUpdate` (from `VisualizationController`).
 
-The JACK three do not reach the bus from the audio module. `AudioSource::new`
+The JACK four do not reach the bus from the audio module. `AudioSource::new`
 returns a channel of `events::Event`, and `AppController` spawns one task on the
 main context that drains it and republishes each event under its own type. That
 task is the only place the audio module and PubSub meet, which is what keeps
@@ -445,8 +445,9 @@ candidate for its own change.
 - **A workaround is load-bearing**: unregistered port names are retired inside
   `audio/ports.rs` because JACK keeps listing them (jack2#617). It should be
   revisited against current upstream.
-- **JACK server shutdown is unhandled** — `NotificationHandler::shutdown` only
-  logs. The app should tell the user and stop the pipeline.
+- **JACK server shutdown is reported but not acted on** — the source publishes
+  `ServerShutdown` and nothing subscribes. The app should tell the user and stop
+  the pipeline.
 
 ### DSP chain
 

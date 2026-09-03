@@ -47,7 +47,6 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 	fn generate(
 		&mut self,
 		buffer: GraphicBuffer,
-		_params: &Arc<SpectrumParams>,
 		_spectrum_history: &VecDeque<Spectrum>,
 	) -> Result<Graphic, Error> {
 		let x_max = buffer.width();
@@ -65,27 +64,38 @@ impl GraphicGenerator for DefaultGraphicGenerator {
 		1
 	}
 
-	fn upcast_any_ref(&self) -> &dyn Any {
-		self
-	}
-
-	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+	fn as_any_mut(&mut self) -> &mut dyn Any {
 		self
 	}
 }
 
+/// Drives a [`GraphicGenerator`]: keeps the recent spectra, owns the frequency
+/// grid and the surface size, and turns a [`GraphicBuffer`] into a [`Graphic`].
+///
+/// The renderer is the only thing that reaches a generator, and it is what makes
+/// the generator's preconditions hold. Every path that changes the grid, the
+/// size, or the generator itself hands the generator what it needs before the
+/// next [`render`](Self::render).
+///
+/// It holds no channel and spawns no thread, so a test drives it directly;
+/// [`start`] is what puts one on the graphic thread.
 pub struct GraphicRenderer {
 	generator: Box<dyn GraphicGenerator>,
 	spectrum_history: VecDeque<Spectrum>,
 	spectrum_params: Arc<SpectrumParams>,
+	/// The size of the last buffer rendered, which the generator has been told.
+	width: i32,
+	height: i32,
 }
 
 impl GraphicRenderer {
-	fn new() -> Self {
+	pub fn new() -> Self {
 		GraphicRenderer {
 			generator: Box::new(DefaultGraphicGenerator),
 			spectrum_history: VecDeque::new(),
 			spectrum_params: Arc::new(SpectrumParams::default()),
+			width: 0,
+			height: 0,
 		}
 	}
 
@@ -110,16 +120,26 @@ impl GraphicRenderer {
 	}
 
 	pub fn render(&mut self, buffer: GraphicBuffer) -> Result<Graphic, Error> {
-		self.generator
-			.generate(buffer, &self.spectrum_params, &self.spectrum_history)
+		if buffer.width() != self.width || buffer.height() != self.height {
+			self.width = buffer.width();
+			self.height = buffer.height();
+			self.generator.set_size(self.width, self.height);
+		}
+		self.generator.generate(buffer, &self.spectrum_history)
 	}
 
-	pub fn generator(&self) -> &dyn GraphicGenerator {
-		&*self.generator
-	}
-
-	pub fn generator_mut(&mut self) -> &mut Box<dyn GraphicGenerator> {
-		&mut self.generator
+	/// Applies `update` to the generator, then hands it the current grid and size.
+	///
+	/// `update` may replace the generator with one that has never been told
+	/// either — `GraphicGeneratorConfig::update` swaps the box when the config
+	/// names a different kind of generator — so re-establishing them is part of
+	/// the same step. That is why the generator is reachable only through this,
+	/// and why the closure is handed the `Box` rather than the trait object:
+	/// replacing it is the point.
+	pub fn update_generator(&mut self, update: impl FnOnce(&mut Box<dyn GraphicGenerator>)) {
+		update(&mut self.generator);
+		self.generator.set_params(&self.spectrum_params);
+		self.generator.set_size(self.width, self.height);
 	}
 
 	pub fn spectrum_params(&self) -> &Arc<SpectrumParams> {
@@ -129,6 +149,13 @@ impl GraphicRenderer {
 	pub fn set_spectrum_params(&mut self, params: SpectrumParams) {
 		self.spectrum_params = Arc::new(params);
 		self.spectrum_history.clear();
+		self.generator.set_params(&self.spectrum_params);
+	}
+}
+
+impl Default for GraphicRenderer {
+	fn default() -> Self {
+		Self::new()
 	}
 }
 

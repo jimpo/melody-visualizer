@@ -116,19 +116,8 @@ impl GraphicGenerator for SpiralGenerator {
 	fn generate(
 		&mut self,
 		buffer: GraphicBuffer,
-		params: &Arc<SpectrumParams>,
 		spectrum_history: &VecDeque<Spectrum>,
 	) -> Result<Graphic, Error> {
-		let x_max = buffer.width();
-		let y_max = buffer.height();
-
-		if !(Arc::ptr_eq(&self.params, params) && x_max == self.x_max && y_max == self.y_max) {
-			self.x_max = x_max;
-			self.y_max = y_max;
-			self.params = params.clone();
-			self.regenerate();
-		}
-
 		let spectrum = spectrum_history.front().map(|spectrum| spectrum.values());
 
 		buffer.draw(|ctx| {
@@ -184,15 +173,22 @@ impl GraphicGenerator for SpiralGenerator {
 		})
 	}
 
+	fn set_params(&mut self, params: &Arc<SpectrumParams>) {
+		self.params = params.clone();
+		self.regenerate();
+	}
+
+	fn set_size(&mut self, width: i32, height: i32) {
+		self.x_max = width;
+		self.y_max = height;
+		self.regenerate();
+	}
+
 	fn history_len(&self) -> usize {
 		1
 	}
 
-	fn upcast_any_ref(&self) -> &dyn Any {
-		self
-	}
-
-	fn upcast_any_mut(&mut self) -> &mut dyn Any {
+	fn as_any_mut(&mut self) -> &mut dyn Any {
 		self
 	}
 }

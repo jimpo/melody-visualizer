@@ -295,6 +295,14 @@ chain — and to a transform the moment it joins one. `SpectrumTransform::set_pa
 is the hook, and it defaults to doing nothing, for a transform whose output
 depends only on the values it is given.
 
+The graphic side works the same way, with a second hook for the other thing a
+generator derives geometry from. `GraphicRenderer` owns the grid and sees every
+buffer, so it is what calls `GraphicGenerator::set_params` when the grid changes
+and `set_size` when a differently-sized buffer arrives — and both when
+`update_generator` swaps in a generator that has been told neither.
+`GraphicGenerator::generate` therefore draws and nothing else: it compares no
+state and rebuilds no cache.
+
 ---
 
 ## 4. The control path
@@ -466,7 +474,6 @@ candidate for its own change.
 
 - `SpiralGenerator` is the only generator, and `history_len()` is hardcoded to 1,
   so the history mechanism is never exercised. Either use it or simplify it away.
-- `ConfigurableGraphicGenerator` (`graphic/mod.rs`) is empty and unused.
 - `GraphicBuffer::with_image_surface` extends a slice's lifetime with
   `mem::transmute` to satisfy `ImageSurface::create_for_data`. It is guarded and
   documented, but it is the one piece of `unsafe` in the crate and deserves a

@@ -123,18 +123,43 @@ impl GraphicBuffer {
 	}
 }
 
-pub trait GraphicGenerator: Debug {
+/// Draws a spectrum history into a pixel buffer.
+///
+/// A generator derives its geometry from the frequency grid and the surface
+/// size. Both arrive through their own hook, so [`generate`](Self::generate)
+/// draws and nothing else.
+///
+/// # Preconditions
+/// - [`set_params`](Self::set_params) and [`set_size`](Self::set_size) have been
+///   called with the grid and the size the buffer handed to `generate` is on.
+///
+/// [`GraphicRenderer`](renderer::GraphicRenderer) is what upholds those: it
+/// owns the grid, sees every buffer, and calls the hooks whenever either
+/// changes. A generator is not otherwise reachable.
+pub trait GraphicGenerator: Debug + Send {
+	/// Draws `spectrum_history`, most recent first, into `buffer`.
 	fn generate(
 		&mut self,
 		buffer: GraphicBuffer,
-		params: &Arc<SpectrumParams>,
 		spectrum_history: &VecDeque<Spectrum>,
 	) -> Result<Graphic, Error>;
 
+	/// Rebuilds whatever the generator derives from the frequency grid.
+	///
+	/// Called when the grid changes, and once when the generator joins a
+	/// renderer. The default does nothing, which is right for a generator whose
+	/// output depends only on the values it is handed.
+	fn set_params(&mut self, _params: &Arc<SpectrumParams>) {}
+
+	/// Rebuilds whatever the generator derives from the surface size.
+	///
+	/// Called when the size changes, and once when the generator joins a
+	/// renderer. The default does nothing, which is right for a generator that
+	/// reads the size off the buffer it draws into.
+	fn set_size(&mut self, _width: i32, _height: i32) {}
+
+	/// How many spectra back the generator draws.
 	fn history_len(&self) -> usize;
 
-	fn upcast_any_ref(&self) -> &dyn Any;
-	fn upcast_any_mut(&mut self) -> &mut dyn Any;
+	fn as_any_mut(&mut self) -> &mut dyn Any;
 }
-
-pub trait ConfigurableGraphicGenerator {}

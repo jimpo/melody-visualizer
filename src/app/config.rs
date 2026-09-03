@@ -60,16 +60,22 @@ macro_rules! define_graphic_generator_config {
 				}
 			}
 
-			pub fn update(self, transform: &mut Box<dyn GraphicGenerator>) {
+			/// Reconfigures `generator` in place, or replaces it when the
+			/// config names a different kind.
+			///
+			/// Replacing is why this takes the `Box` rather than
+			/// `&mut dyn GraphicGenerator`. Reconfiguring in place is what
+			/// keeps a slider drag from rebuilding the generator per event.
+			pub fn update(self, generator: &mut Box<dyn GraphicGenerator>) {
 				match self {
 					$(
 						Self::$variant(config) => {
-							match transform
-								.upcast_any_mut()
+							match generator
+								.as_any_mut()
 								.downcast_mut::<$variant>()
 							{
-								Some(transform) => transform.set_config(config),
-								None => *transform = Box::new($variant::new(config)),
+								Some(generator) => generator.set_config(config),
+								None => *generator = Box::new($variant::new(config)),
 							}
 						}
 					)+

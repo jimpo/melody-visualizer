@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use rustfft::{Fft, FftPlanner, num_complex::Complex64};
 use std::{
 	f64::consts::PI,
@@ -20,6 +19,9 @@ pub struct Config {
 
 pub struct AudioSpectrumGenerator {
 	audio_buffer: SampleReader,
+	/// The window the ring is read into, one DFT window long. Held across ticks
+	/// so that the spectrum thread allocates nothing per tick.
+	samples: Vec<f32>,
 	analyzer: Analyzer,
 	/// The overrun count as of the last tick that logged one. The counter itself
 	/// only ever grows; this is what turns it into a per-tick delta.
@@ -38,6 +40,7 @@ impl AudioSpectrumGenerator {
 	pub fn new(config: Config, audio_buffer: SampleReader, sample_rate: u32) -> Self {
 		let mut generator = AudioSpectrumGenerator {
 			audio_buffer,
+			samples: Vec::new(),
 			analyzer: Analyzer::new(WindowShape::Hann, sample_rate),
 			reported_overruns: 0,
 		};
@@ -47,6 +50,7 @@ impl AudioSpectrumGenerator {
 
 	pub fn set_window_size(&mut self, dft_window_size: usize) {
 		self.analyzer.set_window_size(dft_window_size);
+		self.samples.resize(dft_window_size, 0.0);
 	}
 
 	/// Log any audio the real-time thread dropped since the last tick.
@@ -76,22 +80,9 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 
 		self.report_overruns();
 
-		let n = self.analyzer.window_size();
-
-		let available = self.audio_buffer.buffer.space();
-		if available > n * 4 {
-			self.audio_buffer.buffer.advance(available - n * 4);
-		}
-
-		let samples = self
-			.audio_buffer
-			.buffer
-			.peek_iter()
-			.take(n * 4)
-			.tuples::<(_, _, _, _)>()
-			.map(|(&b1, &b2, &b3, &b4)| f32::from_ne_bytes([b1, b2, b3, b4]) as f64);
-
-		self.analyzer.run_dft(samples);
+		let read = self.audio_buffer.read_latest(&mut self.samples);
+		self.analyzer
+			.run_dft(self.samples[..read].iter().map(|&sample| sample as f64));
 		self.analyzer.fill_bins(buffer)
 	}
 

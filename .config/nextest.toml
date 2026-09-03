@@ -1,0 +1,13 @@
+# nextest configuration. See https://nexte.st/docs/configuration/.
+
+# `tests/audio_source.rs` gives every test its own `jackd`, and JACK allows only
+# a handful of servers at once: they share one shared-memory registry, and a
+# machine with enough cores runs enough of these tests together to exhaust it.
+# The failure is a client that cannot open a server the test just started, so
+# cap how many run side by side. The whole file takes about a second either way.
+[test-groups]
+jack-server = { max-threads = 2 }
+
+[[profile.default.overrides]]
+filter = 'binary(audio_source)'
+test-group = 'jack-server'

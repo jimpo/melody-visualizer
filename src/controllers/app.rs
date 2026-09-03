@@ -241,6 +241,7 @@ fn republish_audio_events(events: Receiver<AudioSourceEvent>, notifier: Notifier
 				AudioSourceEvent::PortsChanged(event) => notifier.send(event),
 				AudioSourceEvent::ConnectionChanged(event) => notifier.send(event),
 				AudioSourceEvent::SampleRateChanged(event) => notifier.send(event),
+				AudioSourceEvent::ServerShutdown(event) => notifier.send(event),
 			};
 			if let Err(err) = published {
 				log::error!("{}", Error::PubSub(err));

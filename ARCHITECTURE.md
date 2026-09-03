@@ -348,11 +348,11 @@ which is why every subscriber callback runs on the GTK thread. Subscriptions are
 `SubscriptionHandle`, and dropping it (typically in a view's `connect_destroy`)
 prunes the subscription. This is why views stash their handles.
 
-Events today: `PortsChanged`, `ConnectionChanged` and `SampleRateChanged` (from
-JACK), `InsertSpectrumTransform` (from `AppController`), `GraphicUpdate` (from
-`VisualizationController`).
+Events today: `PortsChanged`, `ConnectionChanged`, `SampleRateChanged` and
+`ServerShutdown` (from JACK), `InsertSpectrumTransform` (from `AppController`),
+`GraphicUpdate` (from `VisualizationController`).
 
-The JACK three do not reach the bus from the audio module. `AudioSource::new`
+The JACK four do not reach the bus from the audio module. `AudioSource::new`
 returns a channel of `events::Event`, and `AppController` spawns one task on the
 main context that drains it and republishes each event under its own type. That
 task is the only place the audio module and PubSub meet, which is what keeps
@@ -400,7 +400,7 @@ waiting for the renderer threads deadlocks.
 | `graphic/` | `Graphic`/`GraphicBuffer` (cairo), graphic thread, generators. |
 | `traits.rs` | `Configurable` — build or update a component from its config. |
 | `error.rs` | Crate-wide `Error`. |
-| `test_support.rs` | Shared fixtures: the glib main-loop driver, synthesized audio, and the wiring that builds a renderer from a `Config`. Public under the `testing` feature. |
+| `test_support/` | Shared fixtures: the glib main-loop driver, synthesized audio, the wiring that builds a renderer from a `Config`, and a private JACK server (`jackd.rs`). Public under the `testing` feature. |
 
 ---
 
@@ -431,12 +431,12 @@ candidate for its own change.
 
 ### Audio engine client
 
-- **One JACK type still leaks across a component boundary.**
-  `AudioSpectrumGenerator` reads a `jack::RingBufferReader` of raw bytes off
-  `SampleReader`. Ports and connections are behind `JackSource` now, but the
-  target is an **audio-engine-agnostic input port**: a trait that yields `f32`
-  frames as well as a device/port list, with the JACK client as one
-  implementation. That is what makes PipeWire, ALSA, or a file source possible.
+- **The sample seam names JACK.** `AudioSpectrumGenerator` asks `SampleReader`
+  for `f32` windows and no longer sees a byte, but `SampleReader` is a concrete
+  JACK ring. Ports and connections are behind `JackSource`; the target is an
+  **audio-engine-agnostic input port**: a trait that yields `f32` frames as well
+  as a device/port list, with the JACK client as one implementation. That is
+  what makes PipeWire, ALSA, or a file source possible.
 - **The sample rate does not reach the DSP.** `SampleRateChanged` is published
   but nothing subscribes to it, and `AudioSpectrumGenerator` captures the rate
   once at construction. A rate change silently mis-scales every frequency.
@@ -445,8 +445,9 @@ candidate for its own change.
 - **A workaround is load-bearing**: unregistered port names are retired inside
   `audio/ports.rs` because JACK keeps listing them (jack2#617). It should be
   revisited against current upstream.
-- **JACK server shutdown is unhandled** — `NotificationHandler::shutdown` only
-  logs. The app should tell the user and stop the pipeline.
+- **JACK server shutdown is reported but not acted on** — the source publishes
+  `ServerShutdown` and nothing subscribes. The app should tell the user and stop
+  the pipeline.
 
 ### DSP chain
 

@@ -295,6 +295,66 @@ impl GraphicProcessor {
 mod tests {
 	use super::*;
 
+	use std::sync::Mutex;
+
+	/// What a [`Recorder`] was asked to do.
+	#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+	enum Call {
+		Generate,
+		SetParams,
+		SetSize(i32, i32),
+	}
+
+	/// A generator that records its calls into a log shared with the test, and
+	/// draws nothing.
+	#[derive(Debug)]
+	struct Recorder {
+		log: Arc<Mutex<Vec<Call>>>,
+		history_len: usize,
+	}
+
+	impl GraphicGenerator for Recorder {
+		fn generate(
+			&mut self,
+			buffer: GraphicBuffer,
+			_spectrum_history: &VecDeque<Spectrum>,
+		) -> Result<Graphic, Error> {
+			self.log.lock().unwrap().push(Call::Generate);
+			buffer.draw(|_ctx| Ok(()))
+		}
+
+		fn set_params(&mut self, _params: &Arc<SpectrumParams>) {
+			self.log.lock().unwrap().push(Call::SetParams);
+		}
+
+		fn set_size(&mut self, width: i32, height: i32) {
+			self.log.lock().unwrap().push(Call::SetSize(width, height));
+		}
+
+		fn history_len(&self) -> usize {
+			self.history_len
+		}
+
+		fn as_any_mut(&mut self) -> &mut dyn Any {
+			self
+		}
+	}
+
+	/// A renderer driving a recorder that keeps `history_len` spectra, and the
+	/// log they share.
+	fn recording_renderer(history_len: usize) -> (GraphicRenderer, Arc<Mutex<Vec<Call>>>) {
+		let log = Arc::new(Mutex::new(Vec::new()));
+		let mut renderer = GraphicRenderer::new();
+		renderer.update_generator(|generator| {
+			*generator = Box::new(Recorder {
+				log: log.clone(),
+				history_len,
+			});
+		});
+		log.lock().unwrap().clear();
+		(renderer, log)
+	}
+
 	/// Where a buffer's values live, and the buffer back again.
 	///
 	/// The address is what tells a recycled allocation from a fresh one.
@@ -329,6 +389,80 @@ mod tests {
 			allocation(returned).0,
 			incoming,
 			"the steady state allocates nothing, reconfiguration included",
+		);
+	}
+
+	#[test]
+	fn the_evicted_spectrum_is_the_buffer_handed_back() {
+		let (mut renderer, _log) = recording_renderer(2);
+		let params = renderer.spectrum_params().clone();
+
+		// Filling the history costs one buffer per spectrum: there is nothing to
+		// evict yet.
+		for _ in 0..2 {
+			renderer.update_spectrum(SpectrumBuffer::new(params.clone()).fill(|_v, _p| {}));
+		}
+		assert_eq!(renderer.spectrum_history.len(), 2);
+
+		let (oldest, buffer) = allocation(SpectrumBuffer::new(params.clone()));
+		renderer.update_spectrum(buffer.fill(|_v, _p| {}));
+		let returned = renderer
+			.update_spectrum(SpectrumBuffer::new(params.clone()).fill(|_values, _params| {}));
+
+		assert_eq!(
+			renderer.spectrum_history.len(),
+			2,
+			"the generator asked for two spectra, so the third pushes one out",
+		);
+		assert_eq!(
+			allocation(returned).0,
+			oldest,
+			"the spectrum the history evicts is the buffer the spectrum thread gets",
+		);
+	}
+
+	#[test]
+	fn the_generator_is_told_the_grid_and_the_size_it_will_be_drawing_on() {
+		let (mut renderer, log) = recording_renderer(1);
+
+		renderer.render(GraphicBuffer::new(64, 32)).unwrap();
+		renderer.render(GraphicBuffer::new(64, 32)).unwrap();
+		renderer.set_spectrum_params(SpectrumParams::exp_spaced(8, 200.0, 20000.0));
+		renderer.render(GraphicBuffer::new(128, 64)).unwrap();
+
+		assert_eq!(
+			*log.lock().unwrap(),
+			[
+				Call::SetSize(64, 32),
+				Call::Generate,
+				Call::Generate,
+				Call::SetParams,
+				Call::SetSize(128, 64),
+				Call::Generate,
+			],
+			"the hooks fire on a change and only on a change, always before the \
+			 frame that depends on them",
+		);
+	}
+
+	#[test]
+	fn a_generator_joining_a_renderer_is_handed_the_grid_and_the_size() {
+		let (mut renderer, _log) = recording_renderer(1);
+		renderer.render(GraphicBuffer::new(64, 32)).unwrap();
+		renderer.set_spectrum_params(SpectrumParams::exp_spaced(8, 200.0, 20000.0));
+
+		let log = Arc::new(Mutex::new(Vec::new()));
+		renderer.update_generator(|generator| {
+			*generator = Box::new(Recorder {
+				log: log.clone(),
+				history_len: 1,
+			});
+		});
+
+		assert_eq!(
+			*log.lock().unwrap(),
+			[Call::SetParams, Call::SetSize(64, 32)],
+			"a replacement generator has been told neither, so the renderer tells it",
 		);
 	}
 }

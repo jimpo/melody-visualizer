@@ -207,27 +207,59 @@ mod tests {
 	use super::*;
 
 	use crate::note;
+	use crate::spectrum::SpectrumBuffer;
 
-	const SIZE: i32 = 400;
+	const SIZE: i32 = 300;
+	const OUTER_PAD: f64 = 10.0;
+	const CENTER_PAD: f64 = 30.0;
+	const OCTAVES: usize = 3;
+	const BINS: usize = 12 * OCTAVES + 1;
 
-	/// A generator on a semitone grid from C3 to C6, keyed to C.
-	///
-	/// Three octaves at twelve bins each puts a bin on every semitone, so bins
-	/// 0, 12, 24 and 36 are the pitch class the key names.
-	fn keyed_to_c() -> SpiralGenerator {
-		let params = Arc::new(SpectrumParams::exp_spaced(
-			37,
-			note!(C, 3).frequency(),
-			note!(C, 6).frequency(),
-		));
-		let mut generator = SpiralGenerator::new(Config {
-			outer_pad: 20.0,
-			center_pad: 50.0,
+	/// The origin of the spiral on a `SIZE` by `SIZE` surface.
+	const ORIGIN: f64 = SIZE as f64 / 2.0;
+	/// The radius of the outermost ring, from `regenerate`'s `r_max`.
+	const R_MAX: f64 = ORIGIN - OUTER_PAD;
+
+	fn config() -> Config {
+		Config {
+			outer_pad: OUTER_PAD,
+			center_pad: CENTER_PAD,
 			key_log_freq: note!(C, 4).log_frequency(),
-		});
+		}
+	}
+
+	/// A semitone grid spanning `OCTAVES` octaves upward from C3.
+	///
+	/// Twelve bins an octave puts a bin on every semitone, so every twelfth is
+	/// the pitch class the key names.
+	fn semitone_grid() -> Arc<SpectrumParams> {
+		Arc::new(SpectrumParams::exp_spaced(
+			BINS,
+			note!(C, 3).frequency(),
+			note!(C, 3 + OCTAVES as i8).frequency(),
+		))
+	}
+
+	/// A generator on [`semitone_grid`] at `SIZE` by `SIZE`, keyed to C.
+	fn keyed_to_c() -> SpiralGenerator {
+		let mut generator = SpiralGenerator::new(config());
 		generator.set_size(SIZE, SIZE);
-		generator.set_params(&params);
+		generator.set_params(&semitone_grid());
 		generator
+	}
+
+	/// `generator`'s frame for a spectrum whose every bin holds `value`.
+	fn render(generator: &mut SpiralGenerator, value: f64) -> Graphic {
+		let spectrum = SpectrumBuffer::new(semitone_grid()).fill(|data, _params| data.fill(value));
+		let history = VecDeque::from([spectrum]);
+		generator
+			.generate(GraphicBuffer::new(SIZE, SIZE), &history)
+			.expect("rendering onto a CPU surface needs no display")
+	}
+
+	/// The distance of `edge`'s centre line from the surface centre.
+	fn radius(edge: &SegmentEdge) -> f64 {
+		(edge.x_center - ORIGIN).hypot(edge.y_center - ORIGIN)
 	}
 
 	/// The angle of `edge` about the surface centre, clockwise from straight up.
@@ -235,14 +267,30 @@ mod tests {
 	/// In `(-π, π]`, so a spoke a hair either side of the origin reads as a small
 	/// angle rather than one close to a full turn.
 	fn angle(edge: &SegmentEdge) -> f64 {
-		let origin = SIZE as f64 / 2.0;
-		(edge.x_center - origin).atan2(origin - edge.y_center)
+		(edge.x_center - ORIGIN).atan2(ORIGIN - edge.y_center)
+	}
+
+	/// The brightest channel within a pixel of `(x, y)`.
+	///
+	/// The neighbourhood absorbs the rounding between a mesh drawn in floating
+	/// point and the pixel grid it lands on.
+	fn brightest_near(graphic: &Graphic, x: f64, y: f64) -> u8 {
+		let (x, y) = (x.round() as i32, y.round() as i32);
+		(-1..=1)
+			.flat_map(|dy| (-1..=1).map(move |dx| (x + dx, y + dy)))
+			.filter(|&(x, y)| (0..SIZE).contains(&x) && (0..SIZE).contains(&y))
+			.map(|(x, y)| {
+				let (red, green, blue) = graphic.pixel(x, y);
+				red.max(green).max(blue)
+			})
+			.max()
+			.expect("the neighbourhood of an on-surface point is not empty")
 	}
 
 	#[test]
 	fn pitch_class_c_sits_at_the_angle_origin_in_every_octave() {
 		let generator = keyed_to_c();
-		for index in [0, 12, 24, 36] {
+		for index in (0..BINS).step_by(12) {
 			let angle = angle(&generator.edges[index]);
 			assert!(
 				angle.abs() < 1e-6,
@@ -266,5 +314,125 @@ mod tests {
 					< 1e-6,
 			);
 		}
+	}
+
+	#[test]
+	fn radius_increases_with_log_frequency() {
+		let generator = keyed_to_c();
+		assert!(
+			generator
+				.edges
+				.windows(2)
+				.all(|pair| radius(&pair[0]) < radius(&pair[1])),
+			"radius is the log-frequency axis, so it never doubles back",
+		);
+	}
+
+	#[test]
+	fn the_edges_span_the_configured_annulus() {
+		let generator = keyed_to_c();
+		let first = generator.edges.first().expect("the grid is not empty");
+		let last = generator.edges.last().expect("the grid is not empty");
+
+		assert!((radius(first) - CENTER_PAD).abs() < 1e-6);
+		assert!((radius(last) - R_MAX).abs() < 1e-6);
+
+		// Each edge is a band of ten per cent of an octave either side of its
+		// centre line.
+		let thickness = (R_MAX - CENTER_PAD) / OCTAVES as f64 * 0.1;
+		let inner = (last.x_inner - ORIGIN).hypot(last.y_inner - ORIGIN);
+		let outer = (last.x_outer - ORIGIN).hypot(last.y_outer - ORIGIN);
+		assert!((inner - (R_MAX - thickness)).abs() < 1e-6);
+		assert!((outer - (R_MAX + thickness)).abs() < 1e-6);
+	}
+
+	#[test]
+	fn geometry_is_rebuilt_on_a_size_change_and_on_a_params_change() {
+		let mut generator = keyed_to_c();
+		let outermost = radius(generator.edges.last().expect("the grid is not empty"));
+
+		generator.set_size(SIZE / 2, SIZE / 2);
+		let resized = generator.edges.last().expect("the grid is not empty");
+		let origin = SIZE as f64 / 4.0;
+		assert!(
+			((resized.x_center - origin).hypot(resized.y_center - origin) - (origin - OUTER_PAD))
+				.abs() < 1e-6,
+			"a smaller surface rescales the annulus; the old radius was {}",
+			outermost,
+		);
+
+		generator.set_params(&Arc::new(SpectrumParams::exp_spaced(7, 200.0, 3200.0)));
+		assert_eq!(
+			generator.edges.len(),
+			7,
+			"a new grid gives one edge per bin of it",
+		);
+	}
+
+	#[test]
+	fn the_disc_inside_center_pad_is_black() {
+		let mut generator = keyed_to_c();
+		let graphic = render(&mut generator, 1.0);
+
+		// Inside the innermost band, which reaches a tenth of an octave below
+		// `center_pad`.
+		let clear = CENTER_PAD - (R_MAX - CENTER_PAD) / OCTAVES as f64 * 0.1 - 2.0;
+		for step in 0..16 {
+			let theta = step as f64 / 16.0 * 2.0 * PI;
+			let (x, y) = (ORIGIN + clear * theta.sin(), ORIGIN - clear * theta.cos());
+			assert_eq!(
+				graphic.pixel(x.round() as i32, y.round() as i32),
+				(0, 0, 0),
+				"the centre of the spiral carries no bin",
+			);
+		}
+		assert_eq!(graphic.pixel(SIZE / 2, SIZE / 2), (0, 0, 0));
+	}
+
+	#[test]
+	fn a_bin_at_full_scale_is_bright_where_its_edge_lands() {
+		let mut generator = keyed_to_c();
+		let graphic = render(&mut generator, 1.0);
+
+		for index in (1..BINS).step_by(6) {
+			let edge = &generator.edges[index];
+			let brightest = brightest_near(&graphic, edge.x_center, edge.y_center);
+			assert!(
+				brightest > 150,
+				"bin {} is at full scale, so its band is near full brightness, not {}",
+				index,
+				brightest,
+			);
+		}
+	}
+
+	#[test]
+	fn silence_renders_at_the_base_brightness_rather_than_black() {
+		let mut generator = keyed_to_c();
+		let graphic = render(&mut generator, 0.0);
+
+		// `generate` maps a bin to `0.2 + 0.8 * value`, so a silent spectrum
+		// still draws the spiral at a fifth of full brightness.
+		for index in (1..BINS).step_by(6) {
+			let edge = &generator.edges[index];
+			let brightest = brightest_near(&graphic, edge.x_center, edge.y_center);
+			assert!(
+				(20..90).contains(&brightest),
+				"bin {} is silent, so its band is dim but visible, not {}",
+				index,
+				brightest,
+			);
+		}
+	}
+
+	#[test]
+	fn rendering_is_deterministic() {
+		let mut generator = keyed_to_c();
+		let first = render(&mut generator, 0.5);
+		let second = render(&mut generator, 0.5);
+		assert_eq!(
+			first.buffer.data, second.buffer.data,
+			"the same history, grid and size produce the same bytes",
+		);
 	}
 }

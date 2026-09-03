@@ -25,6 +25,15 @@ impl Graphic {
 		self.buffer.height()
 	}
 
+	/// The pixel at `(x, y)` as `(red, green, blue)`.
+	///
+	/// # Preconditions
+	/// - `(x, y)` is inside the graphic.
+	#[cfg(test)]
+	fn pixel(&self, x: i32, y: i32) -> (u8, u8, u8) {
+		self.buffer.pixel(x, y)
+	}
+
 	/// Runs `f` against a cairo surface over this graphic's pixels.
 	///
 	/// The blit in `gui/visualization.rs` is what this exists for: cairo needs a
@@ -87,6 +96,23 @@ impl GraphicBuffer {
 			stride,
 			data,
 		}
+	}
+
+	/// The pixel at `(x, y)` as `(red, green, blue)`.
+	///
+	/// # Preconditions
+	/// - `(x, y)` is inside the buffer.
+	#[cfg(test)]
+	fn pixel(&self, x: i32, y: i32) -> (u8, u8, u8) {
+		assert!((0..self.width).contains(&x) && (0..self.height).contains(&y));
+		// Rgb24 is one 32-bit native-endian word per pixel, upper byte unused.
+		let offset = (y * self.stride + x * 4) as usize;
+		let word = u32::from_ne_bytes(
+			self.data[offset..offset + 4]
+				.try_into()
+				.expect("the slice is four bytes long"),
+		);
+		((word >> 16) as u8, (word >> 8) as u8, word as u8)
 	}
 
 	pub fn draw(mut self, draw: impl Fn(&Context) -> Result<(), Error>) -> Result<Graphic, Error> {
@@ -203,22 +229,89 @@ mod tests {
 
 	use std::cell::RefCell;
 
-	/// Every pixel of `graphic`, as `(red, green, blue)` triples in row order.
-	fn pixels(graphic: &mut Graphic) -> Vec<(u8, u8, u8)> {
-		let buffer = &graphic.buffer;
-		(0..buffer.height())
-			.flat_map(|y| (0..buffer.width()).map(move |x| (x, y)))
-			.map(|(x, y)| {
-				// Rgb24 is a 32-bit native-endian word per pixel, upper byte unused.
-				let offset = (y * buffer.stride + x * 4) as usize;
-				let word = u32::from_ne_bytes(
-					buffer.data[offset..offset + 4]
-						.try_into()
-						.expect("the slice is four bytes long"),
-				);
-				((word >> 16) as u8, (word >> 8) as u8, word as u8)
+	/// A buffer filled with `(red, green, blue)`, at the given size.
+	fn filled(width: i32, height: i32, (red, green, blue): (f64, f64, f64)) -> Graphic {
+		GraphicBuffer::new(width, height)
+			.draw(|ctx| {
+				ctx.set_source_rgb(red, green, blue);
+				ctx.paint()?;
+				Ok(())
 			})
-			.collect()
+			.expect("a plain fill succeeds")
+	}
+
+	#[test]
+	fn the_geometry_holds_across_widths() {
+		for width in [1, 2, 3, 5, 7, 13, 101] {
+			let height = 3;
+			let buffer = GraphicBuffer::new(width, height);
+
+			assert!(
+				buffer.stride >= 4 * width && buffer.stride % 4 == 0,
+				"Rgb24 is four bytes a pixel, on a four-byte-aligned row",
+			);
+			assert_eq!(buffer.data.len(), (buffer.stride * height) as usize);
+		}
+	}
+
+	#[test]
+	fn a_pixel_is_addressed_by_stride_not_by_width() {
+		// A width whose row cairo is free to pad, and a mark in the last column:
+		// indexing by `4 * width` instead of by the stride would read the wrong
+		// row from the second row on.
+		let (width, height) = (13, 3);
+		let graphic = GraphicBuffer::new(width, height)
+			.draw(|ctx| {
+				ctx.set_source_rgb(0.0, 0.0, 0.0);
+				ctx.paint()?;
+				ctx.set_source_rgb(1.0, 1.0, 1.0);
+				ctx.rectangle((width - 1) as f64, (height - 1) as f64, 1.0, 1.0);
+				ctx.fill()?;
+				Ok(())
+			})
+			.expect("the fill succeeds");
+
+		assert_eq!(graphic.pixel(width - 1, height - 1), (255, 255, 255));
+		assert_eq!(graphic.pixel(width - 2, height - 1), (0, 0, 0));
+		assert_eq!(graphic.pixel(width - 1, height - 2), (0, 0, 0));
+	}
+
+	#[test]
+	fn resize_sets_the_length_and_keeps_the_allocation_when_it_can() {
+		let buffer = GraphicBuffer::new(64, 64);
+		let allocation = buffer.data.as_ptr();
+
+		let smaller = buffer.resize(32, 32);
+		assert_eq!(smaller.data.len(), (smaller.stride * 32) as usize);
+		assert_eq!(
+			smaller.data.as_ptr(),
+			allocation,
+			"shrinking reuses the allocation, which is what makes a window resize cheap",
+		);
+
+		let larger = smaller.resize(128, 128);
+		assert_eq!(larger.data.len(), (larger.stride * 128) as usize);
+	}
+
+	#[test]
+	fn a_zero_by_zero_buffer_renders() {
+		// The state every buffer starts in, before the drawing area reports a
+		// size. cairo accepts a degenerate surface, so this is not an error path.
+		let buffer = GraphicBuffer::new(0, 0);
+		assert_eq!(buffer.data.len(), 0);
+
+		let graphic = filled(0, 0, (0.0, 0.0, 0.0));
+		assert_eq!((graphic.width(), graphic.height()), (0, 0));
+	}
+
+	#[test]
+	fn draw_writes_the_pixels_it_is_told_to() {
+		let graphic = filled(4, 4, (1.0, 0.5, 0.0));
+		// Rgb24 rounds each channel to eight bits; 0.5 lands on 128.
+		assert!(
+			(0..4).all(|y| (0..4).all(|x| graphic.pixel(x, y) == (255, 128, 0))),
+			"every pixel carries the colour the callback painted",
+		);
 	}
 
 	#[test]
@@ -243,7 +336,7 @@ mod tests {
 		drop(context);
 		drop(escaped);
 
-		let mut graphic = buffer
+		let graphic = buffer
 			.draw(|ctx| {
 				ctx.set_source_rgb(0.0, 0.0, 0.0);
 				ctx.paint()?;
@@ -251,7 +344,7 @@ mod tests {
 			})
 			.expect("the buffer draws normally after the escape");
 		assert!(
-			pixels(&mut graphic).iter().all(|&pixel| pixel == (0, 0, 0)),
+			(0..4).all(|y| (0..4).all(|x| graphic.pixel(x, y) == (0, 0, 0))),
 			"the buffer's pixels are its own, not the ones painted white through the escapee",
 		);
 	}

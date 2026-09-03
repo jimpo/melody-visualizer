@@ -429,6 +429,9 @@ Rules that keep the design intact. Breaking one needs a note in this document.
    building a backlog.
 7. **Data flows forward, control flows back.** The DSP never reaches into the
    GUI; the visualizer never reaches into the DSP.
+8. **A cairo surface never outlives the call it was made for.** `GraphicBuffer`
+   lends a transient surface over pixels it owns; a clone that survives the
+   callback aliases a buffer the pipeline goes on writing to.
 
 ---
 
@@ -475,9 +478,12 @@ candidate for its own change.
 - `SpiralGenerator` is the only generator, and `history_len()` is hardcoded to 1,
   so the history mechanism is never exercised. Either use it or simplify it away.
 - `GraphicBuffer::with_image_surface` extends a slice's lifetime with
-  `mem::transmute` to satisfy `ImageSurface::create_for_data`. It is guarded and
-  documented, but it is the one piece of `unsafe` in the crate and deserves a
-  safer construction.
+  `mem::transmute` to satisfy `ImageSurface::create_for_data`. It is the one
+  piece of `unsafe` in the crate. The construction that would retire it —
+  holding an `ImageSurface` in the buffer — is ruled out by `Graphic` having to
+  be `Send`, so the pixels travel as a `Vec<u8>` and a surface is built around
+  them per call. A caller that lets a surface clone escape gets
+  `Error::GraphicDrawClonesSurface` and leaks that buffer's allocation.
 
 ### GUI
 

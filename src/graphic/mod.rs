@@ -25,9 +25,19 @@ impl Graphic {
 		self.buffer.height()
 	}
 
-	// Sadly, this is mutable because a Surface reference can be used to modify its backing data,
-	// which we do not want to make a copy of for performance reasons. It is recommended that the
-	// callback only use the Surface argument in an immutable way.
+	/// Runs `f` against a cairo surface over this graphic's pixels.
+	///
+	/// The blit in `gui/visualization.rs` is what this exists for: cairo needs a
+	/// `Surface` to copy from, and the pixels must not be copied to produce one.
+	///
+	/// # Preconditions
+	/// - `f` must not let any clone of the surface — including one cairo makes
+	///   internally, such as the reference a `Context` holds after
+	///   `set_source_surface` — outlive the call. See
+	///   [`GraphicBuffer::with_image_surface`] for what happens if it does.
+	///
+	/// The receiver is `&mut self` because a surface can write through to the
+	/// pixels behind it. `f` takes a shared reference and is expected not to.
 	pub fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
 	where
 		F: Fn(&Surface) -> Result<T, Error>,
@@ -84,17 +94,34 @@ impl GraphicBuffer {
 		Ok(Graphic { buffer: self })
 	}
 
-	/// The callback must destroy any copies it makes of the surface reference, even if Cairo
-	/// creates the copies internally. Otherwise, this returns Error::GraphicDrawCopiesSurface.
+	/// Runs `f` against a transient cairo surface over `self.data`.
+	///
+	/// # Preconditions
+	/// - `f` must not let any clone of the surface outlive the call, cairo's own
+	///   internal references included. A `Context` holds one after
+	///   `set_source_surface`, and releases it when the source is replaced.
+	///
+	/// A violation is detected, not prevented: it returns
+	/// [`Error::GraphicDrawClonesSurface`] and leaks this buffer's allocation.
+	///
+	/// # Why the surface is transient
+	///
+	/// [`Graphic`] must be `Send`: it crosses from the graphic thread to the GTK
+	/// thread over the [`AsyncProcessor`](crate::async_processor::AsyncProcessor)
+	/// reply channel, and `cairo::ImageSurface` is not `Send`. So the pixels live
+	/// in a plain `Vec<u8>` that travels, and whichever thread needs a surface
+	/// builds one around it for the length of one call. Holding an `ImageSurface`
+	/// in the buffer instead — the obvious simplification, and the one that would
+	/// retire the `unsafe` below — does not compile for that reason.
 	fn with_image_surface<T, F>(&mut self, f: F) -> Result<T, Error>
 	where
 		F: Fn(&Surface) -> Result<T, Error>,
 	{
-		// Use unsafe cast to extend lifetime of the data reference because
-		// ImageSurface::create_for_data takes ownership of the data
-		// (ie. requires 'static lifetime). This is safe in here because we will ensure that all
-		// references to the created ImageSurface are dropped before returning, leaving no other
-		// references to the data vector.
+		// `ImageSurface::create_for_data` boxes the data it is given and keeps it
+		// as long as the surface lives, so it demands `'static`. Extend the
+		// borrow to satisfy it. The surface is destroyed before this returns, and
+		// the boxed value is a reference, so dropping it frees nothing — the
+		// `Vec` stays the sole owner of the allocation.
 		//
 		// See https://github.com/gtk-rs/cairo/issues/335 for rationale.
 		let data_ref =
@@ -109,10 +136,16 @@ impl GraphicBuffer {
 
 		let result = f(&surface);
 
-		// ImageSurface::get_data checks that there are no additional references and the data
-		// is safe to modify. If there is an error, we clone the data to avoid corruption.
+		// `ImageSurface::data` fails with `NonExclusive` when the surface's
+		// reference count is above one, which is exactly the case the
+		// precondition rules out: a live clone still points into `self.data`.
 		let _ = surface.data().map_err(|err| {
-			self.data = self.data.clone();
+			// Move the pixels to a fresh allocation and leak the old one. Freeing
+			// it would leave the escaped surface reading freed memory, turning a
+			// contained aliasing bug into a use-after-free; a leak on a path that
+			// should never execute is the bounded outcome.
+			let copy = self.data.clone();
+			mem::forget(mem::replace(&mut self.data, copy));
 			match err {
 				BorrowError::Cairo(err) => err.into(),
 				BorrowError::NonExclusive => Error::GraphicDrawClonesSurface,
@@ -162,4 +195,64 @@ pub trait GraphicGenerator: Debug + Send {
 	fn history_len(&self) -> usize;
 
 	fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use std::cell::RefCell;
+
+	/// Every pixel of `graphic`, as `(red, green, blue)` triples in row order.
+	fn pixels(graphic: &mut Graphic) -> Vec<(u8, u8, u8)> {
+		let buffer = &graphic.buffer;
+		(0..buffer.height())
+			.flat_map(|y| (0..buffer.width()).map(move |x| (x, y)))
+			.map(|(x, y)| {
+				// Rgb24 is a 32-bit native-endian word per pixel, upper byte unused.
+				let offset = (y * buffer.stride + x * 4) as usize;
+				let word = u32::from_ne_bytes(
+					buffer.data[offset..offset + 4]
+						.try_into()
+						.expect("the slice is four bytes long"),
+				);
+				((word >> 16) as u8, (word >> 8) as u8, word as u8)
+			})
+			.collect()
+	}
+
+	#[test]
+	fn a_surface_that_outlives_the_callback_is_caught_and_the_buffer_survives() {
+		let escaped = RefCell::new(None);
+		let mut buffer = GraphicBuffer::new(4, 4);
+
+		let result = buffer.with_image_surface(|surface| {
+			*escaped.borrow_mut() = Some(surface.clone());
+			Ok(())
+		});
+		assert!(matches!(result, Err(Error::GraphicDrawClonesSurface)));
+
+		// The buffer moved to a fresh allocation and leaked the old one, so the
+		// escaped surface aliases nothing the buffer will write to. Painting
+		// through it is the write that would be a use-after-free had the old
+		// allocation been freed instead.
+		let escaped = escaped.into_inner().expect("the callback stored a clone");
+		let context = Context::new(&escaped).expect("the escaped surface is still live");
+		context.set_source_rgb(1.0, 1.0, 1.0);
+		context.paint().expect("painting a live surface succeeds");
+		drop(context);
+		drop(escaped);
+
+		let mut graphic = buffer
+			.draw(|ctx| {
+				ctx.set_source_rgb(0.0, 0.0, 0.0);
+				ctx.paint()?;
+				Ok(())
+			})
+			.expect("the buffer draws normally after the escape");
+		assert!(
+			pixels(&mut graphic).iter().all(|&pixel| pixel == (0, 0, 0)),
+			"the buffer's pixels are its own, not the ones painted white through the escapee",
+		);
+	}
 }

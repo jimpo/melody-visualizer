@@ -2,7 +2,6 @@ use futures::{channel::mpsc, executor, prelude::*, select};
 use futures_timer::Delay;
 use log::{debug, error};
 use std::{
-	collections::HashMap,
 	fmt::Debug,
 	thread,
 	time::{Duration, Instant},
@@ -10,7 +9,7 @@ use std::{
 
 use crate::async_processor::{AsyncProcessor, ExecCommand, ExecReceiver};
 use crate::error::Error;
-use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumTransform};
+use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, TransformChain};
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
@@ -19,7 +18,6 @@ enum SpectrumProcessingError {
 	ReceivedUnexpectedBuffer,
 	#[display("skipping tick because no buffer is available")]
 	NoBuffer,
-	Other(Error),
 }
 
 #[derive(Debug)]
@@ -35,18 +33,21 @@ impl SpectrumGenerator for DefaultSpectrumGenerator {
 	}
 }
 
+/// The DSP chain: a generator and the transforms its spectra pass through.
+///
+/// Holds the state the chain needs and nothing else. [`SpectrumProcessor`] owns
+/// one and drives it on the spectrum thread.
+#[derive(Debug)]
 pub struct SpectrumRenderer {
 	generator: Box<dyn SpectrumGenerator>,
-	transforms: HashMap<u64, Box<dyn SpectrumTransform>>,
-	transform_order: Vec<u64>,
+	transforms: TransformChain,
 }
 
 impl SpectrumRenderer {
-	fn new() -> Self {
+	pub fn new() -> Self {
 		SpectrumRenderer {
 			generator: Box::new(DefaultSpectrumGenerator),
-			transforms: HashMap::new(),
-			transform_order: Vec::new(),
+			transforms: TransformChain::default(),
 		}
 	}
 
@@ -62,30 +63,33 @@ impl SpectrumRenderer {
 		self.generator = generator;
 	}
 
-	pub fn transform_by_index_mut(
-		&mut self,
-		index: usize,
-	) -> Result<Option<(u64, &mut dyn SpectrumTransform)>, Error> {
-		if let Some(&id) = self.transform_order.get(index) {
-			let config = self
-				.transforms
-				.get_mut(&id)
-				.ok_or_else(|| Error::MissingTransform { id })?;
-			Ok(Some((id, config.as_mut())))
-		} else {
-			Ok(None)
-		}
-	}
-
-	pub fn transforms_mut(&mut self) -> &mut HashMap<u64, Box<dyn SpectrumTransform>> {
+	pub fn transforms_mut(&mut self) -> &mut TransformChain {
 		&mut self.transforms
 	}
 
-	pub fn transform_order_mut(&mut self) -> &mut Vec<u64> {
-		&mut self.transform_order
+	/// Renders one spectrum: fill `buffer` from the generator, then run it
+	/// through the transform chain.
+	///
+	/// Pure, deterministic arithmetic over the state the renderer holds. It
+	/// needs no thread, no channel and no audio server, so the whole DSP chain
+	/// can be driven from a test or a benchmark.
+	pub fn render(&mut self, buffer: SpectrumBuffer) -> Spectrum {
+		self.transforms.set_params(buffer.params());
+		let spectrum = self.generator.generate(buffer);
+		self.transforms.apply(spectrum)
 	}
 }
 
+impl Default for SpectrumRenderer {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+/// Drives a [`SpectrumRenderer`] on the spectrum thread.
+///
+/// Owns the tick clock, the buffer channels and the control channel, and no DSP
+/// logic of its own.
 struct SpectrumProcessor {
 	renderer: SpectrumRenderer,
 	current_buffer: Option<SpectrumBuffer>,
@@ -168,7 +172,7 @@ impl SpectrumProcessor {
 		self.next_tick_time += self.renderer.generator.interval();
 
 		if let Some(buffer) = self.current_buffer.take() {
-			let spectrum = self.render(buffer)?;
+			let spectrum = self.renderer.render(buffer);
 			if let Err(err) = self.spectrum_output.send(spectrum).await {
 				return if err.is_disconnected() {
 					debug!("spectrum output channel disconnected, stopping spectrum processing");
@@ -181,18 +185,6 @@ impl SpectrumProcessor {
 		} else {
 			Err(SpectrumProcessingError::NoBuffer)
 		}
-	}
-
-	fn render(&mut self, buffer: SpectrumBuffer) -> Result<Spectrum, Error> {
-		let initial_spectrum = self.renderer.generator.generate(buffer);
-		// log::debug!("render n_transforms = {}", self.renderer.transform_order.len());
-		(0..self.renderer.transform_order.len()).try_fold(initial_spectrum, |spectrum, index| {
-			let (_id, transform) = self
-				.renderer
-				.transform_by_index_mut(index)?
-				.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
-			Ok(transform.transform(spectrum))
-		})
 	}
 }
 
@@ -214,4 +206,81 @@ pub fn start_with_thread_name(
 		executor::block_on(processor.process_loop())
 	})?;
 	Ok(AsyncProcessor::new(exec_tx))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use crate::spectrum::TransformId;
+	use crate::spectrum::transforms::{Diffuser, VolumeNormalizer, diffuser, volume_normalizer};
+	use crate::test_support::spectrum_params;
+	use crate::traits::Configurable;
+
+	/// A generator that fills every spectrum with the ramp `1, 2, 3, …`.
+	#[derive(Debug)]
+	struct RampGenerator;
+
+	impl SpectrumGenerator for RampGenerator {
+		fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum {
+			buffer.fill(|values, _params| {
+				for (index, value) in values.iter_mut().enumerate() {
+					*value = (index + 1) as f64;
+				}
+			})
+		}
+
+		fn interval(&self) -> Duration {
+			Duration::from_millis(1)
+		}
+	}
+
+	fn ramp_renderer() -> SpectrumRenderer {
+		let mut renderer = SpectrumRenderer::new();
+		renderer.set_generator(Box::new(RampGenerator));
+		renderer
+	}
+
+	#[test]
+	fn render_runs_the_generator_and_then_the_chain() {
+		let mut renderer = ramp_renderer();
+		renderer.transforms_mut().insert(
+			0,
+			TransformId(0),
+			Box::new(VolumeNormalizer::new(volume_normalizer::Config {
+				rate: 1.0,
+			})),
+		);
+
+		let spectrum = renderer.render(SpectrumBuffer::new(spectrum_params(4)));
+
+		assert_eq!(
+			spectrum.values(),
+			[0.25, 0.5, 0.75, 1.0],
+			"the generated ramp comes out scaled by the chain's normalizer",
+		);
+	}
+
+	#[test]
+	fn render_hands_the_frequency_grid_to_the_chain() {
+		let mut renderer = ramp_renderer();
+		renderer.transforms_mut().insert(
+			0,
+			TransformId(0),
+			// A zero-width diffuser is the identity, but it still convolves
+			// through a buffer it sizes from the grid — so it produces a
+			// spectrum at all only if the grid reached it.
+			Box::new(Diffuser::new(diffuser::Config { width: 0.0 })),
+		);
+
+		let spectrum = renderer.render(SpectrumBuffer::new(spectrum_params(4)));
+		assert_eq!(spectrum.values(), [1.0, 2.0, 3.0, 4.0]);
+
+		let spectrum = renderer.render(SpectrumBuffer::new(spectrum_params(6)));
+		assert_eq!(
+			spectrum.values(),
+			[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+			"a grid the renderer has not seen before reaches the chain",
+		);
+	}
 }

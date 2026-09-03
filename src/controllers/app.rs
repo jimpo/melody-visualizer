@@ -9,6 +9,7 @@ use crate::audio::source::{JackSource, PortName, SourceType, events::Event as Au
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub};
+use crate::spectrum::TransformId;
 use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 use crate::spectrum::renderer::{self as spectrum_processor, SpectrumRenderer};
 
@@ -119,29 +120,27 @@ impl AppController {
 
 	pub fn update_spectrum_transform(
 		&self,
-		id: u64,
+		id: TransformId,
 	) -> impl Future<Output = Result<(), Error>> + use<> {
-		if let Some(config) = self.config.spectrum_transforms.get(&id) {
-			let config = config.clone();
-			let fut = self
-				.spectrum_renderer
-				.exec_cloned(move |renderer| {
-					let transform = renderer
-						.transforms_mut()
-						.get_mut(&id)
-						.ok_or_else(|| Error::MissingTransform { id })?;
-					config.update(transform);
-					Ok(())
-				})
-				.map(|result| {
-					result
-						.map_err(Error::Communication)
-						.and_then(|result| result)
-				});
-			Either::Left(fut)
-		} else {
-			Either::Right(future::err(Error::MissingTransform { id }))
-		}
+		let config = match self.config.spectrum_transform(id) {
+			Ok(config) => config.clone(),
+			Err(err) => return Either::Right(future::err(err)),
+		};
+		let fut = self
+			.spectrum_renderer
+			.exec_cloned(move |renderer| {
+				let transform = renderer
+					.transforms_mut()
+					.get_mut(id)
+					.ok_or(Error::MissingTransform { id })?;
+				config.update(transform)
+			})
+			.map(|result| {
+				result
+					.map_err(Error::Communication)
+					.and_then(|result| result)
+			});
+		Either::Left(fut)
 	}
 
 	/// The ports that can be connected to the source's input, as JACK reports
@@ -183,14 +182,12 @@ impl AppController {
 
 	pub fn sync_spectrum_transforms(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let transform_configs = self.config.spectrum_transforms.clone();
-		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
 				*renderer.transforms_mut() = transform_configs
 					.into_iter()
 					.map(|(id, config)| (id, config.create()))
 					.collect();
-				*renderer.transform_order_mut() = transform_order;
 			})
 			.map_err(Error::Communication)
 	}
@@ -202,18 +199,15 @@ impl AppController {
 		let id = self.config.unused_transform_id();
 		self.config
 			.spectrum_transforms
-			.insert(id, transform_config.clone());
-		self.config.spectrum_transform_order.push(id);
-		let index = self.config.spectrum_transform_order.len() - 1;
+			.push((id, transform_config.clone()));
+		let index = self.config.spectrum_transforms.len() - 1;
 		self.notify_and_log_err(events::InsertSpectrumTransform { index });
 
-		let transform_order = self.config.spectrum_transform_order.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
 				renderer
 					.transforms_mut()
-					.insert(id, transform_config.create());
-				*renderer.transform_order_mut() = transform_order;
+					.insert(index, id, transform_config.create());
 			})
 			.map_err(Error::Communication)
 	}

@@ -5,7 +5,68 @@
 
 use futures::{channel::mpsc, prelude::*};
 use glib::MainLoop;
-use std::sync::Arc;
+use std::{f64::consts::TAU, sync::Arc};
+
+use crate::app::config::{Config, SpectrumGeneratorConfig};
+use crate::audio::SampleReader;
+use crate::audio::ring::sample_ring;
+use crate::spectrum::generators::audio::AudioSpectrumGenerator;
+use crate::spectrum::renderer::SpectrumRenderer;
+use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
+
+/// The default frequency range, sampled at `samples` exponentially spaced bins.
+///
+/// # Preconditions
+/// - `samples >= 2`
+pub fn spectrum_params(samples: usize) -> Arc<SpectrumParams> {
+	Arc::new(SpectrumParams::exp_spaced(samples, 200.0, 20000.0))
+}
+
+/// A spectrum holding `values`, on the grid [`spectrum_params`] builds for them.
+///
+/// # Preconditions
+/// - `values.len() >= 2`
+pub fn spectrum(values: &[f64]) -> Spectrum {
+	SpectrumBuffer::new(spectrum_params(values.len()))
+		.fill(|data, _params| data.copy_from_slice(values))
+}
+
+/// A sum of sine waves, sampled at `sample_rate`.
+///
+/// Each component is a `(frequency in Hz, amplitude)` pair. The result feeds
+/// [`sample_reader`], which is how the DSP is driven with a known signal.
+pub fn sine_wave(components: &[(f64, f64)], sample_rate: u32, samples: usize) -> Vec<f32> {
+	(0..samples)
+		.map(|index| {
+			let time = index as f64 / sample_rate as f64;
+			components
+				.iter()
+				.map(|(frequency, amplitude)| amplitude * (TAU * frequency * time).sin())
+				.sum::<f64>() as f32
+		})
+		.collect()
+}
+
+/// A [`SampleReader`] holding `samples`, with no JACK server behind it.
+///
+/// Allocating a ring buffer is a plain userspace operation, so this is the seam
+/// the generator is fed deterministic audio through. The reader peeks rather
+/// than consumes, so the same samples serve every call to
+/// [`generate`](crate::spectrum::SpectrumGenerator::generate).
+pub fn sample_reader(samples: &[f32]) -> SampleReader {
+	// The ring rounds its size up to a power of two and keeps one byte free, so
+	// ask for more than the samples strictly need.
+	let size = (samples.len() + 1) * size_of::<f32>() * 2;
+	let (mut writer, reader) =
+		sample_ring(size).expect("allocating a ring buffer needs no JACK server");
+	writer.write_samples(samples);
+	assert_eq!(
+		reader.overruns(),
+		0,
+		"the ring was sized to hold every sample",
+	);
+	reader
+}
 
 /// Run async test code inside a glib main loop.
 ///
@@ -46,4 +107,26 @@ where
 	});
 
 	main_loop.run();
+}
+
+/// The DSP chain `config` describes, reading its audio from `reader`.
+///
+/// The same wiring `AppController` performs when it starts the spectrum thread,
+/// with no thread and no JACK client: the generator `config` names, then its
+/// transforms in configured order.
+pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> SpectrumRenderer {
+	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+
+	let mut renderer = SpectrumRenderer::new();
+	renderer.set_generator(Box::new(AudioSpectrumGenerator::new(
+		generator_config.clone(),
+		reader,
+		sample_rate,
+	)));
+	*renderer.transforms_mut() = config
+		.spectrum_transforms
+		.iter()
+		.map(|(id, transform_config)| (*id, transform_config.clone().create()))
+		.collect();
+	renderer
 }

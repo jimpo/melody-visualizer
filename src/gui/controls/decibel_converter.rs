@@ -22,22 +22,14 @@ pub fn new(
 
 	let controller = controller.borrow();
 	let app_controller = controller.app_controller().borrow();
-	let initial_value = match app_controller
-		.config
-		.spectrum_transforms
-		.get(&controller.id())
-	{
-		Some(SpectrumTransformConfig::DecibelConverter(config)) => config.min_level,
-		Some(_) => {
+	let initial_value = match app_controller.config.spectrum_transform(controller.id())? {
+		SpectrumTransformConfig::DecibelConverter(config) => config.min_level,
+		config => {
 			return Err(Error::UnexpectedConfigEntry(format!(
-				"expected decibel converter transform with id {}",
-				controller.id()
+				"expected a DecibelConverter config for transform {}, found {:?}",
+				controller.id(),
+				config,
 			)));
-		}
-		None => {
-			return Err(Error::MissingTransform {
-				id: controller.id(),
-			});
 		}
 	};
 

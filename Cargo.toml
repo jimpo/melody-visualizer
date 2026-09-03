@@ -31,4 +31,13 @@ testing = []
 
 [dev-dependencies]
 melody-visualizer = { path = ".", features = ["testing"] }
+# Only the harness. The plotting and HTML report features pull a large tree and
+# the benchmarks report their numbers in the terminal.
+criterion = { version = "0.8", default-features = false, features = [
+	"cargo_bench_support",
+] }
 rand = "0.10"
+
+[[bench]]
+name = "dsp"
+harness = false

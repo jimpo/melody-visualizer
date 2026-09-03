@@ -130,14 +130,348 @@ impl fmt::Debug for SpectrumParams {
 	}
 }
 
-pub trait SpectrumGenerator: Debug {
+pub trait SpectrumGenerator: Debug + Send {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
 	fn interval(&self) -> Duration;
 }
 
-pub trait SpectrumTransform: Debug {
+/// Identifies a transform across the `Config` that describes it, the
+/// [`TransformChain`] that runs it, and the GUI control that edits it.
+#[derive(
+	Debug,
+	Clone,
+	Copy,
+	PartialEq,
+	Eq,
+	Hash,
+	PartialOrd,
+	Ord,
+	derive_more::Display,
+	derive_more::From,
+)]
+pub struct TransformId(pub u64);
+
+pub trait SpectrumTransform: Debug + Send {
+	/// Applies the transform to `spectrum`.
+	///
+	/// # Preconditions
+	/// - [`set_params`](Self::set_params) has been called with the parameters
+	///   `spectrum` was built from.
 	fn transform(&mut self, spectrum: Spectrum) -> Spectrum;
 
-	fn upcast_any_ref(&self) -> &dyn Any;
-	fn upcast_any_mut(&mut self) -> &mut dyn Any;
+	/// Rebuilds whatever the transform derives from the frequency grid.
+	///
+	/// Called when the grid changes, and once when the transform joins a chain.
+	/// The default does nothing, which is right for a transform whose output
+	/// depends only on the values it is handed.
+	fn set_params(&mut self, _params: &Arc<SpectrumParams>) {}
+
+	fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+/// The ordered chain of transforms a spectrum passes through.
+///
+/// Position in the chain is the order of application. The [`TransformId`] rides
+/// along so an entry can be matched with the config that describes it and the
+/// control that edits it; it has no bearing on order.
+///
+/// The chain holds the frequency grid it was last given, so a transform added to
+/// an established chain is handed the grid on arrival.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use melody_visualizer::spectrum::{
+///     SpectrumBuffer, SpectrumParams, TransformChain, TransformId,
+/// };
+/// use melody_visualizer::spectrum::transforms::{VolumeNormalizer, volume_normalizer};
+/// use melody_visualizer::traits::Configurable;
+///
+/// let params = Arc::new(SpectrumParams::exp_spaced(4, 200.0, 1600.0));
+/// let spectrum = SpectrumBuffer::new(params.clone())
+///     .fill(|values, _| values.copy_from_slice(&[1.0, 2.0, 4.0, 2.0]));
+///
+/// let mut chain = TransformChain::default();
+/// chain.insert(
+///     0,
+///     TransformId(0),
+///     Box::new(VolumeNormalizer::new(volume_normalizer::Config { rate: 0.1 })),
+/// );
+/// chain.set_params(&params);
+///
+/// // The normalizer scales the spectrum by its running peak.
+/// assert_eq!(chain.apply(spectrum).values(), [0.25, 0.5, 1.0, 0.5]);
+/// ```
+#[derive(Debug, Default)]
+pub struct TransformChain {
+	entries: Vec<(TransformId, Box<dyn SpectrumTransform>)>,
+	params: Option<Arc<SpectrumParams>>,
+}
+
+impl TransformChain {
+	/// Runs `spectrum` through every transform, in chain order.
+	pub fn apply(&mut self, spectrum: Spectrum) -> Spectrum {
+		self.entries
+			.iter_mut()
+			.fold(spectrum, |spectrum, (_id, transform)| {
+				transform.transform(spectrum)
+			})
+	}
+
+	/// Hands `params` to every transform, if the frequency grid changed.
+	///
+	/// The grid is shared as an `Arc` and compared by pointer, which is how a
+	/// parameter change reaches the DSP without an invalidation message
+	/// (ARCHITECTURE.md § 3).
+	pub fn set_params(&mut self, params: &Arc<SpectrumParams>) {
+		if self
+			.params
+			.as_ref()
+			.is_some_and(|current| Arc::ptr_eq(current, params))
+		{
+			return;
+		}
+		self.params = Some(params.clone());
+		for (_id, transform) in self.entries.iter_mut() {
+			transform.set_params(params);
+		}
+	}
+
+	/// Adds `transform` at `index`, handing it the current frequency grid.
+	///
+	/// # Preconditions
+	/// - `index <= len()`
+	pub fn insert(
+		&mut self,
+		index: usize,
+		id: TransformId,
+		mut transform: Box<dyn SpectrumTransform>,
+	) {
+		if let Some(params) = &self.params {
+			transform.set_params(params);
+		}
+		self.entries.insert(index, (id, transform));
+	}
+
+	/// Takes the transform identified by `id` out of the chain, closing the gap.
+	pub fn remove(&mut self, id: TransformId) -> Option<Box<dyn SpectrumTransform>> {
+		let index = self.index_of(id)?;
+		Some(self.entries.remove(index).1)
+	}
+
+	/// Moves the transform at `from` to `to`, shifting the ones in between.
+	///
+	/// # Preconditions
+	/// - `from` and `to` are both less than `len()`
+	pub fn reorder(&mut self, from: usize, to: usize) {
+		assert!(from < self.entries.len());
+		assert!(to < self.entries.len());
+		let entry = self.entries.remove(from);
+		self.entries.insert(to, entry);
+	}
+
+	/// The transform identified by `id`, or `None` if the chain holds no such id.
+	pub fn get_mut(&mut self, id: TransformId) -> Option<&mut dyn SpectrumTransform> {
+		let index = self.index_of(id)?;
+		Some(self.entries[index].1.as_mut())
+	}
+
+	/// The ids of the transforms, in chain order.
+	pub fn ids(&self) -> impl Iterator<Item = TransformId> {
+		self.entries.iter().map(|(id, _transform)| *id)
+	}
+
+	pub fn len(&self) -> usize {
+		self.entries.len()
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.entries.is_empty()
+	}
+
+	fn index_of(&self, id: TransformId) -> Option<usize> {
+		self.entries
+			.iter()
+			.position(|(entry_id, _)| *entry_id == id)
+	}
+}
+
+impl FromIterator<(TransformId, Box<dyn SpectrumTransform>)> for TransformChain {
+	fn from_iter<Entries: IntoIterator<Item = (TransformId, Box<dyn SpectrumTransform>)>>(
+		entries: Entries,
+	) -> Self {
+		TransformChain {
+			entries: entries.into_iter().collect(),
+			params: None,
+		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use std::sync::Mutex;
+
+	/// What a [`Recorder`] was asked to do.
+	#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+	enum Call {
+		Transform(TransformId),
+		SetParams(TransformId),
+	}
+
+	/// A transform that records its calls into a log shared with the test,
+	/// leaving the spectrum untouched.
+	#[derive(Debug)]
+	struct Recorder {
+		id: TransformId,
+		log: Arc<Mutex<Vec<Call>>>,
+	}
+
+	impl SpectrumTransform for Recorder {
+		fn transform(&mut self, spectrum: Spectrum) -> Spectrum {
+			self.log.lock().unwrap().push(Call::Transform(self.id));
+			spectrum
+		}
+
+		fn set_params(&mut self, _params: &Arc<SpectrumParams>) {
+			self.log.lock().unwrap().push(Call::SetParams(self.id));
+		}
+
+		fn as_any_mut(&mut self) -> &mut dyn Any {
+			self
+		}
+	}
+
+	/// A chain of recorders with the given ids, and the log they share.
+	fn recording_chain(ids: &[u64]) -> (TransformChain, Arc<Mutex<Vec<Call>>>) {
+		let log = Arc::new(Mutex::new(Vec::new()));
+		let chain = ids
+			.iter()
+			.map(|&id| {
+				let transform = Recorder {
+					id: TransformId(id),
+					log: log.clone(),
+				};
+				(
+					TransformId(id),
+					Box::new(transform) as Box<dyn SpectrumTransform>,
+				)
+			})
+			.collect::<TransformChain>();
+		(chain, log)
+	}
+
+	fn test_params() -> Arc<SpectrumParams> {
+		Arc::new(SpectrumParams::exp_spaced(8, 200.0, 20000.0))
+	}
+
+	#[test]
+	fn transforms_run_in_chain_order() {
+		let (mut chain, log) = recording_chain(&[7, 3, 5]);
+
+		chain.apply(Spectrum::default());
+
+		assert_eq!(
+			*log.lock().unwrap(),
+			[
+				Call::Transform(TransformId(7)),
+				Call::Transform(TransformId(3)),
+				Call::Transform(TransformId(5)),
+			],
+			"position in the chain decides the order, not the id",
+		);
+	}
+
+	#[test]
+	fn set_params_reaches_every_transform_once_per_grid() {
+		let (mut chain, log) = recording_chain(&[0, 1]);
+		let params = test_params();
+
+		chain.set_params(&params);
+		// The same grid, handed over again, changes nothing.
+		chain.set_params(&params.clone());
+		chain.set_params(&params);
+
+		assert_eq!(
+			*log.lock().unwrap(),
+			[
+				Call::SetParams(TransformId(0)),
+				Call::SetParams(TransformId(1))
+			],
+		);
+
+		// A different grid is a different `Arc`, and reaches them again.
+		chain.set_params(&test_params());
+		assert_eq!(log.lock().unwrap().len(), 4);
+	}
+
+	#[test]
+	fn a_transform_added_to_a_chain_is_handed_the_grid() {
+		let (mut chain, log) = recording_chain(&[0]);
+		chain.set_params(&test_params());
+		log.lock().unwrap().clear();
+
+		chain.insert(
+			1,
+			TransformId(1),
+			Box::new(Recorder {
+				id: TransformId(1),
+				log: log.clone(),
+			}),
+		);
+
+		assert_eq!(
+			*log.lock().unwrap(),
+			[Call::SetParams(TransformId(1))],
+			"a transform joining an established chain needs the current grid",
+		);
+	}
+
+	#[test]
+	fn insert_remove_and_reorder_maintain_order() {
+		let (mut chain, _log) = recording_chain(&[0, 1, 2]);
+
+		chain.insert(
+			1,
+			TransformId(3),
+			Box::new(Recorder {
+				id: TransformId(3),
+				log: Arc::new(Mutex::new(Vec::new())),
+			}),
+		);
+		assert_eq!(
+			chain.ids().collect::<Vec<_>>(),
+			[0, 3, 1, 2].map(TransformId),
+		);
+
+		chain.reorder(0, 2);
+		assert_eq!(
+			chain.ids().collect::<Vec<_>>(),
+			[3, 1, 0, 2].map(TransformId),
+		);
+
+		assert!(chain.remove(TransformId(1)).is_some());
+		assert_eq!(chain.ids().collect::<Vec<_>>(), [3, 0, 2].map(TransformId));
+
+		assert!(
+			chain.remove(TransformId(1)).is_none(),
+			"removing an id the chain does not hold leaves it alone",
+		);
+		assert_eq!(chain.len(), 3);
+	}
+
+	#[test]
+	fn get_mut_addresses_a_transform_by_id() {
+		let (mut chain, log) = recording_chain(&[4, 9]);
+
+		chain
+			.get_mut(TransformId(9))
+			.expect("the chain holds id 9")
+			.transform(Spectrum::default());
+
+		assert_eq!(*log.lock().unwrap(), [Call::Transform(TransformId(9))]);
+		assert!(chain.get_mut(TransformId(1)).is_none());
+	}
 }

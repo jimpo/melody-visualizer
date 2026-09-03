@@ -88,6 +88,65 @@ change at hand, and always with the reason in a comment.
 The codebase is indented with **hard tabs**. `rustfmt.toml` enforces this, so run
 `cargo fmt` rather than matching it by hand.
 
+## Benchmarks
+
+`benches/dsp.rs` measures each DSP stage on its own, saturated, in the unit that
+stage converts: samples/s for the DFT, spectra/s for the log binning, the
+generator as a whole, and each transform.
+
+```bash
+$ cargo bench                       # every benchmark, then the summary
+$ cargo bench -- --test             # the summary alone, in a few seconds
+$ cargo bench -- transform/diffuser # one group
+```
+
+The stages run in sequence on the one spectrum thread, so the chain's capacity
+is the **reciprocal sum** of theirs, not the smallest of them. The summary
+computes that, and reports headroom against the tick rate the configured window
+implies rather than a fixed constant — doubling the DFT window halves the rate
+demanded of every transform while leaving its cost untouched.
+
+### Recorded baseline
+
+Release build, 2048-sample window at 48 kHz, 1196 bins. The tick is 21.333 ms,
+so **46.9 spectra/s** is what the chain has to keep up with.
+
+| Stage | Capacity | Headroom | % of tick |
+|---|--:|--:|--:|
+| Generator (DFT + binning) | 48,232 spectra/s | 1,029× | 0.10% |
+| Diffuser (1/24 octave) | 239,295 spectra/s | 5,105× | 0.02% |
+| VolumeNormalizer | 518,970 spectra/s | 11,071× | 0.01% |
+| DecibelConverter | 165,322 spectra/s | 3,527× | 0.03% |
+| **Composed default chain** | **37,644 spectra/s** | **803×** | **0.12%** |
+
+**There is no throughput problem.** The chain costs a tenth of a percent of its
+budget. The benchmarks exist to hold that, to catch a regression, and to locate
+the cliff below — not to justify optimizing a path with three orders of
+magnitude of headroom.
+
+### The cliff
+
+`Diffuser` is **O(bins²)**: convolution costs bins × window, and the window
+length itself grows with bin density. At width 1/24 octave:
+
+| Bins | Time | Capacity |
+|---|--:|--:|
+| 1196 (default) | 4.22 µs | 236,700/s |
+| 2392 | 15.56 µs | 64,300/s |
+| 4784 | 58.01 µs | 17,200/s |
+
+Every doubling of bins costs 4×. Width is the same story at a fixed bin count:
+1/24 octave takes 4.2 µs, one octave 97 µs, ten octaves 830 µs — the last of
+those is 4% of the tick, from a slider the GUI already offers.
+
+Bin count is `samples_per_octave`, an internal `Config` field with no GUI
+control, and exposing it is deferred. The benchmarks make the cliff visible so
+that decision can be revisited on evidence.
+
+`tests/dsp_budget.rs` is the gate the ordinary test run applies: the composed
+chain must stay well inside one tick. Benchmarks catch nothing if nobody runs
+them; that test does.
+
 ## Style guide
 
 `rustfmt` and Clippy enforce the mechanical formatting rules; see [Running

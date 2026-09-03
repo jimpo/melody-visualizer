@@ -19,6 +19,7 @@ use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
+use crate::spectrum::TransformId;
 use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
@@ -169,17 +170,13 @@ fn init_menu(
 	visualization_name.set_label(get_visualization_name(&app_controller));
 
 	// Initialize transform rows.
-	for index in 0..app_controller.config.spectrum_transform_order.len() {
-		let (id, config) = app_controller
-			.config
-			.spectrum_transform_by_index(index)?
-			.expect("index is in range of spectrum_transform_order, so Ok result must be Some");
+	for (index, (id, config)) in app_controller.config.spectrum_transforms.iter().enumerate() {
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(id, config, app_controller_ref)?;
+		let new_control = build_transform_control(*id, config, app_controller_ref)?;
 		menu.insert(&new_row, 2 + index as i32);
 		control_stack.add_named(
 			&new_control,
-			Some(get_spectrum_transform_row_name(id).as_str()),
+			Some(get_spectrum_transform_row_name(*id).as_str()),
 		);
 	}
 
@@ -242,13 +239,13 @@ fn on_insert_spectrum_transform(
 ) -> Result<(), Error> {
 	// TODO: Make this less brittle
 	let app_controller = app_controller_ref.borrow();
-	if let Some((id, config)) = app_controller.config.spectrum_transform_by_index(index)? {
+	if let Some((id, config)) = app_controller.config.spectrum_transforms.get(index) {
 		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(id, config, app_controller_ref)?;
+		let new_control = build_transform_control(*id, config, app_controller_ref)?;
 		menu.insert(&new_row, 2 + index as i32);
 		control_stack.add_named(
 			&new_control,
-			Some(get_spectrum_transform_row_name(id).as_str()),
+			Some(get_spectrum_transform_row_name(*id).as_str()),
 		);
 
 		if menu.selected_row().as_ref() == Some(add_transform_row) {
@@ -280,7 +277,7 @@ fn on_control_row_activated(
 	control_stack: &gtk::Stack,
 	sections: &MenuSections,
 ) {
-	let transform_count = app_controller.config.spectrum_transform_order.len();
+	let transform_count = app_controller.config.spectrum_transforms.len();
 
 	let row_index = row.index();
 	assert!(
@@ -296,8 +293,8 @@ fn on_control_row_activated(
 		assert_eq!(row, &sections.spectrum_generator.row);
 		control_stack.set_visible_child(&sections.spectrum_generator.control);
 	} else if row_index < 2 + transform_count {
-		let transform_id = app_controller.config.spectrum_transform_order[row_index - 2];
-		let row_name = get_spectrum_transform_row_name(transform_id);
+		let (transform_id, _config) = &app_controller.config.spectrum_transforms[row_index - 2];
+		let row_name = get_spectrum_transform_row_name(*transform_id);
 		if let Some(child) = control_stack.child_by_name(&row_name) {
 			control_stack.set_visible_child(&child);
 		} else {
@@ -345,7 +342,7 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 }
 
 fn build_transform_control(
-	id: u64,
+	id: TransformId,
 	config: &SpectrumTransformConfig,
 	app_controller: &Rc<RefCell<AppController>>,
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
@@ -485,7 +482,7 @@ fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
 	}
 }
 
-fn get_spectrum_transform_row_name(id: u64) -> String {
+fn get_spectrum_transform_row_name(id: TransformId) -> String {
 	format!("transform_{}", id)
 }
 

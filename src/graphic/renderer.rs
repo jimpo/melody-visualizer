@@ -99,12 +99,25 @@ impl GraphicRenderer {
 		}
 	}
 
+	/// Takes `spectrum` into the history and returns a buffer for the spectrum
+	/// thread to fill next.
+	///
+	/// The returned buffer is the one the history evicts, which is what keeps the
+	/// steady state free of allocation (ARCHITECTURE.md § 3).
 	fn update_spectrum(&mut self, spectrum: Spectrum) -> SpectrumBuffer {
 		let max_history_len = self.generator.history_len();
 		self.spectrum_history.truncate(max_history_len);
-		if Arc::ptr_eq(spectrum.params(), &self.spectrum_params) {
-			self.spectrum_history.push_front(spectrum);
+
+		if !Arc::ptr_eq(spectrum.params(), &self.spectrum_params) {
+			// The spectrum was built on a grid this renderer has since replaced,
+			// so it is no use as history. Its allocation still is: hand it
+			// straight back on the current grid. The window is short — it closes
+			// once the spectrum thread has been reconfigured too — but it opens on
+			// every frequency-range change, which is every drag of a slider.
+			return spectrum.into_buffer().regrid(self.spectrum_params.clone());
 		}
+
+		self.spectrum_history.push_front(spectrum);
 		if self.spectrum_history.len() > max_history_len {
 			self.spectrum_history
 				.pop_back()
@@ -275,5 +288,47 @@ impl GraphicProcessor {
 			};
 		}
 		Ok(true)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// Where a buffer's values live, and the buffer back again.
+	///
+	/// The address is what tells a recycled allocation from a fresh one.
+	fn allocation(buffer: SpectrumBuffer) -> (usize, SpectrumBuffer) {
+		let spectrum = buffer.fill(|_values, _params| {});
+		let address = spectrum.values().as_ptr() as usize;
+		(address, spectrum.into_buffer())
+	}
+
+	#[test]
+	fn a_spectrum_on_a_stale_grid_hands_its_allocation_straight_back() {
+		let mut renderer = GraphicRenderer::new();
+		renderer.set_spectrum_params(SpectrumParams::exp_spaced(64, 200.0, 20000.0));
+
+		// A spectrum from before the renderer's grid changed. It is a distinct
+		// `Arc`, which is how the mismatch is detected, and the same length, so
+		// the allocation is reusable without growing.
+		let stale = Arc::new(SpectrumParams::exp_spaced(64, 200.0, 20000.0));
+		let (incoming, buffer) = allocation(SpectrumBuffer::new(stale));
+
+		let returned = renderer.update_spectrum(buffer.fill(|_values, _params| {}));
+
+		assert!(
+			renderer.spectrum_history.is_empty(),
+			"a spectrum on a grid the renderer has left is no use as history",
+		);
+		assert!(
+			Arc::ptr_eq(returned.params(), renderer.spectrum_params()),
+			"the buffer comes back on the grid the spectrum thread should fill next",
+		);
+		assert_eq!(
+			allocation(returned).0,
+			incoming,
+			"the steady state allocates nothing, reconfiguration included",
+		);
 	}
 }

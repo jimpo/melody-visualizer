@@ -32,6 +32,33 @@ impl SpectrumBuffer {
 	pub fn params(&self) -> &Arc<SpectrumParams> {
 		&self.params
 	}
+
+	/// Moves the buffer onto `params`, keeping its allocation.
+	///
+	/// The values do not survive: they belong to the grid the buffer is leaving.
+	/// This is how a buffer built on a stale grid re-enters the recycling ring
+	/// instead of being dropped for a freshly allocated one.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// use std::sync::Arc;
+	/// use melody_visualizer::spectrum::{SpectrumBuffer, SpectrumParams};
+	///
+	/// let coarse = Arc::new(SpectrumParams::exp_spaced(4, 200.0, 1600.0));
+	/// let fine = Arc::new(SpectrumParams::exp_spaced(8, 200.0, 1600.0));
+	///
+	/// let buffer = SpectrumBuffer::new(coarse).regrid(fine.clone());
+	///
+	/// assert!(Arc::ptr_eq(buffer.params(), &fine));
+	/// assert_eq!(buffer.fill(|_values, _params| {}).values(), [0.0; 8]);
+	/// ```
+	pub fn regrid(mut self, params: Arc<SpectrumParams>) -> Self {
+		self.data.clear();
+		self.data.resize(params.samples(), 0.0);
+		self.params = params;
+		self
+	}
 }
 
 impl Default for SpectrumBuffer {

@@ -279,6 +279,13 @@ evicts from its history becomes the next empty buffer it sends back. Exactly one
 buffer moves in each direction, which is what makes the ring double as
 backpressure.
 
+Reconfiguration does not break the ring. The two threads are told about a new
+frequency grid by separate commands, so between them the graphic thread receives
+spectra still on the old grid. Those are no use as history, but
+`SpectrumBuffer::regrid` puts their allocation back on the current grid and
+returns it, rather than dropping it and allocating a replacement — which is what
+a slider drag would otherwise cost, once per frame for as long as the drag lasts.
+
 **Graphic buffers** cycle between the GTK thread and the graphic thread. The
 `VisualizationController` holds the previous frame's buffer while idle, ships it
 inside the render closure, and receives the drawn `Graphic` back.

@@ -4,6 +4,7 @@ use crate::graphic::{
 	GraphicGenerator,
 	generators::spiral::{self, SpiralGenerator as Spiral},
 };
+use crate::note;
 use crate::spectrum::{
 	Hz, SpectrumParams, SpectrumTransform, TransformId,
 	generators::audio,
@@ -60,16 +61,22 @@ macro_rules! define_graphic_generator_config {
 				}
 			}
 
-			pub fn update(self, transform: &mut Box<dyn GraphicGenerator>) {
+			/// Reconfigures `generator` in place, or replaces it when the
+			/// config names a different kind.
+			///
+			/// Replacing is why this takes the `Box` rather than
+			/// `&mut dyn GraphicGenerator`. Reconfiguring in place is what
+			/// keeps a slider drag from rebuilding the generator per event.
+			pub fn update(self, generator: &mut Box<dyn GraphicGenerator>) {
 				match self {
 					$(
 						Self::$variant(config) => {
-							match transform
-								.upcast_any_mut()
+							match generator
+								.as_any_mut()
 								.downcast_mut::<$variant>()
 							{
-								Some(transform) => transform.set_config(config),
-								None => *transform = Box::new($variant::new(config)),
+								Some(generator) => generator.set_config(config),
+								None => *generator = Box::new($variant::new(config)),
 							}
 						}
 					)+
@@ -160,7 +167,7 @@ impl Default for Config {
 				.map(|(index, config)| (TransformId(index as u64), config))
 				.collect(),
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
-				key_log_freq: 263.74, // C
+				key_log_freq: note!(C, 4).log_frequency(),
 				outer_pad: 20.0,
 				center_pad: 50.0,
 			}),
@@ -204,5 +211,25 @@ impl Config {
 			.find(|(entry_id, _config)| *entry_id == id)
 			.map(|(_id, config)| config)
 			.ok_or(Error::MissingTransform { id })
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn the_spiral_key_is_a_log_frequency_inside_the_range_the_control_offers() {
+		let GraphicGeneratorConfig::Spiral(config) = Config::default().graphic_generator;
+		// `gui/control_pane.rs` builds the key-frequency slider from
+		// `Note::log_frequency`, spanning C3 to C4. A Hz value in the field is
+		// far outside that, and the control opens on a position unrelated to it.
+		let range = note!(C, 3).log_frequency()..=note!(C, 4).log_frequency();
+		assert!(
+			range.contains(&config.key_log_freq),
+			"key_log_freq is {}, outside the {:?} the slider spans",
+			config.key_log_freq,
+			range,
+		);
 	}
 }

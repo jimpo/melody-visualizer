@@ -184,7 +184,10 @@ One sample's journey:
 5. **Draw** — `graphic/generators/spiral.rs`. On a render RPC, the generator
    draws the history into a `GraphicBuffer`, a raw RGB24 byte vector backing a
    cairo `ImageSurface`. The spiral maps log-frequency to radius and pitch class
-   to hue, so notes an octave apart line up on the same spoke.
+   to hue, so notes an octave apart line up on the same spoke. This is the
+   pipeline's most expensive stage by two orders of magnitude, and the cost is
+   pixel area rather than bin count — see
+   [DEVELOPMENT.md](DEVELOPMENT.md#the-visualizer).
 6. **Display** — `gui/visualization.rs`. The `DrawingArea` blits the finished
    surface. A size change resizes the buffer in place on the GTK side.
 
@@ -279,6 +282,13 @@ evicts from its history becomes the next empty buffer it sends back. Exactly one
 buffer moves in each direction, which is what makes the ring double as
 backpressure.
 
+Reconfiguration does not break the ring. The two threads are told about a new
+frequency grid by separate commands, so between them the graphic thread receives
+spectra still on the old grid. Those are no use as history, but
+`SpectrumBuffer::regrid` puts their allocation back on the current grid and
+returns it, rather than dropping it and allocating a replacement — which is what
+a slider drag would otherwise cost, once per frame for as long as the drag lasts.
+
 **Graphic buffers** cycle between the GTK thread and the graphic thread. The
 `VisualizationController` holds the previous frame's buffer while idle, ships it
 inside the render closure, and receives the drawn `Graphic` back.
@@ -294,6 +304,14 @@ On the spectrum side that comparison happens once per frame, in
 chain — and to a transform the moment it joins one. `SpectrumTransform::set_params`
 is the hook, and it defaults to doing nothing, for a transform whose output
 depends only on the values it is given.
+
+The graphic side works the same way, with a second hook for the other thing a
+generator derives geometry from. `GraphicRenderer` owns the grid and sees every
+buffer, so it is what calls `GraphicGenerator::set_params` when the grid changes
+and `set_size` when a differently-sized buffer arrives — and both when
+`update_generator` swaps in a generator that has been told neither.
+`GraphicGenerator::generate` therefore draws and nothing else: it compares no
+state and rebuilds no cache.
 
 ---
 
@@ -421,6 +439,9 @@ Rules that keep the design intact. Breaking one needs a note in this document.
    building a backlog.
 7. **Data flows forward, control flows back.** The DSP never reaches into the
    GUI; the visualizer never reaches into the DSP.
+8. **A cairo surface never outlives the call it was made for.** `GraphicBuffer`
+   lends a transient surface over pixels it owns; a clone that survives the
+   callback aliases a buffer the pipeline goes on writing to.
 
 ---
 
@@ -466,11 +487,13 @@ candidate for its own change.
 
 - `SpiralGenerator` is the only generator, and `history_len()` is hardcoded to 1,
   so the history mechanism is never exercised. Either use it or simplify it away.
-- `ConfigurableGraphicGenerator` (`graphic/mod.rs`) is empty and unused.
 - `GraphicBuffer::with_image_surface` extends a slice's lifetime with
-  `mem::transmute` to satisfy `ImageSurface::create_for_data`. It is guarded and
-  documented, but it is the one piece of `unsafe` in the crate and deserves a
-  safer construction.
+  `mem::transmute` to satisfy `ImageSurface::create_for_data`. It is the one
+  piece of `unsafe` in the crate. The construction that would retire it —
+  holding an `ImageSurface` in the buffer — is ruled out by `Graphic` having to
+  be `Send`, so the pixels travel as a `Vec<u8>` and a surface is built around
+  them per call. A caller that lets a surface clone escape gets
+  `Error::GraphicDrawClonesSurface` and leaks that buffer's allocation.
 
 ### GUI
 

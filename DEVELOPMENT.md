@@ -104,7 +104,8 @@ The codebase is indented with **hard tabs**. `rustfmt.toml` enforces this, so ru
 
 `benches/dsp.rs` measures each DSP stage on its own, saturated, in the unit that
 stage converts: samples/s for the DFT, spectra/s for the log binning, the
-generator as a whole, and each transform.
+generator as a whole, and each transform. `benches/graphic.rs` does the same for
+the visualizer, in frames/s; see [The visualizer](#the-visualizer) below.
 
 ```bash
 $ cargo bench                       # every benchmark, then the summary
@@ -119,6 +120,10 @@ implies rather than a fixed constant — doubling the DFT window halves the rate
 demanded of every transform while leaving its cost untouched.
 
 ### Recorded baseline
+
+The absolute numbers here and in [The visualizer](#the-visualizer) are from one
+machine; a slower box shifts them together. The ratios between rows are the part
+that should reproduce.
 
 Release build, 2048-sample window at 48 kHz, 1196 bins. The tick is 21.333 ms,
 so **46.9 spectra/s** is what the chain has to keep up with.
@@ -158,6 +163,46 @@ that decision can be revisited on evidence.
 `tests/dsp_budget.rs` is the gate the ordinary test run applies: the composed
 chain must stay well inside one tick. Benchmarks catch nothing if nobody runs
 them; that test does.
+
+### The visualizer
+
+`benches/graphic.rs` measures the graphic stage in frames/s against the 25 fps
+frame timer. It needs no display: cairo's `ImageSurface` is CPU rasterisation,
+so thousands of frames render with no X server.
+
+```bash
+$ cargo bench --bench graphic            # the sweeps, then the summary
+$ cargo bench --bench graphic -- --test  # the summary alone
+```
+
+**This is the stage with the least headroom.** The whole DSP chain costs a tenth
+of a percent of its tick; one frame at 1600x1000 costs about a fifth of the 40 ms
+frame. Six times' headroom against the DSP's five hundred, so this is where
+optimisation effort belongs if it is ever needed.
+
+Cost scales **opposite to the DSP**: it is driven by pixel area, not bin count.
+
+| Surface | % of frame | Max fps |  | Bins @ 1600x1000 | % of frame |
+|---|--:|--:|---|---|--:|
+| 640x480 | 6.2% | 404 |  | 299 (45/octave) | 19.1% |
+| 1280x800 | 11.3% | 221 |  | 1196 (default) | 21.0% |
+| 1600x1000 | 21.9% | 114 |  | 4784 (720/octave) | 30.2% |
+| 3840x2160 | 69.3% | 36 |  | | |
+
+Sixteen times the bins costs 1.6 times the time; 6.7 times the pixels costs 3.5
+times. cairo rasterising the mesh gradient over the surface is what the frame
+goes on, not the 2,392 mesh patches. So **adding spectral resolution is nearly
+free for the visualizer, while resizing the window is what costs** — anyone
+tuning `samples_per_octave` needs that alongside the DSP's quadratic in bins.
+
+The `render/background` group fills the surface and paints no mesh.
+`render/spiral` minus `render/background` is the mesh paint, which is the number
+to look at before clipping that paint to the annulus.
+
+`tests/render_budget.rs` is the gate, at 1280x800. One threshold covers both
+build profiles: nearly all of the time is inside cairo, which is compiled
+optimized either way, so an unoptimized build measures within a fifth of a
+release one.
 
 ## Style guide
 

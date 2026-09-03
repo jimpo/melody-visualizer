@@ -104,7 +104,7 @@ impl AppController {
 		let config = self.config.graphic_generator.clone();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
-				config.update(renderer.generator_mut());
+				renderer.update_generator(|generator| config.update(generator));
 			})
 			.map_err(Error::Communication)
 	}

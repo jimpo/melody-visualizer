@@ -1,4 +1,6 @@
+use itertools::Itertools;
 use jack::{RingBuffer, RingBufferReader, RingBufferWriter};
+use std::iter;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,8 +16,24 @@ pub struct SampleWriter {
 }
 
 /// The read end of the capture ring, plus the overrun count the writer publishes.
+///
+/// The samples are bytes on the wire and `f32`s at the seam: decoding them is
+/// this type's job, so nothing downstream has to know the ring holds bytes at
+/// all.
+///
+/// ```
+/// use melody_visualizer::audio::ring::sample_ring;
+///
+/// let (mut writer, mut reader) = sample_ring(1024)?;
+/// writer.write_samples(&[1.0, 2.0, 3.0]);
+///
+/// let mut window = [0.0; 2];
+/// assert_eq!(reader.read_latest(&mut window), 2);
+/// assert_eq!(window, [2.0, 3.0], "the newest two samples, oldest first");
+/// # Ok::<(), melody_visualizer::error::Error>(())
+/// ```
 pub struct SampleReader {
-	pub buffer: RingBufferReader,
+	buffer: RingBufferReader,
 	overruns: Arc<AtomicU64>,
 }
 
@@ -67,6 +85,40 @@ impl SampleWriter {
 }
 
 impl SampleReader {
+	/// Copy the newest `out.len()` samples into `out`, oldest first, and return
+	/// how many there were.
+	///
+	/// Anything older than that window is discarded: the consumer analyzes the
+	/// sound as it is now, so audio it did not keep up with is of no use to it.
+	/// The window itself stays in the ring, which is what lets consecutive calls
+	/// overlap — each one asks for a whole window and gets the newest one,
+	/// however little has arrived since the last.
+	///
+	/// A short return leaves the tail of `out` untouched; only `out[..n]` holds
+	/// samples from this call.
+	pub fn read_latest(&mut self, out: &mut [f32]) -> usize {
+		let wanted = size_of_val(out);
+		let available = self.buffer.space();
+		if available > wanted {
+			self.buffer.advance(available - wanted);
+		}
+
+		let count = available.min(wanted) / size_of::<f32>();
+		// `peek_iter` chains the two halves of the ring, so a window that
+		// straddles the wrap reads as one run of bytes. The writer only ever
+		// commits whole samples, so grouping them in fours stays in step.
+		let samples = self
+			.buffer
+			.peek_iter()
+			.take(count * size_of::<f32>())
+			.tuples::<(_, _, _, _)>()
+			.map(|(&b1, &b2, &b3, &b4)| f32::from_ne_bytes([b1, b2, b3, b4]));
+		for (destination, sample) in iter::zip(out.iter_mut(), samples) {
+			*destination = sample;
+		}
+		count
+	}
+
 	/// Samples the real-time thread dropped, since the client was activated,
 	/// because the ring was full when they arrived.
 	pub fn overruns(&self) -> u64 {

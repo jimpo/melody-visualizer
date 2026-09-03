@@ -431,12 +431,12 @@ candidate for its own change.
 
 ### Audio engine client
 
-- **One JACK type still leaks across a component boundary.**
-  `AudioSpectrumGenerator` reads a `jack::RingBufferReader` of raw bytes off
-  `SampleReader`. Ports and connections are behind `JackSource` now, but the
-  target is an **audio-engine-agnostic input port**: a trait that yields `f32`
-  frames as well as a device/port list, with the JACK client as one
-  implementation. That is what makes PipeWire, ALSA, or a file source possible.
+- **The sample seam names JACK.** `AudioSpectrumGenerator` asks `SampleReader`
+  for `f32` windows and no longer sees a byte, but `SampleReader` is a concrete
+  JACK ring. Ports and connections are behind `JackSource`; the target is an
+  **audio-engine-agnostic input port**: a trait that yields `f32` frames as well
+  as a device/port list, with the JACK client as one implementation. That is
+  what makes PipeWire, ALSA, or a file source possible.
 - **The sample rate does not reach the DSP.** `SampleRateChanged` is published
   but nothing subscribes to it, and `AudioSpectrumGenerator` captures the rate
   once at construction. A rate change silently mis-scales every frequency.

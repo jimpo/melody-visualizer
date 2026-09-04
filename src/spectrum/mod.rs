@@ -160,6 +160,11 @@ impl fmt::Debug for SpectrumParams {
 pub trait SpectrumGenerator: Debug + Send {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
 	fn interval(&self) -> Duration;
+
+	/// Updates the rate of the samples feeding this generator.
+	///
+	/// Generators which do not consume sampled input can ignore it.
+	fn set_sample_rate(&mut self, _sample_rate: u32) {}
 }
 
 /// Identifies a transform across the `Config` that describes it, the

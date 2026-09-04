@@ -458,9 +458,10 @@ candidate for its own change.
   **audio-engine-agnostic input port**: a trait that yields `f32` frames as well
   as a device/port list, with the JACK client as one implementation. That is
   what makes PipeWire, ALSA, or a file source possible.
-- **The sample rate does not reach the DSP.** `SampleRateChanged` is published
-  but nothing subscribes to it, and `AudioSpectrumGenerator` captures the rate
-  once at construction. A rate change silently mis-scales every frequency.
+- JACK sample-rate changes travel through the app-wide event bus to
+  `AppController`, which sends them over the spectrum processor's control
+  channel. The audio generator updates both its frequency mapping and tick
+  interval without rebuilding the rate-independent log-frequency grid.
 - **`SourceType::MIDI` exists but nothing implements it.** Either build the MIDI
   source or drop the variant.
 - **A workaround is load-bearing**: unregistered port names are retired inside

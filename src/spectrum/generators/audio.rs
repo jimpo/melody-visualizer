@@ -93,6 +93,10 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 				/ (self.analyzer.sample_rate as u64 * overlap_denominator),
 		)
 	}
+
+	fn set_sample_rate(&mut self, sample_rate: u32) {
+		self.analyzer.set_sample_rate(sample_rate);
+	}
 }
 
 /// The shape the samples are tapered to before the DFT, to keep a frequency
@@ -152,6 +156,10 @@ impl Analyzer {
 		self.dft_window = vec![Complex64::new(0.0, 0.0); dft_window_size];
 		self.windowing = vec![0.0; dft_window_size];
 		self.window_shape.generate(&mut self.windowing);
+	}
+
+	pub fn set_sample_rate(&mut self, sample_rate: u32) {
+		self.sample_rate = sample_rate;
 	}
 
 	/// Tapers `samples` to the window shape and runs the forward DFT over them,
@@ -391,6 +399,30 @@ mod tests {
 				"consecutive windows overlap by half",
 			);
 		}
+	}
+
+	#[test]
+	fn changing_the_sample_rate_updates_the_tick_interval() {
+		let mut generator = generator(&[]);
+		generator.set_sample_rate(96_000);
+
+		assert_eq!(
+			generator.interval(),
+			Duration::from_micros((1_000_000 * WINDOW as u64) / (2 * 96_000)),
+		);
+	}
+
+	#[test]
+	fn changing_the_sample_rate_updates_frequency_binning() {
+		let signal = sine_wave(&[(440.0, 1.0)], 96_000, WINDOW);
+		let mut generator = generator(&signal);
+		generator.set_sample_rate(96_000);
+
+		let spectrum = generator.generate(SpectrumBuffer::new(spectrum_params(1196)));
+		let peak = spectrum.params().frequencies()[peak_index(&spectrum)];
+		let dft_bin_hz = 96_000.0 / WINDOW as f64;
+
+		assert!((peak - 440.0).abs() <= dft_bin_hz);
 	}
 
 	#[test]

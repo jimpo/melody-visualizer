@@ -5,10 +5,13 @@ use std::{any::Any, cell::RefCell, rc::Rc};
 use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
 use crate::async_processor::AsyncProcessor;
 use crate::audio::AudioSource;
-use crate::audio::source::{JackSource, PortName, SourceType, events::Event as AudioSourceEvent};
+use crate::audio::source::{
+	JackSource, PortName, SourceType,
+	events::{Event as AudioSourceEvent, SampleRateChanged},
+};
 use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
-use crate::pubsub::{Notifier, PubSub};
+use crate::pubsub::{Notifier, PubSub, SubscriptionHandle};
 use crate::spectrum::TransformId;
 use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 use crate::spectrum::renderer::{self as spectrum_processor, SpectrumRenderer};
@@ -22,6 +25,7 @@ pub struct AppController {
 	notifier: Notifier,
 	graphic_renderer: AsyncProcessor<GraphicRenderer>,
 	spectrum_renderer: AsyncProcessor<SpectrumRenderer>,
+	_sample_rate_subscription: SubscriptionHandle,
 }
 
 impl AppController {
@@ -43,6 +47,7 @@ impl AppController {
 		let spectrum_renderer =
 			spectrum_processor::start(graphic_spectrum_rx, spectrum_graphic_tx)?;
 
+		let sample_rate_subscription = subscribe_to_sample_rate(&pubsub, spectrum_renderer.clone());
 		let mut controller = AppController {
 			config: Config::default(),
 			source: None,
@@ -50,6 +55,7 @@ impl AppController {
 			notifier,
 			graphic_renderer,
 			spectrum_renderer,
+			_sample_rate_subscription: sample_rate_subscription,
 		};
 		controller.activate_source().await?;
 		controller.sync_spectrum_transforms().await?;
@@ -224,6 +230,23 @@ impl AppController {
 		self.graphic_renderer.stop().await?;
 		Ok(())
 	}
+}
+
+/// Forward JACK rate changes from the GTK event bus to the spectrum thread.
+fn subscribe_to_sample_rate(
+	pubsub: &PubSub,
+	spectrum_renderer: AsyncProcessor<SpectrumRenderer>,
+) -> SubscriptionHandle {
+	pubsub.subscribe(move |&SampleRateChanged(sample_rate)| {
+		let update = spectrum_renderer.exec_cloned(move |renderer| {
+			renderer.generator_mut().set_sample_rate(sample_rate);
+		});
+		glib::MainContext::ref_thread_default().spawn_local(async move {
+			if let Err(err) = update.await {
+				log::error!("failed to update DSP sample rate: {err}");
+			}
+		});
+	})
 }
 
 /// Republish the events an audio source reports onto the app-wide bus.

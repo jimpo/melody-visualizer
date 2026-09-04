@@ -21,8 +21,6 @@ start a server of their own. To run the app headlessly (see
 sudo apt install jackd2 xvfb dbus-x11 imagemagick
 ```
 
-`claude-sbx.Dockerfile` provisions all of the above for the agent sandbox.
-
 ## Build Commands
 
 ```bash
@@ -68,8 +66,7 @@ $ cargo nextest run -E 'test(pubsub)'    # Run the tests matching a filter expre
 runs as part of the ordinary suite — there is nothing to start first and nothing
 to opt into. Each test spawns a private `jackd -d dummy` through
 `test_support::jackd::Server`, so `jackd` must be installed (`apt install
-jackd2`, in `claude-sbx.Dockerfile` already) and a server you are running
-yourself is neither used nor disturbed.
+jackd2`) and a server you are running yourself is neither used nor disturbed.
 
 Which server a JACK client opens comes from the `JACK_DEFAULT_SERVER`
 environment variable — `ClientOptions::SERVER_NAME` cannot be used, because

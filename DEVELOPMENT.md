@@ -301,10 +301,11 @@ let sample = f32::from_ne_bytes(
 );
 ```
 
-> The GUI modules still hold roughly thirty `unwrap` calls that predate this
-> rule, most of them in `gui/control_pane.rs`. They are a cleanup backlog, not a
-> precedent. New code follows the rule; code you touch for another reason is a
-> good place to fix one.
+> The GUI modules still hold a couple of dozen `unwrap` calls that predate this
+> rule, nearly all of them `gtk::Builder::object` lookups in `gui/window.rs` and
+> `gui/control_pane.rs`. They are a cleanup backlog, not a precedent. New code
+> follows the rule; code you touch for another reason is a good place to fix
+> one.
 
 **Internal code documents preconditions and asserts them; it does not return
 `Result`.** Assertions keep the internal interfaces small and make the contract

@@ -369,8 +369,13 @@ which is why every subscriber callback runs on the GTK thread. Subscriptions are
 prunes the subscription. This is why views stash their handles.
 
 Events today: `PortsChanged`, `ConnectionChanged`, `SampleRateChanged` and
-`ServerShutdown` (from JACK), `InsertSpectrumTransform` (from `AppController`),
+`ServerShutdown` (from JACK), `ConfigChanged` (from `AppController`),
 `GraphicUpdate` (from `VisualizationController`).
+
+`ConfigChanged` is the one a view subscribes to in order to report a config
+value it does not own the control for. `AppController` publishes it from every
+method that hands a config change to a background thread, so it covers whichever
+control moved.
 
 The JACK four do not reach the bus from the audio module. `AudioSource::new`
 returns a channel of `events::Event`, and `AppController` spawns one task on the
@@ -393,6 +398,20 @@ task is the only place the audio module and PubSub meet, which is what keeps
 **Startup** (`gui/window.rs::start`): `block_on(AppController::new())` spawns
 both renderer threads and the JACK client, then pushes the initial config to
 them. The window is built, the two panes are populated, and CSS is applied.
+
+The window is a header bar over a `GtkPaned`: the visualization on the left, the
+control pane on the right at a fixed width. Only the visualization resizes with
+the window, and the pane collapses by being hidden rather than by narrowing, so
+the visualization is never covered. Fullscreen takes the header bar away, and
+the pane toggle it carries moves to a button floating over the canvas that
+withdraws once the pointer holds still.
+
+The control pane is an accordion over the pipeline, one stage per step: the
+source, the spectrum generator, each transform in chain order, then the graphic
+generator. A stage is a bar over a `GtkRevealer`, at most one is open, and every
+bar reports what its stage is set to whether it is open or not. The chain the
+pane shows is fixed — nothing in the GUI adds, removes or reorders a
+transform.
 
 **Shutdown**: `connect_destroy` calls `AppController::shutdown()`, which drops
 the JACK source and closes each renderer's command channel. Closing a channel

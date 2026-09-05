@@ -4,7 +4,7 @@
 #![allow(deprecated)]
 
 use gtk::{TreeIter, TreeSelection, prelude::*};
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::app::config::{
 	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
@@ -13,25 +13,18 @@ use crate::audio::source::events::ConnectionChanged;
 use crate::audio::source::{PortName, SourceType};
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
-	VolumeNormalizerController, app::events::InsertSpectrumTransform, control_pane::PORT_NAME_COL,
+	VolumeNormalizerController, control_pane::PORT_NAME_COL,
 };
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
 use crate::spectrum::TransformId;
-use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
 
 const MIN_NOTE: Note = note!(A, 0);
 const MAX_NOTE: Note = note!(C, 8);
-
-// Configure
-// - Audio Source (Audio or MIDI & Port)
-// - Spectrum Analysis
-//   Spectrum Transform
-// - Visualization
 
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
@@ -45,28 +38,9 @@ pub fn new(
 	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
 	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
 	let key_freq_scale: gtk::Scale = builder.object("key_freq_scale").unwrap();
-	let add_transform_type_selector: gtk::ComboBoxText =
-		builder.object("add_transform_type_selector").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
 	init_menu(&app_controller, &builder)?;
-
-	// Transform type selector options.
-	for (id, config) in get_transform_type_map().iter() {
-		add_transform_type_selector.append(Some(id), get_spectrum_transform_name(config));
-	}
-	let app_controller_clone = app_controller.clone();
-	add_transform_type_selector.connect_changed(move |selector| {
-		if let Some(id) = selector.active_id() {
-			selector.set_active_id(None);
-			if let Some(config) = get_transform_type_map().get(id.as_str()) {
-				let mut app_controller = app_controller_clone.borrow_mut();
-				handle_async_err(app_controller.insert_spectrum_transform(config.clone()));
-			} else {
-				log::error!("unknown transform type selected: {}", id);
-			}
-		}
-	});
 
 	// Populate source selection radio buttons.
 	for selector in build_source_type_selectors(&app_controller) {
@@ -148,16 +122,11 @@ fn init_menu(
 			row: builder.object("spectrum_generator_row").unwrap(),
 			control: builder.object("spectrum_generator_control").unwrap(),
 		},
-		add_transform: MenuSection {
-			row: builder.object("add_transform_row").unwrap(),
-			control: builder.object("add_transform_control").unwrap(),
-		},
 		visualization: MenuSection {
 			row: builder.object("visualization_row").unwrap(),
 			control: builder.object("visualization_control").unwrap(),
 		},
 	};
-	let add_transform_row = sections.add_transform.row.clone();
 
 	let source_name: gtk::Label = builder.object("source_name").unwrap();
 	let spectrum_generator_name: gtk::Label = builder.object("spectrum_generator_name").unwrap();
@@ -202,56 +171,11 @@ fn init_menu(
 		);
 	});
 
-	let app_controller_clone = app_controller_ref.clone();
-	let menu_clone = menu.clone();
-	let insert_transform_subscription =
-		app_controller
-			.pubsub()
-			.subscribe(move |notification: &InsertSpectrumTransform| {
-				let InsertSpectrumTransform { index } = notification.clone();
-				let result = on_insert_spectrum_transform(
-					&app_controller_clone,
-					&menu_clone,
-					&control_stack,
-					&add_transform_row,
-					index,
-				);
-				if let Err(err) = result {
-					log::error!("{}", err);
-				}
-			});
-
 	// Keep subscriptions alive until view is destroyed.
 	menu.connect_destroy(move |_| {
 		let _ = &source_name_subscription;
-		let _ = &insert_transform_subscription;
 	});
 
-	Ok(())
-}
-
-fn on_insert_spectrum_transform(
-	app_controller_ref: &Rc<RefCell<AppController>>,
-	menu: &gtk::ListBox,
-	control_stack: &gtk::Stack,
-	add_transform_row: &gtk::ListBoxRow,
-	index: usize,
-) -> Result<(), Error> {
-	// TODO: Make this less brittle
-	let app_controller = app_controller_ref.borrow();
-	if let Some((id, config)) = app_controller.config.spectrum_transforms.get(index) {
-		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(*id, config, app_controller_ref)?;
-		menu.insert(&new_row, 2 + index as i32);
-		control_stack.add_named(
-			&new_control,
-			Some(get_spectrum_transform_row_name(*id).as_str()),
-		);
-
-		if menu.selected_row().as_ref() == Some(add_transform_row) {
-			menu.select_row(Some(&new_row));
-		}
-	}
 	Ok(())
 }
 
@@ -261,13 +185,12 @@ struct MenuSection {
 	control: gtk::Frame,
 }
 
-/// The control-menu sections that are always present, in menu order. The rows
+/// The control-menu sections that bracket the pipeline, in menu order. The rows
 /// for the configured spectrum transforms sit between `spectrum_generator` and
-/// `add_transform`.
+/// `visualization`.
 struct MenuSections {
 	source: MenuSection,
 	spectrum_generator: MenuSection,
-	add_transform: MenuSection,
 	visualization: MenuSection,
 }
 
@@ -301,9 +224,6 @@ fn on_control_row_activated(
 			log::error!("control stack children out of sync with transforms");
 		}
 	} else if row_index == 2 + transform_count {
-		assert_eq!(row, &sections.add_transform.row);
-		control_stack.set_visible_child(&sections.add_transform.control);
-	} else if row_index == 3 + transform_count {
 		assert_eq!(row, &sections.visualization.row);
 		control_stack.set_visible_child(&sections.visualization.control);
 	} else {
@@ -321,24 +241,9 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 		.build();
 	row.set_child(Some(&grid));
 
-	let button_box = gtk::Box::builder()
-		.orientation(gtk::Orientation::Horizontal)
-		.halign(gtk::Align::Center)
-		.build();
-	grid.attach(&button_box, 0, 0, 1, 1);
-
-	let up_button = gtk::Button::builder().icon_name("go-up-symbolic").build();
-	let down_button = gtk::Button::builder().icon_name("go-down-symbolic").build();
-	let remove_button = gtk::Button::builder()
-		.icon_name("list-remove-symbolic")
-		.build();
-	button_box.append(&down_button);
-	button_box.append(&up_button);
-	button_box.append(&remove_button);
-
 	let label = gtk::Label::builder().label(name).build();
 	label.add_css_class("stage-name");
-	grid.attach(&label, 1, 0, 1, 1);
+	grid.attach(&label, 0, 0, 1, 1);
 
 	row
 }
@@ -500,22 +405,4 @@ fn get_visualization_name(app_controller: &AppController) -> &str {
 	match app_controller.config.graphic_generator {
 		GraphicGeneratorConfig::Spiral(_) => "Spiral",
 	}
-}
-
-fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformConfig> {
-	static MAP: LazyLock<HashMap<&'static str, SpectrumTransformConfig>> = LazyLock::new(|| {
-		vec![
-			(
-				"Diffuser",
-				SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
-			),
-			(
-				"VolumeNormalizer",
-				SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
-			),
-		]
-		.into_iter()
-		.collect()
-	});
-	&MAP
 }

@@ -184,16 +184,6 @@ impl Config {
 		SpectrumParams::exp_spaced(samples, self.min_freq, self.max_freq)
 	}
 
-	/// An id no transform in the chain holds.
-	pub fn unused_transform_id(&self) -> TransformId {
-		let highest = self
-			.spectrum_transforms
-			.iter()
-			.map(|(TransformId(id), _config)| *id)
-			.max();
-		TransformId(highest.map_or(0, |id| id + 1))
-	}
-
 	pub fn spectrum_transform(&self, id: TransformId) -> Result<&SpectrumTransformConfig, Error> {
 		self.spectrum_transforms
 			.iter()

@@ -2,7 +2,7 @@ use async_channel::Receiver;
 use futures::{channel::mpsc, future::Either, prelude::*};
 use std::{any::Any, cell::RefCell, rc::Rc};
 
-use crate::app::config::{Config, SpectrumGeneratorConfig, SpectrumTransformConfig};
+use crate::app::config::{Config, SpectrumGeneratorConfig};
 use crate::async_processor::AsyncProcessor;
 use crate::audio::AudioSource;
 use crate::audio::source::{
@@ -201,26 +201,6 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
-	pub fn insert_spectrum_transform(
-		&mut self,
-		transform_config: SpectrumTransformConfig,
-	) -> impl Future<Output = Result<(), Error>> + use<> {
-		let id = self.config.unused_transform_id();
-		self.config
-			.spectrum_transforms
-			.push((id, transform_config.clone()));
-		let index = self.config.spectrum_transforms.len() - 1;
-		self.notify_and_log_err(events::InsertSpectrumTransform { index });
-
-		self.spectrum_renderer
-			.exec_cloned(move |renderer| {
-				renderer
-					.transforms_mut()
-					.insert(index, id, transform_config.create());
-			})
-			.map_err(Error::Communication)
-	}
-
 	/// Publishes `notification`, logging a failure rather than propagating it.
 	///
 	/// A send fails only when the bus itself is gone, which is not a condition
@@ -293,9 +273,4 @@ pub mod events {
 	/// whichever control moved.
 	#[derive(Debug, Clone)]
 	pub struct ConfigChanged;
-
-	#[derive(Debug, Clone)]
-	pub struct InsertSpectrumTransform {
-		pub index: usize,
-	}
 }

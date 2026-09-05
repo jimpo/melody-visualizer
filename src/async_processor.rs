@@ -57,13 +57,14 @@ impl<T: ?Sized> AsyncProcessor<T> {
 		async move { self_clone.exec(f).await }
 	}
 
-	pub async fn stop(&mut self) -> Result<(), CommunicationError> {
-		if let Err(err) = self.exec_tx.close().await
-			&& !err.is_disconnected()
-		{
-			return Err(err.into());
-		}
-		Ok(())
+	/// Closes the command channel, which ends the processor's loop.
+	///
+	/// The channel is closed for every clone of this `AsyncProcessor`, not just
+	/// for this one, so the processor stops even while other handles to it are
+	/// alive. Commands already queued are still delivered; later ones fail with
+	/// [`CommunicationError::DeliveryFailure`].
+	pub fn stop(&mut self) {
+		self.exec_tx.close_channel();
 	}
 }
 
@@ -72,5 +73,23 @@ impl<T: ?Sized> Clone for AsyncProcessor<T> {
 		AsyncProcessor {
 			exec_tx: self.exec_tx.clone(),
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use futures::executor::block_on;
+
+	#[test]
+	fn stopping_one_handle_stops_the_processor_for_all_of_them() {
+		let (exec_tx, mut exec_rx) = mpsc::channel::<ExecCommand<u32>>(0);
+		let processor = AsyncProcessor::new(exec_tx);
+
+		let mut handle = processor.clone();
+		handle.stop();
+
+		assert!(block_on(exec_rx.next()).is_none());
+		assert!(block_on(processor.exec_cloned(|value: &mut u32| *value)).is_err());
 	}
 }

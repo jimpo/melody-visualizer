@@ -356,7 +356,9 @@ thread, there is no lock and no shared mutable state — the renderer's `&mut se
 is genuinely exclusive.
 
 `stop()` closes the command channel, which is what ends a `process_loop`. Closing
-any of a thread's input channels terminates it cleanly.
+any of a thread's input channels terminates it cleanly. The close applies to
+every clone of the `AsyncProcessor`, so a renderer stops even though other
+handles to it — the sample-rate subscription, say — are still alive.
 
 **`PubSub`** (`pubsub.rs`) is a type-erased event bus on the GTK main loop.
 Dispatch is keyed by `TypeId`, so a subscriber for `N` only ever sees `N`.
@@ -392,9 +394,10 @@ task is the only place the audio module and PubSub meet, which is what keeps
 both renderer threads and the JACK client, then pushes the initial config to
 them. The window is built, the two panes are populated, and CSS is applied.
 
-**Shutdown**: `connect_destroy` spawns `AppController::shutdown()` on the main
-context. Doing it asynchronously is required — blocking the main loop while
-waiting for the renderer threads deadlocks.
+**Shutdown**: `connect_destroy` calls `AppController::shutdown()`, which drops
+the JACK source and closes each renderer's command channel. Closing a channel
+ends that renderer's loop and its thread winds down on its own; the call returns
+at once, so the main loop is never blocked.
 
 ---
 
@@ -506,14 +509,6 @@ candidate for its own change.
   with vsync and reports the real frame deadline.
 - Errors from the renderer threads are logged, not surfaced. `error_dialog`
   exists but the pipeline does not use it.
-- **`window.rs` holds a `RefCell` borrow across an `await`.** The `shutdown`
-  function borrows the `AppController` mutably for the whole teardown, so
-  anything that touches the controller from the main loop in that window panics.
-  Nothing does today, because the window is already destroyed. Handing the stop
-  futures out of the borrow needs the renderers moved out of the controller:
-  `AsyncProcessor::stop` disconnects a single sender, so stopping a clone would
-  leave the controller's own sender open and the threads running. The clippy
-  lint is suppressed on that function until the ownership is reworked.
 
 ### Controls
 

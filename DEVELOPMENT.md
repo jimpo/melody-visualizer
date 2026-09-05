@@ -510,22 +510,31 @@ band. `scripts/connect-test-tone.sh --disconnect` stops driving the input.
 shows it. Paste that line into the pull request description.
 
 ```bash
-$ scripts/run-headless.sh                                    # -> /tmp/melody-shot.png
-$ SLUG=jim-247 scripts/post-screenshot.sh /tmp/melody-shot.png
+$ scripts/run-headless.sh                          # -> /tmp/melody-shot.png
+$ scripts/post-screenshot.sh /tmp/melody-shot.png
 ![melody-shot](https://raw.githubusercontent.com/jimpo/melody-visualizer/<sha>/melody-shot.png)
 ```
 
-The image is committed to an **orphan branch** `screenshots/$SLUG` through the
-GitHub API — no parent, so no history reaches it, and nothing local is touched.
-The printed URL names the commit rather than the branch, so a later screenshot on
-the same branch cannot move it.
+The image is committed to an **orphan branch** `screenshots/<the current
+branch>` through the GitHub API — no parent, so no history reaches it, and
+nothing local is touched. The printed URL names the commit rather than the
+branch, so a later screenshot on the same branch cannot move it. Set the
+bookmark before posting: its name is what pairs the images with the pull
+request, and `SLUG` overrides it.
 
-Name `SLUG` after the issue. Once the pull request is merged, the branch and
-every image on it go away together:
+**Cleanup needs nobody.** The branch pairing is also what expires the images:
+merging a pull request deletes its head branch, which leaves
+`screenshots/<that branch>` orphaned, and the next run of the script deletes
+every screenshot branch in that state before publishing. Posting a screenshot is
+what collects the last one's. To drop a set now rather than then:
 
 ```bash
-$ gh api -X DELETE repos/jimpo/melody-visualizer/git/refs/heads/screenshots/jim-247
+$ gh api -X DELETE repos/jimpo/melody-visualizer/git/refs/heads/screenshots/<branch>
 ```
+
+The pairing reads `screenshots/<branch>` rather than `<branch>/screenshots`
+because git forbids a ref that is a directory prefix of another:
+`refs/heads/X` and `refs/heads/X/screenshots` cannot both exist.
 
 Two routes that look easier are worse. A **release asset** cannot be rendered at
 all: it redirects to a signed URL that expires within the hour and answers

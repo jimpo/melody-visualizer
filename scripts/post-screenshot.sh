@@ -7,24 +7,27 @@
 # asset does not: it redirects to a signed URL that expires within the hour and
 # answers `application/octet-stream`, which GitHub's image proxy refuses. So the
 # images go into the repository — but onto an orphan branch that no other
-# history reaches, so they never enter `main` and can be deleted whole once the
-# pull request merges.
+# history reaches, so they never enter `main`.
 #
 # Nothing is committed locally. The blob, tree, commit and ref are built through
 # the GitHub API, so the working copy, the current change, and `main` are all
 # left alone.
 #
 # Usage:
-#   scripts/run-headless.sh                                    # -> /tmp/melody-shot.png
-#   SLUG=jim-247 scripts/post-screenshot.sh /tmp/melody-shot.png
+#   scripts/run-headless.sh                          # -> /tmp/melody-shot.png
+#   scripts/post-screenshot.sh /tmp/melody-shot.png  # from the branch under review
 #
 # One markdown image line is printed per file. Paste them into the description.
 #
-#   SLUG   branch is screenshots/$SLUG (default: a UTC timestamp). Name it after
-#          the issue, so it is obvious later which pull request it belongs to.
+#   SLUG   branch is screenshots/$SLUG. Defaults to the branch this runs on,
+#          and that pairing is what the prune below reads. A slug that is not a
+#          branch name is never cleaned up.
 #   REPO   owner/name (default: read from the `origin` remote)
 #
-# Once the pull request is merged, delete the branch:
+# Each run first deletes the screenshot branches whose own branch is gone. The
+# repository deletes a head branch when its pull request merges, so a merge is
+# what marks those images stale and the next screenshot is what collects them.
+# To drop one now:
 #
 #   gh api -X DELETE repos/$REPO/git/refs/heads/screenshots/$SLUG
 #
@@ -42,9 +45,37 @@ origin_url() {
 		git remote get-url origin
 }
 
+# The nearest bookmark at or behind the working copy, which is the branch this
+# change is pushed as. A jj workspace has no `.git`, so git answers only outside
+# one.
+current_branch() {
+	jj log --no-graph --revisions 'heads(::@ & bookmarks())' \
+		--template 'bookmarks.map(|bookmark| bookmark.name()).join("\n")' 2>/dev/null |
+		grep -m1 . ||
+		git branch --show-current
+}
+
 REPO="${REPO:-$(origin_url | sed -E 's#.*github\.com[:/]##; s#\.git$##')}"
-SLUG="${SLUG:-$(date -u +%Y%m%d-%H%M%S)}"
+SLUG="${SLUG:-$(current_branch)}"
+[[ -n "$SLUG" ]] || { echo "ERROR: no branch to name the screenshots after; set SLUG" >&2; exit 65; }
 BRANCH="screenshots/${SLUG}"
+
+# A screenshot branch is stale once the branch it is named after is gone, which
+# for a merged pull request is the moment GitHub deletes its head branch. There
+# is nothing to run this on that schedule, so it runs here: posting the next
+# screenshot collects the last one's.
+prune_stale_screenshots() {
+	local branches name
+	branches=$(gh api "repos/${REPO}/branches" --paginate --jq '.[].name')
+	while read -r name; do
+		[[ "$name" == screenshots/* ]] || continue
+		grep -qxF "${name#screenshots/}" <<<"$branches" && continue
+		gh api --method DELETE "repos/${REPO}/git/refs/heads/${name}" >/dev/null 2>&1 &&
+			echo ">>> pruned ${name}" >&2 || true
+	done <<<"$branches"
+}
+
+prune_stale_screenshots
 
 # The tree holds only the files posted by this call. Earlier ones stay reachable
 # through the parent commit, which keeps every URL already pasted somewhere

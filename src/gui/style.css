@@ -58,12 +58,6 @@ drawingarea {
 	background-color: @chrome_bg;
 }
 
-/* The pane is the surface its rows sit on; nothing between the two paints one
- * of its own. */
-#control_pane list {
-	background-color: transparent;
-}
-
 #control_pane separator {
 	min-height: 1px;
 	background-color: @hairline;
@@ -153,7 +147,8 @@ drawingarea {
 	border-radius: 12px;
 }
 
-#control_pane button {
+/* Scoped to a stage body: a stage row is a button too, and it is square. */
+#control_pane .stage-body button {
 	border-radius: 6px;
 }
 

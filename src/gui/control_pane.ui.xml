@@ -18,6 +18,9 @@
         <property name="name">control_menu</property>
         <child>
           <object class="GtkListBoxRow" id="source_row">
+            <style>
+              <class name="stage-row"/>
+            </style>
             <property name="child">
               <object class="GtkGrid">
                 <property name="row_homogeneous">1</property>
@@ -25,9 +28,9 @@
                 <child>
                   <object class="GtkLabel">
                     <property name="label">Audio Source</property>
-                    <attributes>
-                      <attribute name="weight" value="bold"></attribute>
-                    </attributes>
+                    <style>
+                      <class name="stage-name"/>
+                    </style>
                     <layout>
                       <property name="column">0</property>
                       <property name="row">0</property>
@@ -36,6 +39,9 @@
                 </child>
                 <child>
                   <object class="GtkLabel" id="source_name">
+                    <style>
+                      <class name="stage-summary"/>
+                    </style>
                     <layout>
                       <property name="column">1</property>
                       <property name="row">0</property>
@@ -48,6 +54,9 @@
         </child>
         <child>
           <object class="GtkListBoxRow" id="spectrum_generator_row">
+            <style>
+              <class name="stage-row"/>
+            </style>
             <property name="child">
               <object class="GtkGrid">
                 <property name="row_homogeneous">1</property>
@@ -55,9 +64,9 @@
                 <child>
                   <object class="GtkLabel">
                     <property name="label">Spectrum Analysis</property>
-                    <attributes>
-                      <attribute name="weight" value="bold"></attribute>
-                    </attributes>
+                    <style>
+                      <class name="stage-name"/>
+                    </style>
                     <layout>
                       <property name="column">0</property>
                       <property name="row">0</property>
@@ -66,6 +75,9 @@
                 </child>
                 <child>
                   <object class="GtkLabel" id="spectrum_generator_name">
+                    <style>
+                      <class name="stage-summary"/>
+                    </style>
                     <layout>
                       <property name="column">1</property>
                       <property name="row">0</property>
@@ -78,6 +90,9 @@
         </child>
         <child>
           <object class="GtkListBoxRow" id="add_transform_row">
+            <style>
+              <class name="stage-row"/>
+            </style>
             <property name="child">
               <object class="GtkBox">
                 <property name="halign">center</property>
@@ -106,6 +121,9 @@
         </child>
         <child>
           <object class="GtkListBoxRow" id="visualization_row">
+            <style>
+              <class name="stage-row"/>
+            </style>
             <property name="child">
               <object class="GtkGrid">
                 <property name="row_homogeneous">1</property>
@@ -113,9 +131,9 @@
                 <child>
                   <object class="GtkLabel">
                     <property name="label">Visualization</property>
-                    <attributes>
-                      <attribute name="weight" value="bold"></attribute>
-                    </attributes>
+                    <style>
+                      <class name="stage-name"/>
+                    </style>
                     <layout>
                       <property name="column">0</property>
                       <property name="row">0</property>
@@ -124,6 +142,9 @@
                 </child>
                 <child>
                   <object class="GtkLabel" id="visualization_name">
+                    <style>
+                      <class name="stage-summary"/>
+                    </style>
                     <layout>
                       <property name="column">1</property>
                       <property name="row">0</property>
@@ -139,8 +160,14 @@
     <child>
       <object class="GtkStack" id="control_stack">
         <property name="name">control_stack</property>
+        <style>
+          <class name="stage-body"/>
+        </style>
         <child>
           <object class="GtkFrame" id="source_control">
+            <style>
+              <class name="card"/>
+            </style>
             <child type="label">
               <object class="GtkLabel">
                 <property name="label">Audio Source</property>
@@ -174,6 +201,9 @@
         </child>
         <child>
           <object class="GtkFrame" id="spectrum_generator_control">
+            <style>
+              <class name="card"/>
+            </style>
             <child type="label">
               <object class="GtkLabel">
                 <property name="label">Spectrum Analysis</property>
@@ -183,6 +213,9 @@
         </child>
         <child>
           <object class="GtkFrame" id="add_transform_control">
+            <style>
+              <class name="card"/>
+            </style>
             <child type="label">
               <object class="GtkLabel">
                 <property name="label">New Spectrum Transform</property>
@@ -197,6 +230,9 @@
         </child>
         <child>
           <object class="GtkFrame" id="visualization_control">
+            <style>
+              <class name="card"/>
+            </style>
             <child type="label">
               <object class="GtkLabel">
                 <property name="label">Visualization</property>
@@ -209,6 +245,9 @@
                   <object class="GtkLabel">
                     <property name="label">Lowest pitch</property>
                     <property name="xalign">0</property>
+                    <style>
+                      <class name="control-label"/>
+                    </style>
                   </object>
                 </child>
                 <child>
@@ -219,6 +258,9 @@
                   <object class="GtkLabel">
                     <property name="label">Highest pitch</property>
                     <property name="xalign">0</property>
+                    <style>
+                      <class name="control-label"/>
+                    </style>
                   </object>
                 </child>
                 <child>
@@ -229,6 +271,9 @@
                   <object class="GtkLabel">
                     <property name="label">Key</property>
                     <property name="xalign">0</property>
+                    <style>
+                      <class name="control-label"/>
+                    </style>
                   </object>
                 </child>
                 <child>

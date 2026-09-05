@@ -1,15 +1,164 @@
-list#control_menu > row {
-    padding: 10px 0;
+/*
+ * Adwaita dark tokens.
+ *
+ * Every colour here is a GNOME palette entry. Naming them once keeps the
+ * control pane, the stage rows and the widgets inside a stage body drawing
+ * from one set of values.
+ */
+
+/* Surfaces. */
+@define-color canvas #000000;
+@define-color window_bg #242424;
+@define-color chrome_bg #303030;
+@define-color card_bg #383838;
+
+/* Blue 3, which is also the accent Adwaita paints selections, switches and
+ * scale highlights with. */
+@define-color accent #3584e4;
+@define-color accent_bg_color @accent;
+@define-color accent_color @accent;
+
+/* Stage types. A stage type is carried by its 8 px dot alone and never by a
+ * tinted row surface, so five stacked rows stay quiet against the canvas. */
+@define-color stage_source #f5c211;    /* yellow 3 */
+@define-color stage_analysis #c061cb;  /* purple 2 */
+@define-color stage_transform #57e389; /* green 2 */
+@define-color stage_display #62a0ea;   /* blue 2 */
+
+/* Ink, and the washes laid over a surface. */
+@define-color ink #ffffff;
+@define-color ink_dim alpha(#ffffff, 0.55);
+@define-color hairline alpha(#ffffff, 0.08);
+@define-color row_hover alpha(#ffffff, 0.03);
+/* An open row is 10% rather than 6% because the design carries no disclosure
+ * arrow: the row background is the only thing separating open from hovered. */
+@define-color row_open alpha(#ffffff, 0.10);
+
+/* The shell. */
+
+window {
+	background-color: @window_bg;
+	font-family: Cantarell, "Adwaita Sans", sans-serif;
+	font-size: 15px;
 }
 
-#control_stack {
-    padding: 10px;
+headerbar {
+	min-height: 47px;
+	background-color: @chrome_bg;
 }
 
-#control_stack > frame {
-    margin: 10px;
+/* The visualizer paints its own black background; this is what shows through
+ * until the first frame arrives. */
+drawingarea {
+	background-color: @canvas;
 }
 
-.control-grid {
-    padding: 10px;
+#control_pane {
+	min-width: 360px;
+	background-color: @chrome_bg;
+}
+
+/* The pane is the surface its rows sit on; nothing between the two paints one
+ * of its own. */
+#control_pane list {
+	background-color: transparent;
+}
+
+#control_pane separator {
+	min-height: 1px;
+	background-color: @hairline;
+}
+
+/* Type. */
+
+.window-title {
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.stage-name {
+	font-size: 15px;
+	font-weight: 400;
+}
+
+.control-label {
+	font-size: 14px;
+}
+
+.stage-summary {
+	font-size: 13px;
+	color: @ink_dim;
+}
+
+.caption {
+	font-size: 12px;
+	color: @ink_dim;
+}
+
+/* A stage: the header row that toggles it, and the body beneath. */
+
+.stage-row {
+	min-height: 52px;
+	padding: 0 16px;
+	background-color: transparent;
+	background-image: none;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.stage-row:hover {
+	background-color: @row_hover;
+}
+
+/* Open, whichever way the row carries that state: a toggle reports `:checked`,
+ * a list-box row `:selected`. */
+.stage-row:checked,
+.stage-row:selected {
+	background-color: @row_open;
+	color: @ink;
+}
+
+.stage-dot {
+	min-width: 8px;
+	min-height: 8px;
+	border-radius: 99px;
+}
+
+.stage-dot.source {
+	background-color: @stage_source;
+}
+
+.stage-dot.analysis {
+	background-color: @stage_analysis;
+}
+
+.stage-dot.transform {
+	background-color: @stage_transform;
+}
+
+.stage-dot.display {
+	background-color: @stage_display;
+}
+
+.stage-body {
+	padding: 14px 16px 20px;
+}
+
+/* Radii: 12 on a card, 6 on a button, 99 on anything pill-shaped. */
+
+.card {
+	background-color: @card_bg;
+	border: 1px solid @hairline;
+	border-radius: 12px;
+}
+
+#control_pane button {
+	border-radius: 6px;
+}
+
+#control_pane scale trough,
+#control_pane scale highlight,
+#control_pane switch {
+	border-radius: 99px;
 }

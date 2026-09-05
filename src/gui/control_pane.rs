@@ -313,6 +313,7 @@ fn on_control_row_activated(
 
 fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 	let row = gtk::ListBoxRow::new();
+	row.add_css_class("stage-row");
 
 	let grid = gtk::Grid::builder()
 		.row_homogeneous(true)
@@ -336,6 +337,7 @@ fn build_transform_row(name: &str) -> gtk::ListBoxRow {
 	button_box.append(&remove_button);
 
 	let label = gtk::Label::builder().label(name).build();
+	label.add_css_class("stage-name");
 	grid.attach(&label, 1, 0, 1, 1);
 
 	row

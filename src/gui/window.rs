@@ -30,6 +30,13 @@ pub fn start<P: IsA<Application>>(app: &P) -> Result<(), Error> {
 		app_controller.borrow_mut().shutdown();
 	});
 
+	// style.css carries Adwaita's dark tokens, so the widget internals it does
+	// not paint itself — entry fills, scrollbars, the port list — have to come
+	// from the dark theme rather than the light default.
+	if let Some(settings) = gtk::Settings::default() {
+		settings.set_gtk_application_prefer_dark_theme(true);
+	}
+
 	// Apply the CSS style.
 	let style_provider = gtk::CssProvider::new();
 	style_provider.load_from_data(STYLE);

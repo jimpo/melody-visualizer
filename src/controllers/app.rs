@@ -224,11 +224,15 @@ impl AppController {
 		}
 	}
 
-	pub async fn shutdown(&mut self) -> Result<(), Error> {
+	/// Drops the JACK source and stops both renderer threads.
+	///
+	/// Stopping a renderer closes its command channel, which ends its loop; the
+	/// thread then winds down on its own. Nothing here waits for it, so the GTK
+	/// main loop is never blocked.
+	pub fn shutdown(&mut self) {
 		self.source = None;
-		self.spectrum_renderer.stop().await?;
-		self.graphic_renderer.stop().await?;
-		Ok(())
+		self.spectrum_renderer.stop();
+		self.graphic_renderer.stop();
 	}
 }
 

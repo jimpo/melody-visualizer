@@ -504,6 +504,36 @@ $ DISPLAY=:99 import -window root /tmp/tone.png
 The spiral lights one bright band at the tone's frequency — a pure sine gives one
 band. `scripts/connect-test-tone.sh --disconnect` stops driving the input.
 
+### Putting a screenshot in a pull request
+
+`scripts/post-screenshot.sh` publishes an image and prints the markdown line that
+shows it. Paste that line into the pull request description.
+
+```bash
+$ scripts/run-headless.sh                                    # -> /tmp/melody-shot.png
+$ SLUG=jim-247 scripts/post-screenshot.sh /tmp/melody-shot.png
+![melody-shot](https://raw.githubusercontent.com/jimpo/melody-visualizer/<sha>/melody-shot.png)
+```
+
+The image is committed to an **orphan branch** `screenshots/$SLUG` through the
+GitHub API — no parent, so no history reaches it, and nothing local is touched.
+The printed URL names the commit rather than the branch, so a later screenshot on
+the same branch cannot move it.
+
+Name `SLUG` after the issue. Once the pull request is merged, the branch and
+every image on it go away together:
+
+```bash
+$ gh api -X DELETE repos/jimpo/melody-visualizer/git/refs/heads/screenshots/jim-247
+```
+
+Two routes that look easier are worse. A **release asset** cannot be rendered at
+all: it redirects to a signed URL that expires within the hour and answers
+`application/octet-stream`, which GitHub's image proxy refuses. **Git LFS** moves
+the bytes out of the packfile but not out of the project — the objects and the
+storage they bill for are kept forever, and every checkout materialises them.
+Deleting one branch is what ends a screenshot's life.
+
 ## Known upstream workarounds
 
 One workaround is load-bearing. It should be re-checked against current upstream

@@ -58,6 +58,21 @@ drawingarea {
 	background-color: @chrome_bg;
 }
 
+/* The pane toggle in fullscreen, where the header bar that normally carries it
+ * is gone. It floats over the canvas, so it draws its own ground. */
+.floating-toggle {
+	margin: 16px;
+	min-width: 40px;
+	min-height: 40px;
+	padding: 0;
+	border-radius: 99px;
+	background-color: alpha(@canvas, 0.55);
+	background-image: none;
+	border: 1px solid alpha(@ink, 0.18);
+	box-shadow: none;
+	color: @ink;
+}
+
 #control_pane separator {
 	min-height: 1px;
 	background-color: @hairline;

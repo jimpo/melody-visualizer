@@ -108,6 +108,7 @@ impl AppController {
 
 	pub fn update_graphic_generator(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let config = self.config.graphic_generator.clone();
+		self.notify_and_log_err(events::ConfigChanged);
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
 				renderer.update_generator(|generator| config.update(generator));
@@ -117,6 +118,7 @@ impl AppController {
 
 	pub fn update_spectrum_params(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let spectrum_params = self.config.spectrum_params();
+		self.notify_and_log_err(events::ConfigChanged);
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
 				renderer.set_spectrum_params(spectrum_params);
@@ -132,6 +134,7 @@ impl AppController {
 			Ok(config) => config.clone(),
 			Err(err) => return Either::Right(future::err(err)),
 		};
+		self.notify_and_log_err(events::ConfigChanged);
 		let fut = self
 			.spectrum_renderer
 			.exec_cloned(move |renderer| {
@@ -218,6 +221,10 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
+	/// Publishes `notification`, logging a failure rather than propagating it.
+	///
+	/// A send fails only when the bus itself is gone, which is not a condition
+	/// the caller can act on.
 	fn notify_and_log_err<T: Any + Send>(&self, notification: T) {
 		if let Err(err) = self.notifier.send(notification) {
 			log::error!("{}", Error::PubSub(err));
@@ -278,6 +285,15 @@ fn republish_audio_events(events: Receiver<AudioSourceEvent>, notifier: Notifier
 }
 
 pub mod events {
+	/// A field of [`Config`](crate::app::config::Config) holds a new value, and
+	/// the threads that act on it are being told.
+	///
+	/// The views that report a config value subscribe to this rather than to a
+	/// notification per field, so a summary in the control pane stays current
+	/// whichever control moved.
+	#[derive(Debug, Clone)]
+	pub struct ConfigChanged;
+
 	#[derive(Debug, Clone)]
 	pub struct InsertSpectrumTransform {
 		pub index: usize,

@@ -4,7 +4,7 @@
 #![allow(deprecated)]
 
 use gtk::{TreeIter, TreeSelection, prelude::*};
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::LazyLock};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::app::config::{
 	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
@@ -13,25 +13,24 @@ use crate::audio::source::events::ConnectionChanged;
 use crate::audio::source::{PortName, SourceType};
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
-	VolumeNormalizerController, app::events::InsertSpectrumTransform, control_pane::PORT_NAME_COL,
+	VolumeNormalizerController, app::events::ConfigChanged, control_pane::PORT_NAME_COL,
 };
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
+use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::TransformId;
-use crate::spectrum::transforms::{diffuser, volume_normalizer};
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
 
 const MIN_NOTE: Note = note!(A, 0);
 const MAX_NOTE: Note = note!(C, 8);
 
-// Configure
-// - Audio Source (Audio or MIDI & Port)
-// - Spectrum Analysis
-//   Spectrum Transform
-// - Visualization
+const SEMITONES_PER_OCTAVE: f64 = 12.0;
+
+/// The gap between the dot, the name and the summary on a stage row.
+const ROW_SPACING: i32 = 12;
 
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
@@ -39,34 +38,14 @@ pub fn new(
 	controller: &Rc<RefCell<ControlPaneController>>,
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let view: gtk::Box = builder.object("control_pane").unwrap();
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
 	let port_view: gtk::TreeView = builder.object("port_list").unwrap();
+	let spectrum_caption: gtk::Label = builder.object("spectrum_caption").unwrap();
 	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
 	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
 	let key_freq_scale: gtk::Scale = builder.object("key_freq_scale").unwrap();
-	let add_transform_type_selector: gtk::ComboBoxText =
-		builder.object("add_transform_type_selector").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
-	init_menu(&app_controller, &builder)?;
-
-	// Transform type selector options.
-	for (id, config) in get_transform_type_map().iter() {
-		add_transform_type_selector.append(Some(id), get_spectrum_transform_name(config));
-	}
-	let app_controller_clone = app_controller.clone();
-	add_transform_type_selector.connect_changed(move |selector| {
-		if let Some(id) = selector.active_id() {
-			selector.set_active_id(None);
-			if let Some(config) = get_transform_type_map().get(id.as_str()) {
-				let mut app_controller = app_controller_clone.borrow_mut();
-				handle_async_err(app_controller.insert_spectrum_transform(config.clone()));
-			} else {
-				log::error!("unknown transform type selected: {}", id);
-			}
-		}
-	});
 
 	// Populate source selection radio buttons.
 	for selector in build_source_type_selectors(&app_controller) {
@@ -122,225 +101,254 @@ pub fn new(
 	{
 		// Set initial control values.
 		let app_controller = app_controller.borrow();
+		spectrum_caption.set_label(&spectrum_caption_text(&app_controller));
 		min_freq_scale.set_value(app_controller.config.min_freq.log2());
 		max_freq_scale.set_value(app_controller.config.max_freq.log2());
 		// TODO:
 		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
 	}
 
+	build_accordion(&app_controller, &builder)
+}
+
+/// Builds the pane itself: one stage per step of the pipeline, stacked in the
+/// order the audio flows through them.
+fn build_accordion(
+	app_controller_ref: &Rc<RefCell<AppController>>,
+	builder: &gtk::Builder,
+) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
+	let app_controller = app_controller_ref.borrow();
+
+	let mut stages = vec![
+		build_stage(
+			StageId::Source,
+			"Source",
+			&builder.object::<gtk::Widget>("source_body").unwrap(),
+		),
+		build_stage(
+			StageId::Spectrum,
+			spectrum_generator_name(&app_controller),
+			&builder.object::<gtk::Widget>("spectrum_body").unwrap(),
+		),
+	];
+	for (id, config) in app_controller.config.spectrum_transforms.iter() {
+		let body = build_transform_control(*id, config, app_controller_ref)?;
+		stages.push(build_stage(
+			StageId::Transform(*id),
+			spectrum_transform_name(config),
+			&body,
+		));
+	}
+	stages.push(build_stage(
+		StageId::Spiral,
+		graphic_generator_name(&app_controller),
+		&builder.object::<gtk::Widget>("spiral_body").unwrap(),
+	));
+
+	let stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
+	for stage in stages.iter() {
+		stack.append(&stage.toggle);
+		stack.append(&stage.revealer);
+		stack.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+	}
+
+	let stages = Rc::new(stages);
+	connect_exclusive_open(&stages);
+	refresh_summaries(&app_controller, &stages);
+
+	// A stage row reports what its stage is set to, so it has to follow both the
+	// config and the connection JACK reports separately from it.
+	let subscriptions = [
+		subscribe_to_summaries::<ConfigChanged>(app_controller_ref, &stages),
+		subscribe_to_summaries::<ConnectionChanged>(app_controller_ref, &stages),
+	];
+
+	// Six stages with a body open overflow a short window.
+	let view = gtk::ScrolledWindow::builder()
+		.name("control_pane")
+		.hscrollbar_policy(gtk::PolicyType::Never)
+		.propagate_natural_width(true)
+		.child(&stack)
+		.build();
+
+	// Keep the stages and their subscriptions alive until the view is destroyed.
+	view.connect_destroy(move |_| {
+		let _ = &stages;
+		let _ = &subscriptions;
+	});
+
 	Ok(view)
 }
 
-fn init_menu(
-	app_controller_ref: &Rc<RefCell<AppController>>,
-	builder: &gtk::Builder,
-) -> Result<(), Error> {
-	let menu: gtk::ListBox = builder.object("control_menu").unwrap();
+/// One stage of the pipeline: the bar that opens it and the body beneath.
+///
+/// The bar is the whole toggle, because the design carries no disclosure arrow.
+/// Its background is what tells an open stage from a hovered one.
+struct Stage {
+	id: StageId,
+	toggle: gtk::ToggleButton,
+	revealer: gtk::Revealer,
+	summary: gtk::Label,
+}
 
-	let control_stack: gtk::Stack = builder.object("control_stack").unwrap();
+/// Which step of the pipeline a stage stands for. It names the colour of the
+/// row's dot and the config the row's summary reads.
+#[derive(Clone, Copy)]
+enum StageId {
+	Source,
+	Spectrum,
+	Transform(TransformId),
+	Spiral,
+}
 
-	let sections = MenuSections {
-		source: MenuSection {
-			row: builder.object("source_row").unwrap(),
-			control: builder.object("source_control").unwrap(),
-		},
-		spectrum_generator: MenuSection {
-			row: builder.object("spectrum_generator_row").unwrap(),
-			control: builder.object("spectrum_generator_control").unwrap(),
-		},
-		add_transform: MenuSection {
-			row: builder.object("add_transform_row").unwrap(),
-			control: builder.object("add_transform_control").unwrap(),
-		},
-		visualization: MenuSection {
-			row: builder.object("visualization_row").unwrap(),
-			control: builder.object("visualization_control").unwrap(),
-		},
-	};
-	let add_transform_row = sections.add_transform.row.clone();
-
-	let source_name: gtk::Label = builder.object("source_name").unwrap();
-	let spectrum_generator_name: gtk::Label = builder.object("spectrum_generator_name").unwrap();
-	let visualization_name: gtk::Label = builder.object("visualization_name").unwrap();
-
-	// Initialize menu labels.
-	let app_controller = app_controller_ref.borrow();
-	source_name.set_label(&get_source_name(&app_controller));
-	spectrum_generator_name.set_label(get_spectrum_generator_name(&app_controller));
-	visualization_name.set_label(get_visualization_name(&app_controller));
-
-	// Initialize transform rows.
-	for (index, (id, config)) in app_controller.config.spectrum_transforms.iter().enumerate() {
-		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(*id, config, app_controller_ref)?;
-		menu.insert(&new_row, 2 + index as i32);
-		control_stack.add_named(
-			&new_control,
-			Some(get_spectrum_transform_row_name(*id).as_str()),
-		);
+impl StageId {
+	/// The class that paints the row's dot, from the stage-type colours in
+	/// `style.css`.
+	fn dot_class(&self) -> &'static str {
+		match self {
+			Self::Source => "source",
+			Self::Spectrum => "analysis",
+			Self::Transform(_) => "transform",
+			Self::Spiral => "display",
+		}
 	}
+}
 
-	// Subscribe to update menu labels on updates.
-	let app_controller_clone = app_controller_ref.clone();
-	let source_name_clone = source_name.clone();
-	let source_name_subscription =
-		app_controller
-			.pubsub()
-			.subscribe(move |_: &ConnectionChanged| {
-				let app_controller = app_controller_clone.borrow();
-				source_name_clone.set_label(&get_source_name(&app_controller));
-			});
+fn build_stage(id: StageId, name: &str, body: &impl IsA<gtk::Widget>) -> Stage {
+	let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
+	dot.add_css_class("stage-dot");
+	dot.add_css_class(id.dot_class());
 
-	let app_controller_clone = app_controller_ref.clone();
-	let control_stack_clone = control_stack.clone();
-	menu.connect_row_activated(move |_, row| {
-		on_control_row_activated(
-			&app_controller_clone.borrow(),
-			row,
-			&control_stack_clone,
-			&sections,
-		);
-	});
+	let name_label = gtk::Label::builder()
+		.label(name)
+		.xalign(0.0)
+		.hexpand(true)
+		.build();
+	name_label.add_css_class("stage-name");
 
-	let app_controller_clone = app_controller_ref.clone();
-	let menu_clone = menu.clone();
-	let insert_transform_subscription =
-		app_controller
-			.pubsub()
-			.subscribe(move |notification: &InsertSpectrumTransform| {
-				let InsertSpectrumTransform { index } = notification.clone();
-				let result = on_insert_spectrum_transform(
-					&app_controller_clone,
-					&menu_clone,
-					&control_stack,
-					&add_transform_row,
-					index,
-				);
-				if let Err(err) = result {
-					log::error!("{}", err);
+	let summary = gtk::Label::builder().xalign(1.0).build();
+	summary.add_css_class("stage-summary");
+
+	let bar = gtk::Box::new(gtk::Orientation::Horizontal, ROW_SPACING);
+	bar.append(&dot);
+	bar.append(&name_label);
+	bar.append(&summary);
+
+	let toggle = gtk::ToggleButton::builder().child(&bar).build();
+	toggle.add_css_class("stage-row");
+
+	let revealer = gtk::Revealer::builder()
+		.transition_type(gtk::RevealerTransitionType::SlideDown)
+		.child(body)
+		.build();
+
+	Stage {
+		id,
+		toggle,
+		revealer,
+		summary,
+	}
+}
+
+/// Keep at most one stage open. Clicking the open stage's bar closes it, which
+/// leaves every body shut.
+fn connect_exclusive_open(stages: &Rc<Vec<Stage>>) {
+	for (index, stage) in stages.iter().enumerate() {
+		// The closures hang off the toggles the stages own, so they hold the
+		// stages weakly to keep the pane from leaking itself.
+		let stages = Rc::downgrade(stages);
+		stage.toggle.connect_toggled(move |toggle| {
+			let Some(stages) = stages.upgrade() else {
+				return;
+			};
+			let open = toggle.is_active();
+			stages[index].revealer.set_reveal_child(open);
+			if open {
+				for (other_index, other) in stages.iter().enumerate() {
+					if other_index != index {
+						// Deactivating runs this handler again for that stage,
+						// with `open` false, so it shuts its own body and stops
+						// there.
+						other.toggle.set_active(false);
+					}
 				}
-			});
-
-	// Keep subscriptions alive until view is destroyed.
-	menu.connect_destroy(move |_| {
-		let _ = &source_name_subscription;
-		let _ = &insert_transform_subscription;
-	});
-
-	Ok(())
+			}
+		});
+	}
 }
 
-fn on_insert_spectrum_transform(
+/// Refresh every row's summary whenever a notification of type `Event` arrives.
+fn subscribe_to_summaries<Event: Send + 'static>(
 	app_controller_ref: &Rc<RefCell<AppController>>,
-	menu: &gtk::ListBox,
-	control_stack: &gtk::Stack,
-	add_transform_row: &gtk::ListBoxRow,
-	index: usize,
-) -> Result<(), Error> {
-	// TODO: Make this less brittle
-	let app_controller = app_controller_ref.borrow();
-	if let Some((id, config)) = app_controller.config.spectrum_transforms.get(index) {
-		let new_row = build_transform_row(get_spectrum_transform_name(config));
-		let new_control = build_transform_control(*id, config, app_controller_ref)?;
-		menu.insert(&new_row, 2 + index as i32);
-		control_stack.add_named(
-			&new_control,
-			Some(get_spectrum_transform_row_name(*id).as_str()),
-		);
-
-		if menu.selected_row().as_ref() == Some(add_transform_row) {
-			menu.select_row(Some(&new_row));
-		}
-	}
-	Ok(())
+	stages: &Rc<Vec<Stage>>,
+) -> SubscriptionHandle {
+	let app_controller_clone = app_controller_ref.clone();
+	let stages = Rc::downgrade(stages);
+	app_controller_ref
+		.borrow()
+		.pubsub()
+		.subscribe(move |_: &Event| {
+			if let Some(stages) = stages.upgrade() {
+				refresh_summaries(&app_controller_clone.borrow(), &stages);
+			}
+		})
 }
 
-/// A control-menu row and the pane the control stack shows when it is selected.
-struct MenuSection {
-	row: gtk::ListBoxRow,
-	control: gtk::Frame,
-}
-
-/// The control-menu sections that are always present, in menu order. The rows
-/// for the configured spectrum transforms sit between `spectrum_generator` and
-/// `add_transform`.
-struct MenuSections {
-	source: MenuSection,
-	spectrum_generator: MenuSection,
-	add_transform: MenuSection,
-	visualization: MenuSection,
-}
-
-fn on_control_row_activated(
-	app_controller: &AppController,
-	row: &gtk::ListBoxRow,
-	control_stack: &gtk::Stack,
-	sections: &MenuSections,
-) {
-	let transform_count = app_controller.config.spectrum_transforms.len();
-
-	let row_index = row.index();
-	assert!(
-		row_index >= 0,
-		"row was activated, so it must have an index"
-	);
-	let row_index = row_index as usize;
-
-	if row_index == 0 {
-		assert_eq!(row, &sections.source.row);
-		control_stack.set_visible_child(&sections.source.control);
-	} else if row_index == 1 {
-		assert_eq!(row, &sections.spectrum_generator.row);
-		control_stack.set_visible_child(&sections.spectrum_generator.control);
-	} else if row_index < 2 + transform_count {
-		let (transform_id, _config) = &app_controller.config.spectrum_transforms[row_index - 2];
-		let row_name = get_spectrum_transform_row_name(*transform_id);
-		if let Some(child) = control_stack.child_by_name(&row_name) {
-			control_stack.set_visible_child(&child);
-		} else {
-			log::error!("control stack children out of sync with transforms");
-		}
-	} else if row_index == 2 + transform_count {
-		assert_eq!(row, &sections.add_transform.row);
-		control_stack.set_visible_child(&sections.add_transform.control);
-	} else if row_index == 3 + transform_count {
-		assert_eq!(row, &sections.visualization.row);
-		control_stack.set_visible_child(&sections.visualization.control);
-	} else {
-		log::error!("unknown control menu row activated: index = {}", row_index);
+fn refresh_summaries(app_controller: &AppController, stages: &[Stage]) {
+	for stage in stages {
+		stage
+			.summary
+			.set_label(&stage_summary(app_controller, stage.id));
 	}
 }
 
-fn build_transform_row(name: &str) -> gtk::ListBoxRow {
-	let row = gtk::ListBoxRow::new();
-	row.add_css_class("stage-row");
+/// What a collapsed row reports its stage is set to.
+fn stage_summary(app_controller: &AppController, id: StageId) -> String {
+	match id {
+		StageId::Source => source_name(app_controller),
+		StageId::Spectrum => format!(
+			"1/{} tone",
+			(app_controller.config.samples_per_octave as f64 / SEMITONES_PER_OCTAVE).round()
+		),
+		StageId::Transform(id) => transform_summary(app_controller, id),
+		StageId::Spiral => spiral_summary(app_controller),
+	}
+}
 
-	let grid = gtk::Grid::builder()
-		.row_homogeneous(true)
-		.column_homogeneous(true)
-		.build();
-	row.set_child(Some(&grid));
+fn transform_summary(app_controller: &AppController, id: TransformId) -> String {
+	// The chain is fixed, so a row outlives every config the app can reach.
+	let config = app_controller
+		.config
+		.spectrum_transform(id)
+		.expect("a stage row is built from a transform of the fixed chain");
+	match config {
+		SpectrumTransformConfig::DecibelConverter(config) => {
+			format!("floor {:.0} dB", 10.0 * config.min_level.log10())
+		}
+		SpectrumTransformConfig::Diffuser(config) => {
+			format!("{:.1} semitones", config.width * SEMITONES_PER_OCTAVE)
+		}
+		SpectrumTransformConfig::VolumeNormalizer(config) => format!("rate {:.2}", config.rate),
+	}
+}
 
-	let button_box = gtk::Box::builder()
-		.orientation(gtk::Orientation::Horizontal)
-		.halign(gtk::Align::Center)
-		.build();
-	grid.attach(&button_box, 0, 0, 1, 1);
+fn spiral_summary(app_controller: &AppController) -> String {
+	let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
+	format!(
+		"{}–{} · key {}",
+		Note::nearest(app_controller.config.min_freq.log2()),
+		Note::nearest(app_controller.config.max_freq.log2()),
+		Note::nearest(config.key_log_freq).pitch_class,
+	)
+}
 
-	let up_button = gtk::Button::builder().icon_name("go-up-symbolic").build();
-	let down_button = gtk::Button::builder().icon_name("go-down-symbolic").build();
-	let remove_button = gtk::Button::builder()
-		.icon_name("list-remove-symbolic")
-		.build();
-	button_box.append(&down_button);
-	button_box.append(&up_button);
-	button_box.append(&remove_button);
-
-	let label = gtk::Label::builder().label(name).build();
-	label.add_css_class("stage-name");
-	grid.attach(&label, 1, 0, 1, 1);
-
-	row
+/// The grid the spectrum stage analyses on, in the terms its controls set.
+fn spectrum_caption_text(app_controller: &AppController) -> String {
+	let SpectrumGeneratorConfig::Audio(generator) = &app_controller.config.spectrum_generator;
+	format!(
+		"{} bins / octave · window {}",
+		app_controller.config.samples_per_octave, generator.dft_window_size,
+	)
 }
 
 fn build_transform_control(
@@ -472,23 +480,20 @@ fn build_source_type_selectors(
 	selectors
 }
 
-fn get_source_name(app_controller: &AppController) -> String {
+/// The port feeding the source, as the pane and the header bar both report it.
+pub fn source_name(app_controller: &AppController) -> String {
 	app_controller
 		.connected_input()
 		.map_or_else(|| "None".to_string(), |port| port.0)
 }
 
-fn get_spectrum_generator_name(app_controller: &AppController) -> &str {
+fn spectrum_generator_name(app_controller: &AppController) -> &'static str {
 	match app_controller.config.spectrum_generator {
-		SpectrumGeneratorConfig::Audio(_) => "Default Audio Analyzer",
+		SpectrumGeneratorConfig::Audio(_) => "Spectrum",
 	}
 }
 
-fn get_spectrum_transform_row_name(id: TransformId) -> String {
-	format!("transform_{}", id)
-}
-
-fn get_spectrum_transform_name(config: &SpectrumTransformConfig) -> &str {
+fn spectrum_transform_name(config: &SpectrumTransformConfig) -> &'static str {
 	match config {
 		SpectrumTransformConfig::DecibelConverter(_) => "Decibel Converter",
 		SpectrumTransformConfig::Diffuser(_) => "Diffuser",
@@ -496,26 +501,8 @@ fn get_spectrum_transform_name(config: &SpectrumTransformConfig) -> &str {
 	}
 }
 
-fn get_visualization_name(app_controller: &AppController) -> &str {
+fn graphic_generator_name(app_controller: &AppController) -> &'static str {
 	match app_controller.config.graphic_generator {
 		GraphicGeneratorConfig::Spiral(_) => "Spiral",
 	}
-}
-
-fn get_transform_type_map() -> &'static HashMap<&'static str, SpectrumTransformConfig> {
-	static MAP: LazyLock<HashMap<&'static str, SpectrumTransformConfig>> = LazyLock::new(|| {
-		vec![
-			(
-				"Diffuser",
-				SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
-			),
-			(
-				"VolumeNormalizer",
-				SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
-			),
-		]
-		.into_iter()
-		.collect()
-	});
-	&MAP
 }

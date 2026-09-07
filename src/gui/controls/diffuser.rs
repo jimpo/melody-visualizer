@@ -13,7 +13,7 @@ pub fn new(
 	controller: &Rc<RefCell<DiffuserController>>,
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let view: gtk::Frame = builder.object("toplevel").unwrap();
+	let view: gtk::Grid = builder.object("toplevel").unwrap();
 	let width_scale: gtk::Scale = builder.object("width_scale").unwrap();
 
 	let controller_clone = controller.clone();

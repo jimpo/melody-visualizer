@@ -12,7 +12,7 @@ pub fn new(
 	controller: &Rc<RefCell<DecibelConverterController>>,
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
-	let view: gtk::Frame = builder.object("toplevel").unwrap();
+	let view: gtk::Grid = builder.object("toplevel").unwrap();
 	let min_level_scale: gtk::Scale = builder.object("min_level_scale").unwrap();
 
 	let controller_clone = controller.clone();

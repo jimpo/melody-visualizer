@@ -46,6 +46,24 @@ impl Note {
 		440.0f64.log2() + (*self - A4) as f64 / 12.0
 	}
 
+	/// The note closest to `log_frequency`, the base-2 logarithm of a frequency
+	/// in Hz.
+	///
+	/// This is the inverse of [`Note::log_frequency`] for the values that name a
+	/// note exactly, and rounds to the nearest semitone for the rest.
+	///
+	/// ```
+	/// use melody_visualizer::{note, note::Note};
+	///
+	/// assert_eq!(Note::nearest(440.0f64.log2()), note!(A, 4));
+	/// assert_eq!(Note::nearest(200.0f64.log2()), note!(G, 3));
+	/// ```
+	pub fn nearest(log_frequency: f64) -> Self {
+		const A4: Note = note!(A, 4);
+		let half_steps = ((log_frequency - A4.log_frequency()) * 12.0).round() as isize;
+		A4 + half_steps
+	}
+
 	// TODO: Implement iter::Step when that trait is stable.
 	pub fn next(&self) -> Self {
 		match self.pitch_class {
@@ -177,13 +195,23 @@ pub fn iter(range: impl RangeBounds<Note>) -> NoteIterator {
 
 #[cfg(test)]
 mod tests {
-	use super::iter;
+	use super::{Note, iter};
 
 	#[test]
 	fn frequencies() {
 		assert!((note!(A, 0).frequency() - 27.5).abs() < 0.001);
 		assert!((note!(A, 4).frequency() - 440.0).abs() < 0.001);
 		assert!((note!(C, 8).frequency() - 4186.009).abs() < 0.001);
+	}
+
+	#[test]
+	fn nearest_names_a_log_frequency() {
+		assert_eq!(Note::nearest(note!(C, 8).log_frequency()), note!(C, 8));
+		// A quarter tone under G3 still rounds to G3.
+		assert_eq!(
+			Note::nearest(note!(G, 3).log_frequency() - 1.0 / 48.0),
+			note!(G, 3)
+		);
 	}
 
 	#[test]

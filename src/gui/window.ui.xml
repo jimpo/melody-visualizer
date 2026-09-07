@@ -5,10 +5,73 @@
     <property name="title">Melody Visualizer</property>
     <property name="default-width">1600</property>
     <property name="default-height">800</property>
+    <child type="titlebar">
+      <object class="GtkHeaderBar" id="header_bar">
+        <property name="title-widget">
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="valign">center</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Melody Visualizer</property>
+                <style>
+                  <class name="window-title"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="source_label">
+                <style>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </property>
+        <child type="end">
+          <object class="GtkToggleButton" id="pane_toggle">
+            <property name="icon-name">sidebar-show-right-symbolic</property>
+            <property name="tooltip-text">Show the control pane</property>
+            <property name="active">1</property>
+          </object>
+        </child>
+      </object>
+    </child>
     <child>
+      <!--
+        The pane is a split, never an overlay: the canvas gives up width to it
+        rather than being covered. `position` opens the pane at 360 px of the
+        default width, and only the canvas resizes with the window, so the pane
+        holds that width from then on.
+      -->
       <object class="GtkPaned" id="main_panes">
-        <property name="position">800</property>
+        <property name="position">1240</property>
         <property name="position-set">1</property>
+        <property name="resize-start-child">1</property>
+        <property name="shrink-start-child">1</property>
+        <property name="resize-end-child">0</property>
+        <property name="shrink-end-child">0</property>
+        <property name="start-child">
+          <object class="GtkOverlay" id="canvas_overlay">
+            <child type="overlay">
+              <object class="GtkRevealer" id="floating_toggle_revealer">
+                <property name="visible">0</property>
+                <property name="halign">end</property>
+                <property name="valign">start</property>
+                <property name="transition-type">crossfade</property>
+                <property name="child">
+                  <object class="GtkToggleButton" id="floating_pane_toggle">
+                    <property name="icon-name">sidebar-show-right-symbolic</property>
+                    <property name="tooltip-text">Show the control pane</property>
+                    <style>
+                      <class name="floating-toggle"/>
+                    </style>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </property>
       </object>
     </child>
   </object>

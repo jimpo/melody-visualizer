@@ -1,289 +1,96 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <object class="GtkImage" id="down-icon">
-    <property name="icon-name">go-down-symbolic</property>
-  </object>
-  <object class="GtkImage" id="remove-icon">
-    <property name="icon-name">list-remove-symbolic</property>
-  </object>
-  <object class="GtkImage" id="up-icon">
-    <property name="icon-name">go-up-symbolic</property>
-  </object>
-  <object class="GtkBox" id="control_pane">
-    <property name="name">control_pane</property>
+  <!--
+    The bodies of the stages whose controls do not vary with the config. The
+    accordion around them is built in control_pane.rs, because the transform
+    stages between these come from the configured chain.
+  -->
+  <object class="GtkBox" id="source_body">
     <property name="orientation">vertical</property>
+    <property name="spacing">16</property>
+    <style>
+      <class name="stage-body"/>
+    </style>
     <child>
-      <object class="GtkListBox" id="control_menu">
-        <property name="name">control_menu</property>
+      <object class="GtkBox" id="source_type_selection">
+        <property name="spacing">10</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkTreeView" id="port_list">
         <child>
-          <object class="GtkListBoxRow" id="source_row">
-            <style>
-              <class name="stage-row"/>
-            </style>
-            <property name="child">
-              <object class="GtkGrid">
-                <property name="row_homogeneous">1</property>
-                <property name="column_homogeneous">1</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Audio Source</property>
-                    <style>
-                      <class name="stage-name"/>
-                    </style>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">0</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="source_name">
-                    <style>
-                      <class name="stage-summary"/>
-                    </style>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">0</property>
-                    </layout>
-                  </object>
-                </child>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkListBoxRow" id="spectrum_generator_row">
-            <style>
-              <class name="stage-row"/>
-            </style>
-            <property name="child">
-              <object class="GtkGrid">
-                <property name="row_homogeneous">1</property>
-                <property name="column_homogeneous">1</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Spectrum Analysis</property>
-                    <style>
-                      <class name="stage-name"/>
-                    </style>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">0</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="spectrum_generator_name">
-                    <style>
-                      <class name="stage-summary"/>
-                    </style>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">0</property>
-                    </layout>
-                  </object>
-                </child>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkListBoxRow" id="add_transform_row">
-            <style>
-              <class name="stage-row"/>
-            </style>
-            <property name="child">
-              <object class="GtkBox">
-                <property name="halign">center</property>
-                <property name="valign">center</property>
-                <child>
-                  <object class="GtkBox">
-                    <property name="spacing">10</property>
-                    <child>
-                      <object class="GtkImage">
-                        <property name="icon-name">list-add-symbolic</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel">
-                        <property name="label">New spectrum transform</property>
-                        <attributes>
-                          <attribute name="style" value="italic"></attribute>
-                        </attributes>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkListBoxRow" id="visualization_row">
-            <style>
-              <class name="stage-row"/>
-            </style>
-            <property name="child">
-              <object class="GtkGrid">
-                <property name="row_homogeneous">1</property>
-                <property name="column_homogeneous">1</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Visualization</property>
-                    <style>
-                      <class name="stage-name"/>
-                    </style>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">0</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="visualization_name">
-                    <style>
-                      <class name="stage-summary"/>
-                    </style>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">0</property>
-                    </layout>
-                  </object>
-                </child>
-              </object>
-            </property>
+          <object class="GtkTreeViewColumn">
+            <property name="title">Port</property>
+            <child>
+              <object class="GtkCellRendererText"/>
+              <attributes>
+                <attribute name="text">0</attribute>
+              </attributes>
+            </child>
           </object>
         </child>
       </object>
     </child>
+  </object>
+
+  <object class="GtkBox" id="spectrum_body">
+    <property name="orientation">vertical</property>
+    <style>
+      <class name="stage-body"/>
+    </style>
     <child>
-      <object class="GtkStack" id="control_stack">
-        <property name="name">control_stack</property>
+      <object class="GtkLabel" id="spectrum_caption">
+        <property name="xalign">0</property>
         <style>
-          <class name="stage-body"/>
+          <class name="caption"/>
         </style>
-        <child>
-          <object class="GtkFrame" id="source_control">
-            <style>
-              <class name="card"/>
-            </style>
-            <child type="label">
-              <object class="GtkLabel">
-                <property name="label">Audio Source</property>
-              </object>
-            </child>
-            <property name="child">
-              <object class="GtkBox">
-                <property name="orientation">vertical</property>
-                <child>
-                  <object class="GtkBox" id="source_type_selection">
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkTreeView" id="port_list">
-                    <child>
-                      <object class="GtkTreeViewColumn">
-                        <property name="title">Port</property>
-                        <child>
-                          <object class="GtkCellRendererText"/>
-                          <attributes>
-                            <attribute name="text">0</attribute>
-                          </attributes>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkFrame" id="spectrum_generator_control">
-            <style>
-              <class name="card"/>
-            </style>
-            <child type="label">
-              <object class="GtkLabel">
-                <property name="label">Spectrum Analysis</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkFrame" id="add_transform_control">
-            <style>
-              <class name="card"/>
-            </style>
-            <child type="label">
-              <object class="GtkLabel">
-                <property name="label">New Spectrum Transform</property>
-              </object>
-            </child>
-            <property name="child">
-              <object class="GtkComboBoxText" id="add_transform_type_selector">
-                <property name="valign">start</property>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkFrame" id="visualization_control">
-            <style>
-              <class name="card"/>
-            </style>
-            <child type="label">
-              <object class="GtkLabel">
-                <property name="label">Visualization</property>
-              </object>
-            </child>
-            <property name="child">
-              <object class="GtkBox">
-                <property name="orientation">vertical</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Lowest pitch</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="control-label"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkScale" id="min_freq_scale">
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Highest pitch</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="control-label"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkScale" id="max_freq_scale">
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Key</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="control-label"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkScale" id="key_freq_scale">
-                  </object>
-                </child>
-              </object>
-            </property>
-          </object>
-        </child>
+      </object>
+    </child>
+  </object>
+
+  <object class="GtkBox" id="spiral_body">
+    <property name="orientation">vertical</property>
+    <style>
+      <class name="stage-body"/>
+    </style>
+    <child>
+      <object class="GtkLabel">
+        <property name="label">Lowest pitch</property>
+        <property name="xalign">0</property>
+        <style>
+          <class name="control-label"/>
+        </style>
+      </object>
+    </child>
+    <child>
+      <object class="GtkScale" id="min_freq_scale">
+      </object>
+    </child>
+    <child>
+      <object class="GtkLabel">
+        <property name="label">Highest pitch</property>
+        <property name="xalign">0</property>
+        <style>
+          <class name="control-label"/>
+        </style>
+      </object>
+    </child>
+    <child>
+      <object class="GtkScale" id="max_freq_scale">
+      </object>
+    </child>
+    <child>
+      <object class="GtkLabel">
+        <property name="label">Key</property>
+        <property name="xalign">0</property>
+        <style>
+          <class name="control-label"/>
+        </style>
+      </object>
+    </child>
+    <child>
+      <object class="GtkScale" id="key_freq_scale">
       </object>
     </child>
   </object>

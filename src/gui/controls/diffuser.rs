@@ -4,10 +4,9 @@ use std::{cell::RefCell, rc::Rc};
 use crate::app::config::SpectrumTransformConfig;
 use crate::controllers::DiffuserController;
 use crate::error::Error;
+use crate::gui::controls::SEMITONES_PER_OCTAVE;
 use crate::gui::controls::captioned_slider::CaptionedSlider;
 use crate::gui::handle_async_err;
-
-const SEMITONES_PER_OCTAVE: f64 = 12.0;
 
 /// The widest the slider offers, in semitones.
 const MAX_WIDTH_SEMITONES: f64 = 10.0;

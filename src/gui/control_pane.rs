@@ -20,8 +20,6 @@ use crate::spectrum::TransformId;
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
 
-const SEMITONES_PER_OCTAVE: f64 = 12.0;
-
 /// The gap between the dot, the name and the summary on a stage row.
 const ROW_SPACING: i32 = 12;
 
@@ -408,8 +406,8 @@ fn stage_summary(app_controller: &AppController, id: StageId) -> String {
 	match id {
 		StageId::Source => source_name(app_controller),
 		StageId::Spectrum => format!(
-			"1/{} tone · {}",
-			(app_controller.config.samples_per_octave as f64 / SEMITONES_PER_OCTAVE).round(),
+			"{} · {}",
+			controls::spectrum::divisions_text(controls::spectrum::divisions(app_controller)),
 			controls::spectrum::rate_text(app_controller),
 		),
 		StageId::Transform(id) => transform_summary(app_controller, id),

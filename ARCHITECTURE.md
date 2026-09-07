@@ -234,8 +234,8 @@ written down, not a gap in the writing.
 | `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
 | `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
-| `Config::samples_per_octave` | 180, internal | The quadratic cost driver. No GUI control, and exposing it is deferred |
-| `audio::Config::dft_window_size` | 2048, internal | With the overlap, sets the tick rate through `interval()` |
+| `Config::samples_per_octave` | 12..360 | The **Pitch resolution** slider in `gui/controls/spectrum.rs` moves it, in the 1..30 bins a semitone divides into. The quadratic cost driver — see the cliff in DEVELOPMENT.md |
+| `audio::Config::dft_window_size` | 128..4096 | Derived rather than set: `audio::dft_window_size` picks the shortest power of two whose bins are as close together as the grid's are in the octave below Nyquist. With the overlap, sets the tick rate through `interval()` |
 | `audio::Config::overlap` | `0..0.75` | The **Update rate** slider in `gui/controls/spectrum.rs` moves the overlap and reads out the rate it produces. Beyond 0.75 the rate climbs steeply for ever less new audio per tick |
 
 ### JACK client and port wiring

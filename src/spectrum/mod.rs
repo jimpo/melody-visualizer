@@ -210,6 +210,9 @@ pub trait SpectrumTransform: Debug + Send {
 /// The chain holds the frequency grid it was last given, so a transform added to
 /// an established chain is handed the grid on arrival.
 ///
+/// An entry carries whether it runs, so a stage can be bypassed without leaving
+/// the chain. See [`set_enabled`](Self::set_enabled).
+///
 /// # Examples
 ///
 /// ```
@@ -237,17 +240,27 @@ pub trait SpectrumTransform: Debug + Send {
 /// ```
 #[derive(Debug, Default)]
 pub struct TransformChain {
-	entries: Vec<(TransformId, Box<dyn SpectrumTransform>)>,
+	entries: Vec<Entry>,
 	params: Option<Arc<SpectrumParams>>,
 }
 
+/// One transform in the chain, with the id it is addressed by and whether it
+/// runs.
+#[derive(Debug)]
+struct Entry {
+	id: TransformId,
+	transform: Box<dyn SpectrumTransform>,
+	enabled: bool,
+}
+
 impl TransformChain {
-	/// Runs `spectrum` through every transform, in chain order.
+	/// Runs `spectrum` through every enabled transform, in chain order.
 	pub fn apply(&mut self, spectrum: Spectrum) -> Spectrum {
 		self.entries
 			.iter_mut()
-			.fold(spectrum, |spectrum, (_id, transform)| {
-				transform.transform(spectrum)
+			.filter(|entry| entry.enabled)
+			.fold(spectrum, |spectrum, entry| {
+				entry.transform.transform(spectrum)
 			})
 	}
 
@@ -265,12 +278,13 @@ impl TransformChain {
 			return;
 		}
 		self.params = Some(params.clone());
-		for (_id, transform) in self.entries.iter_mut() {
-			transform.set_params(params);
+		for entry in self.entries.iter_mut() {
+			entry.transform.set_params(params);
 		}
 	}
 
-	/// Adds `transform` at `index`, handing it the current frequency grid.
+	/// Adds `transform` at `index`, enabled, handing it the current frequency
+	/// grid.
 	///
 	/// # Preconditions
 	/// - `index <= len()`
@@ -283,13 +297,36 @@ impl TransformChain {
 		if let Some(params) = &self.params {
 			transform.set_params(params);
 		}
-		self.entries.insert(index, (id, transform));
+		self.entries.insert(
+			index,
+			Entry {
+				id,
+				transform,
+				enabled: true,
+			},
+		);
+	}
+
+	/// Runs or bypasses the transform identified by `id`, or `None` if the
+	/// chain holds no such id.
+	///
+	/// A bypassed transform keeps its place, its settings and its grid:
+	/// [`apply`](Self::apply) steps over it while
+	/// [`set_params`](Self::set_params) still reaches it, so switching it back
+	/// on resumes it where it left off.
+	pub fn set_enabled(&mut self, id: TransformId, enabled: bool) -> Option<()> {
+		let index = self.index_of(id)?;
+		self.entries[index].enabled = enabled;
+		Some(())
 	}
 
 	/// Takes the transform identified by `id` out of the chain, closing the gap.
+	///
+	/// Whether it was running stays with the chain, so a transform put back with
+	/// [`insert`](Self::insert) runs again.
 	pub fn remove(&mut self, id: TransformId) -> Option<Box<dyn SpectrumTransform>> {
 		let index = self.index_of(id)?;
-		Some(self.entries.remove(index).1)
+		Some(self.entries.remove(index).transform)
 	}
 
 	/// Moves the transform at `from` to `to`, shifting the ones in between.
@@ -306,12 +343,12 @@ impl TransformChain {
 	/// The transform identified by `id`, or `None` if the chain holds no such id.
 	pub fn get_mut(&mut self, id: TransformId) -> Option<&mut dyn SpectrumTransform> {
 		let index = self.index_of(id)?;
-		Some(self.entries[index].1.as_mut())
+		Some(self.entries[index].transform.as_mut())
 	}
 
 	/// The ids of the transforms, in chain order.
 	pub fn ids(&self) -> impl Iterator<Item = TransformId> {
-		self.entries.iter().map(|(id, _transform)| *id)
+		self.entries.iter().map(|entry| entry.id)
 	}
 
 	pub fn len(&self) -> usize {
@@ -323,9 +360,7 @@ impl TransformChain {
 	}
 
 	fn index_of(&self, id: TransformId) -> Option<usize> {
-		self.entries
-			.iter()
-			.position(|(entry_id, _)| *entry_id == id)
+		self.entries.iter().position(|entry| entry.id == id)
 	}
 }
 
@@ -334,7 +369,14 @@ impl FromIterator<(TransformId, Box<dyn SpectrumTransform>)> for TransformChain 
 		entries: Entries,
 	) -> Self {
 		TransformChain {
-			entries: entries.into_iter().collect(),
+			entries: entries
+				.into_iter()
+				.map(|(id, transform)| Entry {
+					id,
+					transform,
+					enabled: true,
+				})
+				.collect(),
 			params: None,
 		}
 	}
@@ -492,6 +534,79 @@ mod tests {
 			"removing an id the chain does not hold leaves it alone",
 		);
 		assert_eq!(chain.len(), 3);
+	}
+
+	#[test]
+	fn a_bypassed_transform_is_skipped_but_still_regridded() {
+		let (mut chain, log) = recording_chain(&[0, 1]);
+
+		assert!(chain.set_enabled(TransformId(0), false).is_some());
+		chain.apply(Spectrum::default());
+		chain.set_params(&test_params());
+
+		assert_eq!(
+			*log.lock().unwrap(),
+			[
+				Call::Transform(TransformId(1)),
+				Call::SetParams(TransformId(0)),
+				Call::SetParams(TransformId(1)),
+			],
+			"a bypassed transform runs on nothing, but keeps its grid current",
+		);
+
+		log.lock().unwrap().clear();
+		chain.set_enabled(TransformId(0), true);
+		chain.apply(Spectrum::default());
+		assert_eq!(
+			*log.lock().unwrap(),
+			[
+				Call::Transform(TransformId(0)),
+				Call::Transform(TransformId(1)),
+			],
+			"switching a stage back on restores it to its place in the chain",
+		);
+
+		assert!(
+			chain.set_enabled(TransformId(2), false).is_none(),
+			"bypassing an id the chain does not hold leaves it alone",
+		);
+	}
+
+	#[test]
+	fn a_bypassed_normalizer_holds_its_running_peak() {
+		use crate::spectrum::transforms::{VolumeNormalizer, volume_normalizer};
+		use crate::test_support::spectrum;
+		use crate::traits::Configurable;
+
+		let id = TransformId(0);
+		let mut chain = TransformChain::default();
+		chain.insert(
+			0,
+			id,
+			Box::new(VolumeNormalizer::new(volume_normalizer::Config {
+				rate: 0.5,
+			})),
+		);
+
+		// The first spectrum seeds the running peak at 2.0, and a spectrum with
+		// that same peak holds it there.
+		chain.apply(spectrum(&[1.0, 2.0]));
+
+		chain.set_enabled(id, false);
+		let bypassed = chain.apply(spectrum(&[100.0, 200.0]));
+		assert_eq!(
+			bypassed.values(),
+			[100.0, 200.0],
+			"a bypassed stage passes the spectrum through untouched",
+		);
+
+		chain.set_enabled(id, true);
+		assert_eq!(
+			chain.apply(spectrum(&[1.0, 2.0])).values(),
+			[0.5, 1.0],
+			"the peak did not follow the spectra that went by while off: a peak \
+			 that had chased 200.0 would scale this frame to about a fiftieth",
+		);
 	}
 
 	#[test]

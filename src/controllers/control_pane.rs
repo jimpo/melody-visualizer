@@ -1,9 +1,4 @@
-// The port list uses GtkTreeView/GtkListStore, deprecated in GTK 4 (see the note
-// in src/gui/control_pane.rs). Migrating to GtkColumnView is future work.
-#![allow(deprecated)]
-
-use glib::Type;
-use gtk::{TreeIter, prelude::*};
+use gio::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::audio::source::PortName;
@@ -11,22 +6,19 @@ use crate::audio::source::events::PortsChanged;
 use crate::controllers::app::AppController;
 use crate::pubsub::SubscriptionHandle;
 
-pub const PORT_NAME_COL: i32 = 0;
-
 pub struct ControlPaneController {
 	app_controller: Rc<RefCell<AppController>>,
-	port_store: gtk::ListStore,
+	/// The ports the source can be fed from, as a list model for the port
+	/// list to bind to.
+	ports: gtk::StringList,
 	ports_changed_subscription: Option<SubscriptionHandle>,
 }
 
 impl ControlPaneController {
 	pub fn new(app_controller: Rc<RefCell<AppController>>) -> Rc<RefCell<Self>> {
-		let column_types = [Type::STRING];
-		let port_store = gtk::ListStore::new(&column_types[..]);
-
 		let controller = Rc::new(RefCell::new(ControlPaneController {
 			app_controller: app_controller.clone(),
-			port_store,
+			ports: gtk::StringList::new(&[]),
 			ports_changed_subscription: None,
 		}));
 
@@ -48,63 +40,43 @@ impl ControlPaneController {
 		controller
 	}
 
-	pub fn port_store(&self) -> &gtk::ListStore {
-		&self.port_store
+	pub fn ports(&self) -> &gtk::StringList {
+		&self.ports
+	}
+
+	/// The port at `position` in the list, as the port list numbers its rows.
+	pub fn port_at(&self, position: u32) -> Option<PortName> {
+		self.ports
+			.string(position)
+			.map(|name| PortName::from(name.to_string()))
 	}
 
 	pub fn app_controller(&self) -> &Rc<RefCell<AppController>> {
 		&self.app_controller
 	}
 
-	/// Bring the list store in line with the ports JACK offers.
+	/// Bring the list in line with the ports JACK offers.
 	///
 	/// Rows are added and removed rather than rebuilt so that the row the user
 	/// selected keeps its selection.
 	fn refresh_inputs(&self) {
-		let port_store = &self.port_store;
-		let ports = self.app_controller.borrow().available_inputs();
+		let available = self.app_controller.borrow().available_inputs();
+		let listed = (0..self.ports.n_items())
+			.filter_map(|position| self.port_at(position))
+			.collect::<Vec<_>>();
 
-		// Remove rows from ListStore.
-		if let Some(mut iter) = port_store.iter_first() {
-			loop {
-				let found = ports.contains(&get_port_name(port_store, &iter));
-				let iter_invalid = if !found {
-					log::debug!("attempting to remove port");
-					port_store.remove(&iter)
-				} else {
-					port_store.iter_next(&mut iter)
-				};
-				if !iter_invalid {
-					break;
-				}
+		// Walk backwards, so a removal leaves every earlier position valid.
+		for (position, port) in listed.iter().enumerate().rev() {
+			if !available.contains(port) {
+				log::debug!("removing port {port} from the list");
+				self.ports.remove(position as u32);
 			}
 		}
 
-		// Add rows to ListStore.
-		for new_port in ports {
-			let found = if let Some(mut iter) = port_store.iter_first() {
-				loop {
-					if new_port == get_port_name(port_store, &iter) {
-						break true;
-					} else if !port_store.iter_next(&mut iter) {
-						break false;
-					}
-				}
-			} else {
-				false
-			};
-			if !found {
-				let iter = port_store.append();
-				port_store.set_value(&iter, PORT_NAME_COL as u32, &new_port.as_str().to_value());
+		for port in &available {
+			if !listed.contains(port) {
+				self.ports.append(port.as_str());
 			}
 		}
 	}
-}
-
-fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> PortName {
-	port_store
-		.get_value(iter, PORT_NAME_COL)
-		.get::<String>()
-		.expect("values in PORT_NAME_COL are strings")
-		.into()
 }

@@ -167,6 +167,47 @@ drawingarea {
 	border-radius: 12px;
 }
 
+/* The port list: a boxed list whose selected row is the port feeding the
+ * source. Every row carries the tick, so the names line up whichever row is
+ * selected; only the selected row shows it. */
+
+.port-list row {
+	min-height: 44px;
+	padding: 0 14px;
+	background-color: transparent;
+	border-top: 1px solid @hairline;
+}
+
+/* The card is rounded, so the rows at its ends are too, or a selected end row
+ * would paint square corners over the card's round ones. */
+.port-list row:first-child {
+	border-top: none;
+	border-top-left-radius: 11px;
+	border-top-right-radius: 11px;
+}
+
+.port-list row:last-child {
+	border-bottom-left-radius: 11px;
+	border-bottom-right-radius: 11px;
+}
+
+.port-list row:hover {
+	background-color: @row_hover;
+}
+
+.port-list row:selected {
+	background-color: @accent;
+	color: @ink;
+}
+
+.port-list row image {
+	opacity: 0;
+}
+
+.port-list row:selected image {
+	opacity: 1;
+}
+
 /* Scoped to a stage body: a stage row is a button too, and it is square. */
 #control_pane .stage-body button {
 	border-radius: 6px;

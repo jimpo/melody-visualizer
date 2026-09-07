@@ -1,9 +1,5 @@
-// The port list uses GtkTreeView/GtkListStore, deprecated in GTK 4 in favour of
-// GtkColumnView. Keeping them is an intentional, scoped decision; migrating to
-// ColumnView is tracked as separate future work.
-#![allow(deprecated)]
-
-use gtk::{TreeIter, TreeSelection, prelude::*};
+use gio::prelude::*;
+use gtk::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::app::config::{
@@ -13,7 +9,7 @@ use crate::audio::source::events::ConnectionChanged;
 use crate::audio::source::{PortName, SourceType};
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
-	VolumeNormalizerController, app::events::ConfigChanged, control_pane::PORT_NAME_COL,
+	VolumeNormalizerController, app::events::ConfigChanged,
 };
 use crate::error::Error;
 use crate::gui::{controls, error_dialog, handle_async_err};
@@ -32,6 +28,13 @@ const SEMITONES_PER_OCTAVE: f64 = 12.0;
 /// The gap between the dot, the name and the summary on a stage row.
 const ROW_SPACING: i32 = 12;
 
+/// The gap between the tick and the name on a port row.
+const PORT_ROW_SPACING: i32 = 10;
+
+/// The tick that marks the connected port.
+const PORT_TICK_ICON: &str = "object-select-symbolic";
+const PORT_TICK_SIZE: i32 = 14;
+
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
 pub fn new(
@@ -39,7 +42,7 @@ pub fn new(
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
-	let port_view: gtk::TreeView = builder.object("port_list").unwrap();
+	let port_list: gtk::ListBox = builder.object("port_list").unwrap();
 	let spectrum_caption: gtk::Label = builder.object("spectrum_caption").unwrap();
 	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
 	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
@@ -52,7 +55,7 @@ pub fn new(
 		source_type_selection.append(&selector);
 	}
 
-	port_view.set_model(Some(controller.borrow().port_store()));
+	let port_subscription = connect_port_list(controller, &port_list);
 
 	// TODO: Maybe bound min/max frequency using window size.
 
@@ -94,10 +97,6 @@ pub fn new(
 	key_freq_scale
 		.connect_change_value(move |_scale, _, value| on_key_freq_change(&controller_clone, value));
 
-	let selection = port_view.selection();
-	let controller_clone = app_controller.clone();
-	selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
-
 	{
 		// Set initial control values.
 		let app_controller = app_controller.borrow();
@@ -108,7 +107,77 @@ pub fn new(
 		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
 	}
 
-	build_accordion(&app_controller, &builder)
+	build_accordion(&app_controller, &builder, vec![port_subscription])
+}
+
+/// Fill the port list from the controller's model, and keep it and the
+/// source's connection in step both ways.
+fn connect_port_list(
+	controller: &Rc<RefCell<ControlPaneController>>,
+	port_list: &gtk::ListBox,
+) -> SubscriptionHandle {
+	let ports = controller.borrow().ports().clone();
+	let app_controller = controller.borrow().app_controller().clone();
+
+	port_list.bind_model(Some(&ports), |item| build_port_row(item).upcast());
+
+	let controller_clone = controller.clone();
+	port_list.connect_row_selected(move |_list, row| {
+		let controller = controller_clone.borrow();
+		let port = row.and_then(|row| controller.port_at(row.index() as u32));
+		on_port_selected(&controller.app_controller().borrow(), port);
+	});
+
+	// The connected port is what JACK reports, so the selection follows it
+	// rather than the click: a connection made outside the app selects its row
+	// too, and a port that JACK drops leaves nothing selected.
+	select_connected_port(&app_controller.borrow(), &ports, port_list);
+	let app_controller_clone = app_controller.clone();
+	let port_list_clone = port_list.clone();
+	ports.connect_items_changed(move |ports, _position, _removed, _added| {
+		select_connected_port(&app_controller_clone.borrow(), ports, &port_list_clone);
+	});
+	let app_controller_clone = app_controller.clone();
+	let port_list = port_list.clone();
+	app_controller
+		.borrow()
+		.pubsub()
+		.subscribe(move |_: &ConnectionChanged| {
+			select_connected_port(&app_controller_clone.borrow(), &ports, &port_list);
+		})
+}
+
+/// A port row: a tick, shown only while the row is selected, and the name.
+fn build_port_row(item: &glib::Object) -> gtk::Box {
+	let name = item
+		.downcast_ref::<gtk::StringObject>()
+		.map(|item| item.string())
+		.unwrap_or_default();
+
+	let tick = gtk::Image::builder()
+		.icon_name(PORT_TICK_ICON)
+		.pixel_size(PORT_TICK_SIZE)
+		.build();
+	let label = gtk::Label::builder().label(name).xalign(0.0).build();
+
+	let row = gtk::Box::new(gtk::Orientation::Horizontal, PORT_ROW_SPACING);
+	row.append(&tick);
+	row.append(&label);
+	row
+}
+
+/// Select the row of the port feeding the source, or nothing when none is.
+fn select_connected_port(
+	app_controller: &AppController,
+	ports: &gtk::StringList,
+	port_list: &gtk::ListBox,
+) {
+	let row = app_controller.connected_input().and_then(|connected| {
+		(0..ports.n_items())
+			.find(|&position| ports.string(position).as_deref() == Some(connected.as_str()))
+			.and_then(|position| port_list.row_at_index(position as i32))
+	});
+	port_list.select_row(row.as_ref());
 }
 
 /// Builds the pane itself: one stage per step of the pipeline, stacked in the
@@ -116,6 +185,7 @@ pub fn new(
 fn build_accordion(
 	app_controller_ref: &Rc<RefCell<AppController>>,
 	builder: &gtk::Builder,
+	mut subscriptions: Vec<SubscriptionHandle>,
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let app_controller = app_controller_ref.borrow();
 
@@ -158,10 +228,14 @@ fn build_accordion(
 
 	// A stage row reports what its stage is set to, so it has to follow both the
 	// config and the connection JACK reports separately from it.
-	let subscriptions = [
-		subscribe_to_summaries::<ConfigChanged>(app_controller_ref, &stages),
-		subscribe_to_summaries::<ConnectionChanged>(app_controller_ref, &stages),
-	];
+	subscriptions.push(subscribe_to_summaries::<ConfigChanged>(
+		app_controller_ref,
+		&stages,
+	));
+	subscriptions.push(subscribe_to_summaries::<ConnectionChanged>(
+		app_controller_ref,
+		&stages,
+	));
 
 	// Six stages with a body open overflow a short window.
 	let view = gtk::ScrolledWindow::builder()
@@ -378,21 +452,18 @@ fn build_transform_control(
 	}
 }
 
-fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
-	let port_name = selection
-		.selected()
-		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
-	if let Err(err) = app_controller.borrow().connect_port(port_name) {
+/// Feed the source from `port`, unless it already is.
+///
+/// The selection follows the connection as well as leading it, so a selection
+/// that only echoes what JACK reports must not be sent back to JACK: connecting
+/// a port that is already connected is an error there.
+fn on_port_selected(app_controller: &AppController, port: Option<PortName>) {
+	if port == app_controller.connected_input() {
+		return;
+	}
+	if let Err(err) = app_controller.connect_port(port) {
 		error_dialog(err);
 	}
-}
-
-fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> PortName {
-	port_store
-		.get_value(iter, PORT_NAME_COL)
-		.get::<String>()
-		.expect("values in PORT_NAME_COL are strings")
-		.into()
 }
 
 // fn on_source_type_toggled(

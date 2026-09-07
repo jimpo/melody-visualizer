@@ -247,8 +247,9 @@ unbounded channel of `events::Event`, both of which close when the source drops.
 
 Nothing is connected to that port at startup. The user picks a JACK output port
 in the control pane and `AppController::connect_port` asks the source to
-connect it. The control pane keeps its list current by subscribing to
-`PortsChanged` and re-reading `JackSource::available_inputs`.
+connect it. `ControlPaneController` keeps a `GtkStringList` of those ports current by
+subscribing to `PortsChanged` and re-reading `JackSource::available_inputs`,
+and the pane's port list is bound to that model.
 
 That list is correct the moment the notification arrives. JACK keeps listing a
 port for a few milliseconds after announcing that it was unregistered
@@ -260,7 +261,9 @@ subtracts it, forgetting it again once JACK's own list agrees.
 reads it back off the port every time, and the `ports_connected` callback
 reports `ConnectionChanged` whenever the graph around the input port moves.
 A connection made with `jack_connect`, or by any other client, therefore shows
-in the control pane exactly like one the app made itself.
+in the control pane exactly like one the app made itself: the port list selects
+the row of whichever port JACK reports, and sends a selection back to JACK only
+when it names a different port.
 
 The `JackSource` trait (`audio/source.rs`) exists so a second source type could be
 slotted in behind the same interface. Only `Audio` is implemented.
@@ -520,9 +523,6 @@ candidate for its own change.
 
 ### GUI
 
-- **The GTK 4 migration is incomplete.** The port list still uses the deprecated
-  `GtkTreeView`/`GtkListStore` behind `#![allow(deprecated)]`. `GtkColumnView` is
-  the target.
 - **Frame timing ignores the compositor.** A fixed 40 ms `glib::timeout_add_local`
   should become GTK 4's frame clock (`add_tick_callback`), which aligns repaints
   with vsync and reports the real frame deadline.
@@ -548,5 +548,4 @@ candidate for its own change.
   same process trips glib's thread guard and the process takes a non-unwinding
   panic. See [DEVELOPMENT.md](DEVELOPMENT.md#testing) for the workaround and the
   fix this needs.
-- The crate builds clean under `cargo clippy --all-targets -- -D warnings`, with
-  one suppressed lint (see **GUI**, above).
+- The crate builds clean under `cargo clippy --all-targets -- -D warnings`.

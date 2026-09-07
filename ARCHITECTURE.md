@@ -421,6 +421,12 @@ that means *enabled*: off dims the row, makes the body insensitive and bypasses
 the stage in the running chain, and the row goes on reporting what the stage is
 set to. The switch's state lives on the config entry, so it opens on what the
 config says and a chain rebuilt from the config keeps the same stages bypassed.
+Only the diffuser qualifies today. The volume normalizer is the stage that
+rescales raw power into the `[0, 1]` the spiral consumes, so bypassing it leaves
+every value on the black floor — see
+[§ Value ranges along the chain](#value-ranges-along-the-chain). The decibel
+converter is withheld for its own reason: without it the spectrum is linear in
+power, which reads as a few spikes and nothing else.
 
 The stage bodies are built from a small widget vocabulary in `gui/controls/`:
 a captioned slider for each transform, a boxed list for the ports, a row of

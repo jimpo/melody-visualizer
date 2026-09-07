@@ -325,8 +325,8 @@ fn build_stage(
 /// Off dims the row and the body, and the body stays reachable but
 /// insensitive: what the stage is set to can be read without switching it
 /// back on. The row's summary keeps saying the same thing either way. What
-/// the switch changes about the pipeline is nothing yet: no stage of the
-/// chain can be skipped.
+/// the switch changes about the pipeline is nothing yet: nothing carries its
+/// state to the transform chain.
 fn add_switch(row: &gtk::Box, body: &impl IsA<gtk::Widget>) {
 	let switch = gtk::Switch::builder()
 		.active(true)

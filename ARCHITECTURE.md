@@ -514,9 +514,10 @@ candidate for its own change.
   ways out.
 - `TransformChain::remove` and `reorder` exist, but nothing in the GUI calls
   them: transforms can still only be appended.
-- **The switch on a transform row reaches nothing.** Neither `Config` nor
-  `TransformChain` has a notion of a disabled stage, so switching a transform
-  off dims its row and changes nothing about the spectrum.
+- **The switch on a transform row reaches nothing.** `TransformChain` can bypass
+  an entry, but `Config` has no field for it and nothing carries the switch's
+  state to the chain, so switching a transform off dims its row and changes
+  nothing about the spectrum.
 - The spectrum thread's own loop — timing, backpressure, shutdown — has no
   tests. The chain it drives is covered without one, since `SpectrumRenderer`
   is drivable on its own, but `SpectrumProcessor` is reachable only by spawning

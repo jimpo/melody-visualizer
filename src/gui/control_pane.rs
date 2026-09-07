@@ -3,7 +3,7 @@ use gtk::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::app::config::{
-	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig,
+	GraphicGeneratorConfig, SpectrumGeneratorConfig, SpectrumTransformConfig, TransformEntry,
 };
 use crate::audio::source::events::ConnectionChanged;
 use crate::audio::source::{PortName, SourceType};
@@ -13,7 +13,7 @@ use crate::controllers::{
 };
 use crate::error::Error;
 use crate::gui::controls::key_row::key_name;
-use crate::gui::{controls, error_dialog};
+use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note::Note;
 use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::TransformId;
@@ -136,21 +136,24 @@ fn build_accordion(
 			"Source",
 			&builder.object::<gtk::Widget>("source_body").unwrap(),
 			Switchable::No,
+			app_controller_ref,
 		),
 		build_stage(
 			StageId::Spectrum,
 			spectrum_generator_name(&app_controller),
 			&controls::spectrum::new(app_controller_ref),
 			Switchable::No,
+			app_controller_ref,
 		),
 	];
-	for (id, config) in app_controller.config.spectrum_transforms.iter() {
-		let body = build_transform_control(*id, config, app_controller_ref)?;
+	for entry in app_controller.config.spectrum_transforms.iter() {
+		let body = build_transform_control(entry.id, &entry.config, app_controller_ref)?;
 		stages.push(build_stage(
-			StageId::Transform(*id),
-			spectrum_transform_name(config),
+			StageId::Transform(entry.id),
+			spectrum_transform_name(&entry.config),
 			&body,
-			transform_switchable(config),
+			transform_switchable(entry),
+			app_controller_ref,
 		));
 	}
 	stages.push(build_stage(
@@ -158,6 +161,7 @@ fn build_accordion(
 		graphic_generator_name(&app_controller),
 		&controls::spiral::new(app_controller_ref),
 		Switchable::No,
+		app_controller_ref,
 	));
 
 	let stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -214,10 +218,11 @@ struct Stage {
 	summary: gtk::Label,
 }
 
-/// Whether a stage row carries the switch that enables the stage.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Whether a stage row carries the switch that enables the stage, and what the
+/// switch stands for when it does.
+#[derive(Clone, Copy)]
 enum Switchable {
-	Yes,
+	Yes { id: TransformId, enabled: bool },
 	No,
 }
 
@@ -253,11 +258,14 @@ impl StageId {
 ///
 /// The decibel converter has none: without it the spectrum is linear in
 /// power, which reads as a few spikes and nothing else, so it is not optional.
-fn transform_switchable(config: &SpectrumTransformConfig) -> Switchable {
-	match config {
+fn transform_switchable(entry: &TransformEntry) -> Switchable {
+	match entry.config {
 		SpectrumTransformConfig::DecibelConverter(_) => Switchable::No,
 		SpectrumTransformConfig::Diffuser(_) | SpectrumTransformConfig::VolumeNormalizer(_) => {
-			Switchable::Yes
+			Switchable::Yes {
+				id: entry.id,
+				enabled: entry.enabled,
+			}
 		}
 	}
 }
@@ -267,6 +275,7 @@ fn build_stage(
 	name: &str,
 	body: &impl IsA<gtk::Widget>,
 	switchable: Switchable,
+	app_controller: &Rc<RefCell<AppController>>,
 ) -> Stage {
 	let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
 	dot.add_css_class("stage-dot");
@@ -302,8 +311,8 @@ fn build_stage(
 		.child(body)
 		.build();
 
-	if switchable == Switchable::Yes {
-		add_switch(&row, body);
+	if let Switchable::Yes { id, enabled } = switchable {
+		add_switch(&row, body, id, enabled, app_controller);
 	}
 
 	Stage {
@@ -319,28 +328,49 @@ fn build_stage(
 ///
 /// Off dims the row and the body, and the body stays reachable but
 /// insensitive: what the stage is set to can be read without switching it
-/// back on. The row's summary keeps saying the same thing either way. What
-/// the switch changes about the pipeline is nothing yet: nothing carries its
-/// state to the transform chain.
-fn add_switch(row: &gtk::Box, body: &impl IsA<gtk::Widget>) {
+/// back on. The row's summary keeps saying the same thing either way. Off also
+/// bypasses the transform `id` names in the running chain, through
+/// [`AppController::set_transform_enabled`].
+///
+/// The switch opens on `enabled`, which is the config's flag, so the widget and
+/// the chain agree from the first frame.
+fn add_switch(
+	row: &gtk::Box,
+	body: &impl IsA<gtk::Widget>,
+	id: TransformId,
+	enabled: bool,
+	app_controller: &Rc<RefCell<AppController>>,
+) {
 	let switch = gtk::Switch::builder()
-		.active(true)
+		.active(enabled)
 		.valign(gtk::Align::Center)
 		.build();
 
 	row.append(&switch);
+	set_dimmed(row, body, enabled);
 
 	let row = row.clone();
 	let body = body.clone();
+	let app_controller = app_controller.clone();
 	switch.connect_active_notify(move |switch| {
 		let enabled = switch.is_active();
-		body.set_sensitive(enabled);
-		if enabled {
-			row.remove_css_class(DIMMED_CLASS);
-		} else {
-			row.add_css_class(DIMMED_CLASS);
-		}
+		set_dimmed(&row, &body, enabled);
+		handle_async_err(
+			app_controller
+				.borrow_mut()
+				.set_transform_enabled(id, enabled),
+		);
 	});
+}
+
+/// Dims the row and desensitizes the body of a stage that is switched off.
+fn set_dimmed(row: &gtk::Box, body: &impl IsA<gtk::Widget>, enabled: bool) {
+	body.set_sensitive(enabled);
+	if enabled {
+		row.remove_css_class(DIMMED_CLASS);
+	} else {
+		row.add_css_class(DIMMED_CLASS);
+	}
 }
 
 /// Keep at most one stage open. Clicking the open stage's bar closes it, which

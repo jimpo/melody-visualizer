@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use melody_visualizer::app::Config;
-use melody_visualizer::app::config::SpectrumGeneratorConfig;
+use melody_visualizer::app::config::{SpectrumGeneratorConfig, SpectrumTransformConfig};
 use melody_visualizer::spectrum::{Spectrum, SpectrumBuffer};
 use melody_visualizer::test_support::{renderer, sample_reader, sine_wave};
 
@@ -141,4 +141,39 @@ fn a_silent_input_produces_a_silent_spectrum() {
 		spectrum.values().iter().all(|&value| value == 0.0),
 		"silence in, silence out — and nothing the normalizer divides by zero",
 	);
+}
+
+#[test]
+fn a_switched_off_stage_is_the_same_as_no_stage_at_all() {
+	let config = Config::default();
+	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let window = generator_config.dft_window_size;
+	let signal = sine_wave(&[(440.0, 1.0)], SAMPLE_RATE, window);
+	let params = Arc::new(config.spectrum_params());
+
+	// The diffuser spreads a partial across neighbouring bins, so leaving it out
+	// is a difference the output shows. It is found by kind rather than by
+	// position, since the stages ahead of it in `Config::default` change.
+	let diffuser = config
+		.spectrum_transforms
+		.iter()
+		.find(|entry| matches!(entry.config, SpectrumTransformConfig::Diffuser(_)))
+		.expect("the default chain holds a diffuser")
+		.id;
+
+	let mut bypassed = config.clone();
+	bypassed.set_transform_enabled(diffuser, false).unwrap();
+
+	let mut removed = config.clone();
+	removed
+		.spectrum_transforms
+		.retain(|entry| entry.id != diffuser);
+
+	let render = |config| {
+		renderer(config, sample_reader(&signal), SAMPLE_RATE)
+			.render(SpectrumBuffer::new(params.clone()))
+	};
+
+	assert_eq!(render(&bypassed).values(), render(&removed).values());
+	assert_ne!(render(&bypassed).values(), render(&config).values());
 }

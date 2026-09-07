@@ -99,11 +99,7 @@ fn spectrum(bins: usize) -> Spectrum {
 	let params = grid(bins);
 	let mut renderer = SpectrumRenderer::new();
 	renderer.set_generator(Box::new(generator(2048)));
-	*renderer.transforms_mut() = Config::default()
-		.spectrum_transforms
-		.into_iter()
-		.map(|(id, config)| (id, config.create()))
-		.collect();
+	*renderer.transforms_mut() = Config::default().spectrum_transforms.into_iter().collect();
 	renderer.render(SpectrumBuffer::new(params))
 }
 

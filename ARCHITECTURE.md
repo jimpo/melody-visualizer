@@ -414,7 +414,9 @@ source, the spectrum generator, each transform in chain order, then the graphic
 generator. A stage is a bar over a `GtkRevealer`, at most one is open, and every
 bar reports what its stage is set to whether it is open or not. The chain the
 pane shows is fixed — nothing in the GUI adds, removes or reorders a
-transform.
+transform. A transform that can be done without carries a switch on its row
+that means *enabled*: off dims the row and makes the body insensitive, and the
+row goes on reporting what the stage is set to.
 
 **Shutdown**: `connect_destroy` calls `AppController::shutdown()`, which drops
 the JACK source and closes each renderer's command channel. Closing a channel
@@ -504,6 +506,9 @@ candidate for its own change.
   ways out.
 - `TransformChain::remove` and `reorder` exist, but nothing in the GUI calls
   them: transforms can still only be appended.
+- **The switch on a transform row reaches nothing.** Neither `Config` nor
+  `TransformChain` has a notion of a disabled stage, so switching a transform
+  off dims its row and changes nothing about the spectrum.
 - The spectrum thread's own loop — timing, backpressure, shutdown — has no
   tests. The chain it drives is covered without one, since `SpectrumRenderer`
   is drivable on its own, but `SpectrumProcessor` is reachable only by spawning

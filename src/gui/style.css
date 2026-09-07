@@ -109,28 +109,86 @@ drawingarea {
 	color: @ink_dim;
 }
 
-/* A stage: the header row that toggles it, and the body beneath. */
+/* A stage: the header row that toggles it, and the body beneath. The row is
+ * a box around the toggle, and around the switch where the stage has one, so
+ * the row paints its own states and the toggle paints none. */
 
 .stage-row {
 	min-height: 52px;
 	padding: 0 16px;
-	background-color: transparent;
-	background-image: none;
-	border: none;
-	border-radius: 0;
-	box-shadow: none;
 }
 
 .stage-row:hover {
 	background-color: @row_hover;
 }
 
-/* Open, whichever way the row carries that state: a toggle reports `:checked`,
- * a list-box row `:selected`. */
-.stage-row:checked,
-.stage-row:selected {
+.stage-row.open {
 	background-color: @row_open;
 	color: @ink;
+}
+
+.stage-toggle,
+.stage-toggle:hover,
+.stage-toggle:active,
+.stage-toggle:checked {
+	min-height: 52px;
+	padding: 0;
+	background-color: transparent;
+	background-image: none;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	color: @ink;
+}
+
+/* A stage switched off: the row dims, its summary still says what the stage
+ * is set to. */
+
+.stage-row.dimmed .stage-dot {
+	opacity: 0.35;
+}
+
+.stage-row.dimmed .stage-name {
+	color: alpha(@ink, 0.4);
+}
+
+.stage-row.dimmed .stage-summary {
+	color: alpha(@ink, 0.28);
+}
+
+.stage-body:disabled {
+	opacity: 0.4;
+}
+
+/* The switch: a 40 by 24 pill with a 20 px knob, the accent when on. */
+
+#control_pane switch {
+	min-width: 40px;
+	min-height: 24px;
+	padding: 0;
+	background-color: alpha(@ink, 0.18);
+	background-image: none;
+	border: none;
+	box-shadow: none;
+}
+
+#control_pane switch:checked {
+	background-color: @accent;
+}
+
+#control_pane switch slider {
+	min-width: 20px;
+	min-height: 20px;
+	margin: 2px;
+	border-radius: 99px;
+	background-color: @ink;
+	background-image: none;
+	border: none;
+	box-shadow: 0 1px 2px alpha(black, 0.4);
+}
+
+#control_pane switch image {
+	opacity: 0;
 }
 
 .stage-dot {

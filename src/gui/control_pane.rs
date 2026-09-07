@@ -194,11 +194,13 @@ fn build_accordion(
 			StageId::Source,
 			"Source",
 			&builder.object::<gtk::Widget>("source_body").unwrap(),
+			Switchable::No,
 		),
 		build_stage(
 			StageId::Spectrum,
 			spectrum_generator_name(&app_controller),
 			&builder.object::<gtk::Widget>("spectrum_body").unwrap(),
+			Switchable::No,
 		),
 	];
 	for (id, config) in app_controller.config.spectrum_transforms.iter() {
@@ -207,17 +209,19 @@ fn build_accordion(
 			StageId::Transform(*id),
 			spectrum_transform_name(config),
 			&body,
+			transform_switchable(config),
 		));
 	}
 	stages.push(build_stage(
 		StageId::Spiral,
 		graphic_generator_name(&app_controller),
 		&builder.object::<gtk::Widget>("spiral_body").unwrap(),
+		Switchable::No,
 	));
 
 	let stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
 	for stage in stages.iter() {
-		stack.append(&stage.toggle);
+		stack.append(&stage.row);
 		stack.append(&stage.revealer);
 		stack.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 	}
@@ -254,16 +258,32 @@ fn build_accordion(
 	Ok(view)
 }
 
-/// One stage of the pipeline: the bar that opens it and the body beneath.
+/// One stage of the pipeline: the row that opens it and the body beneath.
 ///
-/// The bar is the whole toggle, because the design carries no disclosure arrow.
-/// Its background is what tells an open stage from a hovered one.
+/// The row is the whole toggle, because the design carries no disclosure
+/// arrow. Its background is what tells an open stage from a hovered one. A
+/// transform that can be switched off carries a switch at the end of its row,
+/// beside the toggle rather than inside it, since a button swallows the
+/// clicks of anything it holds.
 struct Stage {
 	id: StageId,
+	row: gtk::Box,
 	toggle: gtk::ToggleButton,
 	revealer: gtk::Revealer,
 	summary: gtk::Label,
 }
+
+/// Whether a stage row carries the switch that enables the stage.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Switchable {
+	Yes,
+	No,
+}
+
+/// The CSS class on a row whose switch is off.
+const DIMMED_CLASS: &str = "dimmed";
+/// The CSS class on the row of the open stage.
+const OPEN_CLASS: &str = "open";
 
 /// Which step of the pipeline a stage stands for. It names the colour of the
 /// row's dot and the config the row's summary reads.
@@ -288,7 +308,25 @@ impl StageId {
 	}
 }
 
-fn build_stage(id: StageId, name: &str, body: &impl IsA<gtk::Widget>) -> Stage {
+/// Whether a transform's row carries a switch.
+///
+/// The decibel converter has none: without it the spectrum is linear in
+/// power, which reads as a few spikes and nothing else, so it is not optional.
+fn transform_switchable(config: &SpectrumTransformConfig) -> Switchable {
+	match config {
+		SpectrumTransformConfig::DecibelConverter(_) => Switchable::No,
+		SpectrumTransformConfig::Diffuser(_) | SpectrumTransformConfig::VolumeNormalizer(_) => {
+			Switchable::Yes
+		}
+	}
+}
+
+fn build_stage(
+	id: StageId,
+	name: &str,
+	body: &impl IsA<gtk::Widget>,
+	switchable: Switchable,
+) -> Stage {
 	let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
 	dot.add_css_class("stage-dot");
 	dot.add_css_class(id.dot_class());
@@ -308,20 +346,60 @@ fn build_stage(id: StageId, name: &str, body: &impl IsA<gtk::Widget>) -> Stage {
 	bar.append(&name_label);
 	bar.append(&summary);
 
-	let toggle = gtk::ToggleButton::builder().child(&bar).build();
-	toggle.add_css_class("stage-row");
+	let toggle = gtk::ToggleButton::builder()
+		.child(&bar)
+		.hexpand(true)
+		.build();
+	toggle.add_css_class("stage-toggle");
+
+	let row = gtk::Box::new(gtk::Orientation::Horizontal, ROW_SPACING);
+	row.add_css_class("stage-row");
+	row.append(&toggle);
 
 	let revealer = gtk::Revealer::builder()
 		.transition_type(gtk::RevealerTransitionType::SlideDown)
 		.child(body)
 		.build();
 
+	if switchable == Switchable::Yes {
+		add_switch(&row, body);
+	}
+
 	Stage {
 		id,
+		row,
 		toggle,
 		revealer,
 		summary,
 	}
+}
+
+/// The switch at the end of a stage row. It means *enabled*, not bypassed.
+///
+/// Off dims the row and the body, and the body stays reachable but
+/// insensitive: what the stage is set to can be read without switching it
+/// back on. The row's summary keeps saying the same thing either way. What
+/// the switch changes about the pipeline is nothing yet: no stage of the
+/// chain can be skipped.
+fn add_switch(row: &gtk::Box, body: &impl IsA<gtk::Widget>) {
+	let switch = gtk::Switch::builder()
+		.active(true)
+		.valign(gtk::Align::Center)
+		.build();
+
+	row.append(&switch);
+
+	let row = row.clone();
+	let body = body.clone();
+	switch.connect_active_notify(move |switch| {
+		let enabled = switch.is_active();
+		body.set_sensitive(enabled);
+		if enabled {
+			row.remove_css_class(DIMMED_CLASS);
+		} else {
+			row.add_css_class(DIMMED_CLASS);
+		}
+	});
 }
 
 /// Keep at most one stage open. Clicking the open stage's bar closes it, which
@@ -336,7 +414,13 @@ fn connect_exclusive_open(stages: &Rc<Vec<Stage>>) {
 				return;
 			};
 			let open = toggle.is_active();
-			stages[index].revealer.set_reveal_child(open);
+			let stage = &stages[index];
+			stage.revealer.set_reveal_child(open);
+			if open {
+				stage.row.add_css_class(OPEN_CLASS);
+			} else {
+				stage.row.remove_css_class(OPEN_CLASS);
+			}
 			if open {
 				for (other_index, other) in stages.iter().enumerate() {
 					if other_index != index {

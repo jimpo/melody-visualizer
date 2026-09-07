@@ -27,6 +27,24 @@ pub fn hop_samples(dft_window_size: usize, overlap: f64) -> f64 {
 	dft_window_size as f64 * (1.0 - overlap)
 }
 
+/// The DFT window a grid of `samples_per_octave` bins needs.
+///
+/// A window of `n` samples spaces its bins `sample_rate / n` apart, evenly,
+/// while the grid's bins crowd together towards the low end. So the octave
+/// below the Nyquist frequency is where the grid is coarsest and the transform
+/// has the best chance of resolving it: the grid's step there is a
+/// `2^(1/samples_per_octave) - 1` fraction of `sample_rate / 4`, and matching it
+/// takes `4 / (2^(1/samples_per_octave) - 1)` samples. The sample rate cancels,
+/// so the answer holds at any rate. Lower octaves the transform interpolates
+/// across, which no window short enough to be worth planning would fix.
+///
+/// `rustfft` plans any size but is fastest at a power of two, so the window
+/// rounds up to one.
+pub fn dft_window_size(samples_per_octave: usize) -> usize {
+	let samples = 4.0 / (2f64.powf(1.0 / samples_per_octave as f64) - 1.0);
+	(samples.ceil() as usize).next_power_of_two()
+}
+
 pub struct AudioSpectrumGenerator {
 	audio_buffer: SampleReader,
 	/// The window the ring is read into, one DFT window long. Held across ticks
@@ -437,6 +455,34 @@ mod tests {
 					 to advance, expected {expected} s",
 				);
 			}
+		}
+	}
+
+	#[test]
+	fn the_window_resolves_the_grid_in_the_octave_below_nyquist() {
+		for samples_per_octave in [12, 60, 180, 360, 720] {
+			let window = dft_window_size(samples_per_octave);
+			assert!(
+				window.is_power_of_two(),
+				"{samples_per_octave} bins / octave planned a {window}-sample window",
+			);
+
+			// Both steps as a fraction of the sample rate, which cancels: the
+			// DFT's is 1 / window, and the grid's at the Nyquist frequency's
+			// lower octave is that octave's bottom, a quarter of the rate,
+			// times the ratio between two grid bins.
+			let dft_step = 1.0 / window as f64;
+			let grid_step = 0.25 * (2f64.powf(1.0 / samples_per_octave as f64) - 1.0);
+			assert!(
+				dft_step <= grid_step,
+				"a {window}-sample window steps by {dft_step} of the sample rate, \
+				 past the {grid_step} between two of {samples_per_octave} bins / octave",
+			);
+			assert!(
+				dft_step * 2.0 > grid_step,
+				"a {window}-sample window is twice what \
+				 {samples_per_octave} bins / octave asks for",
+			);
 		}
 	}
 

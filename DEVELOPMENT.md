@@ -153,13 +153,16 @@ Every doubling of bins costs 4×. Width is the same story at a fixed bin count:
 1/24 octave takes 4.2 µs, one octave 97 µs, ten octaves 830 µs — the last of
 those is 4% of the tick, from a slider the GUI already offers.
 
-Bin count is `samples_per_octave`, an internal `Config` field with no GUI
-control, and exposing it is deferred. The benchmarks make the cliff visible so
-that decision can be revisited on evidence.
+Bin count is `samples_per_octave`, which the **Pitch resolution** slider moves
+between 12 and 360: 1196 bins in the middle of its range, 2392 at the top. Both
+ends stay cheap, for opposite reasons. The top has twice the bins and so four
+times the diffuser, but its window doubles too and the tick that comes from it
+doubles with it. The bottom's tick is 1.3 ms, short enough to matter, over a
+chain of 80 bins that costs almost nothing.
 
 `tests/dsp_budget.rs` is the gate the ordinary test run applies: the composed
-chain must stay well inside one tick. Benchmarks catch nothing if nobody runs
-them; that test does.
+chain must stay well inside one tick, at both ends of that slider and at its
+default. Benchmarks catch nothing if nobody runs them; that test does.
 
 ### The visualizer
 

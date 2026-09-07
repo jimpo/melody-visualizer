@@ -15,6 +15,10 @@ pub mod volume_normalizer;
 
 use gtk::prelude::*;
 
+/// The semitones an octave divides into, for a control that reads a per-octave
+/// field out in the units a musician counts in.
+pub const SEMITONES_PER_OCTAVE: f64 = 12.0;
+
 /// The gap between two control groups in one stage body.
 pub const GROUP_SPACING: i32 = 22;
 

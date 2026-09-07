@@ -178,12 +178,15 @@ impl Default for Config {
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];
+		// A fifteenth of a semitone, which the "Pitch resolution" control in
+		// `gui/controls/spectrum.rs` moves and the window follows.
+		let samples_per_octave = 180;
 		Config {
 			min_freq: 200.0,   // Low-end of human hearing
 			max_freq: 20000.0, // High-end of human hearing
-			samples_per_octave: 180,
+			samples_per_octave,
 			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config {
-				dft_window_size: 2048,
+				dft_window_size: audio::dft_window_size(samples_per_octave),
 				overlap: 0.5,
 			}),
 			spectrum_transforms: transforms

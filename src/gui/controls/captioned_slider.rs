@@ -13,6 +13,9 @@ pub struct CaptionedSlider {
 	pub widget: gtk::Box,
 	/// The scale, for the stage to connect its change handler to.
 	pub scale: gtk::Scale,
+	/// The value beside the label, for a stage whose value also reads
+	/// something the adjustment does not carry.
+	pub value: gtk::Label,
 	/// The dim line under the scale, for a stage whose caption follows the
 	/// value.
 	pub caption: gtk::Label,
@@ -37,8 +40,9 @@ impl CaptionedSlider {
 		scale.set_hexpand(true);
 
 		value.set_label(&format(adjustment.value()));
+		let value_clone = value.clone();
 		adjustment.connect_value_changed(move |adjustment| {
-			value.set_label(&format(adjustment.value()));
+			value_clone.set_label(&format(adjustment.value()));
 		});
 
 		let caption = caption(caption_text);
@@ -51,6 +55,7 @@ impl CaptionedSlider {
 		CaptionedSlider {
 			widget,
 			scale,
+			value,
 			caption,
 		}
 	}

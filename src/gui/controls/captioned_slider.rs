@@ -13,6 +13,9 @@ pub struct CaptionedSlider {
 	pub widget: gtk::Box,
 	/// The scale, for the stage to connect its change handler to.
 	pub scale: gtk::Scale,
+	/// The dim line under the scale, for a stage whose caption follows the
+	/// value.
+	pub caption: gtk::Label,
 }
 
 impl CaptionedSlider {
@@ -38,11 +41,17 @@ impl CaptionedSlider {
 			value.set_label(&format(adjustment.value()));
 		});
 
+		let caption = caption(caption_text);
+
 		let widget = gtk::Box::new(gtk::Orientation::Vertical, CONTROL_SPACING);
 		widget.append(&row);
 		widget.append(&scale);
-		widget.append(&caption(caption_text));
+		widget.append(&caption);
 
-		CaptionedSlider { widget, scale }
+		CaptionedSlider {
+			widget,
+			scale,
+			caption,
+		}
 	}
 }

@@ -116,6 +116,20 @@ impl AppController {
 			.map_err(Error::Communication)
 	}
 
+	/// Ships the spectrum generator's config to the spectrum thread, which
+	/// applies it to the running generator.
+	pub fn update_spectrum_generator(&self) -> impl Future<Output = Result<(), Error>> + use<> {
+		let config = self.config.spectrum_generator.clone();
+		self.notify_and_log_err(events::ConfigChanged);
+		self.spectrum_renderer
+			.exec_cloned(move |renderer| config.update(renderer.generator_mut()))
+			.map(|result| {
+				result
+					.map_err(Error::Communication)
+					.and_then(|result| result)
+			})
+	}
+
 	pub fn update_spectrum_params(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let spectrum_params = self.config.spectrum_params();
 		self.notify_and_log_err(events::ConfigChanged);
@@ -167,6 +181,12 @@ impl AppController {
 		self.source
 			.as_ref()
 			.and_then(|source| source.connected_input())
+	}
+
+	/// The rate the source's samples arrive at, as JACK reports it now. Nothing
+	/// is cached, so a rate the server changed is reported too.
+	pub fn sample_rate(&self) -> Option<u32> {
+		self.source.as_ref().map(|source| source.sample_rate())
 	}
 
 	/// Feed the source's input from `output_port`, or from nothing at all.

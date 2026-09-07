@@ -131,7 +131,7 @@ The pipeline is paced by two independent timers. Do not conflate them.
 
 | Clock | Where | Rate | Drives |
 |---|---|---|---|
-| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — half a DFT window, so ~21 ms at 2048 samples / 48 kHz | How often a new `Spectrum` is produced |
+| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — the part of a DFT window that `audio::Config::overlap` leaves, so ~21 ms at 2048 samples / 48 kHz and half of it overlapping | How often a new `Spectrum` is produced |
 | **Frame timer** | GTK thread (`glib::timeout_add_local`) | 40 ms (25 fps) | How often a frame is rendered and repainted |
 
 The spectrum thread is the **only** timed producer. The graphic thread has no
@@ -235,7 +235,8 @@ written down, not a gap in the writing.
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
 | `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
 | `Config::samples_per_octave` | 180, internal | The quadratic cost driver. No GUI control, and exposing it is deferred |
-| `audio::Config::dft_window_size` | 2048, internal | Sets the tick rate through `interval()`, at half a window |
+| `audio::Config::dft_window_size` | 2048, internal | With the overlap, sets the tick rate through `interval()` |
+| `audio::Config::overlap` | `0..0.75` | The **Update rate** slider in `gui/controls/spectrum.rs` moves the overlap and reads out the rate it produces. Beyond 0.75 the rate climbs steeply for ever less new audio per tick |
 
 ### JACK client and port wiring
 
@@ -512,6 +513,10 @@ candidate for its own change.
   up to 6.0 into a consumer that assumes `[0, 1]`, which is why it is commented
   out of `Config::default`. See *Value ranges along the chain* above for the two
   ways out.
+- **The transforms measure time in ticks, and the tick is adjustable.**
+  `VolumeNormalizer::rate` is per spectrum, so raising the update rate shortens
+  the time its running peak decays over without its own control moving. A rate
+  in seconds, scaled by `generator.interval()`, would decouple them.
 - `TransformChain::remove` and `reorder` exist, but nothing in the GUI calls
   them: transforms can still only be appended.
 - **The switch on a transform row reaches nothing.** `TransformChain` can bypass
@@ -552,8 +557,8 @@ candidate for its own change.
   which is wrong; the value is a visualization choice, not a hearing limit.
 - Config changes reach the renderers as several independent RPCs
   (`sync_spectrum_transforms`, `update_spectrum_params`,
-  `update_graphic_generator`). There is no single "apply this config" path, so a
-  new setting is easy to forget to wire up.
+  `update_spectrum_generator`, `update_graphic_generator`). There is no single
+  "apply this config" path, so a new setting is easy to forget to wire up.
 
 ### Cross-cutting
 

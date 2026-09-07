@@ -2,9 +2,8 @@
 <interface>
   <requires lib="gtk" version="4.0"/>
   <!--
-    The bodies of the stages whose controls do not vary with the config. The
-    accordion around them is built in control_pane.rs, because the transform
-    stages between these come from the configured chain.
+    The source stage's body. The accordion around it is built in
+    control_pane.rs, and every other stage's body is built in gui::controls.
   -->
   <object class="GtkBox" id="source_body">
     <property name="orientation">vertical</property>
@@ -42,18 +41,4 @@
     </child>
   </object>
 
-  <object class="GtkBox" id="spectrum_body">
-    <property name="orientation">vertical</property>
-    <style>
-      <class name="stage-body"/>
-    </style>
-    <child>
-      <object class="GtkLabel" id="spectrum_caption">
-        <property name="xalign">0</property>
-        <style>
-          <class name="caption"/>
-        </style>
-      </object>
-    </child>
-  </object>
 </interface>

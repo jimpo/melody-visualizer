@@ -12,6 +12,7 @@ use crate::controllers::{
 	VolumeNormalizerController, app::events::ConfigChanged,
 };
 use crate::error::Error;
+use crate::gui::controls::key_row::{KeyRow, key_name};
 use crate::gui::{controls, error_dialog, handle_async_err};
 use crate::note; // TODO: Rename this macro to not conflict with module.
 use crate::note::Note;
@@ -46,7 +47,7 @@ pub fn new(
 	let spectrum_caption: gtk::Label = builder.object("spectrum_caption").unwrap();
 	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
 	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
-	let key_freq_scale: gtk::Scale = builder.object("key_freq_scale").unwrap();
+	let spiral_body: gtk::Box = builder.object("spiral_body").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
 
@@ -75,14 +76,7 @@ pub fn new(
 		0.0,
 		0.0,
 	));
-	key_freq_scale.set_adjustment(&gtk::Adjustment::new(
-		note!(C, 3).log_frequency(),
-		note!(C, 3).log_frequency(),
-		note!(C, 4).log_frequency(),
-		1.0 / 12.0,
-		0.0,
-		0.0,
-	));
+	spiral_body.append(&build_key_row(&app_controller).widget);
 
 	// Connect signal handler functions.
 	let controller_clone = controller.clone();
@@ -93,18 +87,12 @@ pub fn new(
 	max_freq_scale
 		.connect_change_value(move |_scale, _, value| on_max_freq_change(&controller_clone, value));
 
-	let controller_clone = controller.clone();
-	key_freq_scale
-		.connect_change_value(move |_scale, _, value| on_key_freq_change(&controller_clone, value));
-
 	{
 		// Set initial control values.
 		let app_controller = app_controller.borrow();
 		spectrum_caption.set_label(&spectrum_caption_text(&app_controller));
 		min_freq_scale.set_value(app_controller.config.min_freq.log2());
 		max_freq_scale.set_value(app_controller.config.max_freq.log2());
-		// TODO:
-		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
 	}
 
 	build_accordion(&app_controller, &builder, vec![port_subscription])
@@ -497,12 +485,11 @@ fn transform_summary(app_controller: &AppController, id: TransformId) -> String 
 }
 
 fn spiral_summary(app_controller: &AppController) -> String {
-	let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
 	format!(
 		"{}–{} · key {}",
 		Note::nearest(app_controller.config.min_freq.log2()),
 		Note::nearest(app_controller.config.max_freq.log2()),
-		Note::nearest(config.key_log_freq).pitch_class,
+		key_name(spiral_key(app_controller).pitch_class),
 	)
 }
 
@@ -599,20 +586,37 @@ fn on_max_freq_change(
 	glib::Propagation::Proceed
 }
 
-fn on_key_freq_change(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	value: f64,
-) -> glib::Propagation {
-	let async_update = {
-		let controller = controller_ref.borrow_mut();
-		let mut app_controller = controller.app_controller().borrow_mut();
-		let GraphicGeneratorConfig::Spiral(config) = &mut app_controller.config.graphic_generator;
-		config.key_log_freq = value.log2();
-		app_controller.update_graphic_generator()
-	};
+/// The octave the key is set in. Only its pitch class shows: every octave of
+/// the key sits on the same spoke of the spiral.
+const KEY_OCTAVE: i8 = 4;
 
-	handle_async_err(async_update);
-	glib::Propagation::Proceed
+/// The key row, down on the key the spiral is set to and moving it after that.
+fn build_key_row(app_controller: &Rc<RefCell<AppController>>) -> KeyRow {
+	let key_row = KeyRow::new("Key", "Sits at the top of the wheel and anchors the hue.");
+	key_row.set_selected(spiral_key(&app_controller.borrow()).pitch_class);
+
+	let app_controller = app_controller.clone();
+	key_row.connect_selected(move |pitch_class| {
+		let async_update = {
+			let mut app_controller = app_controller.borrow_mut();
+			let GraphicGeneratorConfig::Spiral(config) =
+				&mut app_controller.config.graphic_generator;
+			config.key_log_freq = Note {
+				octave: KEY_OCTAVE,
+				pitch_class,
+			}
+			.log_frequency();
+			app_controller.update_graphic_generator()
+		};
+		handle_async_err(async_update);
+	});
+	key_row
+}
+
+/// The note the spiral is keyed to.
+fn spiral_key(app_controller: &AppController) -> Note {
+	let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
+	Note::nearest(config.key_log_freq)
 }
 
 fn build_source_type_selectors(

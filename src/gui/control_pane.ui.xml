@@ -88,18 +88,5 @@
       <object class="GtkScale" id="max_freq_scale">
       </object>
     </child>
-    <child>
-      <object class="GtkLabel">
-        <property name="label">Key</property>
-        <property name="xalign">0</property>
-        <style>
-          <class name="control-label"/>
-        </style>
-      </object>
-    </child>
-    <child>
-      <object class="GtkScale" id="key_freq_scale">
-      </object>
-    </child>
   </object>
 </interface>

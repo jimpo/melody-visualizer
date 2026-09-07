@@ -7,6 +7,7 @@
 pub mod captioned_slider;
 pub mod decibel_converter;
 pub mod diffuser;
+pub mod key_row;
 pub mod volume_normalizer;
 
 use gtk::prelude::*;

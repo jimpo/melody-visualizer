@@ -417,8 +417,10 @@ generator. A stage is a bar over a `GtkRevealer`, at most one is open, and every
 bar reports what its stage is set to whether it is open or not. The chain the
 pane shows is fixed — nothing in the GUI adds, removes or reorders a
 transform. A transform that can be done without carries a switch on its row
-that means *enabled*: off dims the row and makes the body insensitive, and the
-row goes on reporting what the stage is set to.
+that means *enabled*: off dims the row, makes the body insensitive and bypasses
+the stage in the running chain, and the row goes on reporting what the stage is
+set to. The switch's state lives on the config entry, so it opens on what the
+config says and a chain rebuilt from the config keeps the same stages bypassed.
 
 The stage bodies are built from a small widget vocabulary in `gui/controls/`:
 a captioned slider for each transform, a boxed list for the ports, a row of
@@ -519,10 +521,6 @@ candidate for its own change.
   in seconds, scaled by `generator.interval()`, would decouple them.
 - `TransformChain::remove` and `reorder` exist, but nothing in the GUI calls
   them: transforms can still only be appended.
-- **The switch on a transform row reaches nothing.** `TransformChain` can bypass
-  an entry, but `Config` has no field for it and nothing carries the switch's
-  state to the chain, so switching a transform off dims its row and changes
-  nothing about the spectrum.
 - The spectrum thread's own loop — timing, backpressure, shutdown — has no
   tests. The chain it drives is covered without one, since `SpectrumRenderer`
   is drivable on its own, but `SpectrumProcessor` is reachable only by spawning

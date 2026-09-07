@@ -126,11 +126,7 @@ pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> Spec
 		reader,
 		sample_rate,
 	)));
-	*renderer.transforms_mut() = config
-		.spectrum_transforms
-		.iter()
-		.map(|(id, transform_config)| (*id, transform_config.clone().create()))
-		.collect();
+	*renderer.transforms_mut() = config.spectrum_transforms.iter().cloned().collect();
 	renderer
 }
 

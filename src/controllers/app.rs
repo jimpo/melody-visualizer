@@ -166,6 +166,37 @@ impl AppController {
 		Either::Left(fut)
 	}
 
+	/// Runs or bypasses the transform identified by `id`, in the config and in
+	/// the running chain.
+	///
+	/// The config carries the flag so that the next
+	/// [`sync_spectrum_transforms`](Self::sync_spectrum_transforms) rebuilds
+	/// the chain with the same stages bypassed.
+	pub fn set_transform_enabled(
+		&mut self,
+		id: TransformId,
+		enabled: bool,
+	) -> impl Future<Output = Result<(), Error>> + use<> {
+		if let Err(err) = self.config.set_transform_enabled(id, enabled) {
+			return Either::Right(future::err(err));
+		}
+		self.notify_and_log_err(events::ConfigChanged);
+		let fut = self
+			.spectrum_renderer
+			.exec_cloned(move |renderer| {
+				renderer
+					.transforms_mut()
+					.set_enabled(id, enabled)
+					.ok_or(Error::MissingTransform { id })
+			})
+			.map(|result| {
+				result
+					.map_err(Error::Communication)
+					.and_then(|result| result)
+			});
+		Either::Left(fut)
+	}
+
 	/// The ports that can be connected to the source's input, as JACK reports
 	/// them right now. Empty when there is no source.
 	pub fn available_inputs(&self) -> Vec<PortName> {
@@ -213,10 +244,7 @@ impl AppController {
 		let transform_configs = self.config.spectrum_transforms.clone();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| {
-				*renderer.transforms_mut() = transform_configs
-					.into_iter()
-					.map(|(id, config)| (id, config.create()))
-					.collect();
+				*renderer.transforms_mut() = transform_configs.into_iter().collect();
 			})
 			.map_err(Error::Communication)
 	}

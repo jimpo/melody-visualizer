@@ -8,7 +8,7 @@ use crate::graphic::{
 };
 use crate::note;
 use crate::spectrum::{
-	Hz, SpectrumGenerator, SpectrumParams, SpectrumTransform, TransformId,
+	Hz, SpectrumGenerator, SpectrumParams, SpectrumTransform, TransformChain, TransformId,
 	generators::audio::{self, AudioSpectrumGenerator},
 	transforms::{
 		decibel_converter::DecibelConverter,
@@ -27,9 +27,33 @@ pub struct Config {
 	pub spectrum_generator: SpectrumGeneratorConfig,
 	/// The transform chain, in the order it is applied. Mirrors the shape of
 	/// [`TransformChain`](crate::spectrum::TransformChain), so the two cannot
-	/// disagree about order or membership.
-	pub spectrum_transforms: Vec<(TransformId, SpectrumTransformConfig)>,
+	/// disagree about order, membership or which stages run.
+	pub spectrum_transforms: Vec<TransformEntry>,
 	pub graphic_generator: GraphicGeneratorConfig,
+}
+
+/// One stage of the transform chain: the id it is addressed by, how it is
+/// configured, and whether it runs.
+///
+/// `enabled` is the bypass switch's state. It lives here so that rebuilding the
+/// chain from the config keeps a bypassed stage bypassed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransformEntry {
+	pub id: TransformId,
+	pub config: SpectrumTransformConfig,
+	pub enabled: bool,
+}
+
+/// Builds the chain the entries describe, in the order they are given.
+impl FromIterator<TransformEntry> for TransformChain {
+	fn from_iter<Entries: IntoIterator<Item = TransformEntry>>(entries: Entries) -> Self {
+		let mut chain = TransformChain::default();
+		for (index, entry) in entries.into_iter().enumerate() {
+			chain.insert(index, entry.id, entry.config.create());
+			chain.set_enabled(entry.id, entry.enabled);
+		}
+		chain
+	}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,7 +216,11 @@ impl Default for Config {
 			spectrum_transforms: transforms
 				.into_iter()
 				.enumerate()
-				.map(|(index, config)| (TransformId(index as u64), config))
+				.map(|(index, config)| TransformEntry {
+					id: TransformId(index as u64),
+					config,
+					enabled: true,
+				})
 				.collect(),
 			graphic_generator: GraphicGeneratorConfig::Spiral(spiral::Config {
 				key_log_freq: note!(C, 4).log_frequency(),
@@ -213,21 +241,40 @@ impl Config {
 	}
 
 	pub fn spectrum_transform(&self, id: TransformId) -> Result<&SpectrumTransformConfig, Error> {
-		self.spectrum_transforms
-			.iter()
-			.find(|(entry_id, _config)| *entry_id == id)
-			.map(|(_id, config)| config)
-			.ok_or(Error::MissingTransform { id })
+		self.spectrum_transform_entry(id).map(|entry| &entry.config)
 	}
 
 	pub fn spectrum_transform_mut(
 		&mut self,
 		id: TransformId,
 	) -> Result<&mut SpectrumTransformConfig, Error> {
+		self.spectrum_transform_entry_mut(id)
+			.map(|entry| &mut entry.config)
+	}
+
+	fn spectrum_transform_entry(&self, id: TransformId) -> Result<&TransformEntry, Error> {
+		self.spectrum_transforms
+			.iter()
+			.find(|entry| entry.id == id)
+			.ok_or(Error::MissingTransform { id })
+	}
+
+	/// Runs or bypasses the transform identified by `id`.
+	///
+	/// Only the flag is reachable: an entry's id is what the chain, the config
+	/// and the controls address it by, so nothing outside may change it.
+	pub fn set_transform_enabled(&mut self, id: TransformId, enabled: bool) -> Result<(), Error> {
+		self.spectrum_transform_entry_mut(id)?.enabled = enabled;
+		Ok(())
+	}
+
+	fn spectrum_transform_entry_mut(
+		&mut self,
+		id: TransformId,
+	) -> Result<&mut TransformEntry, Error> {
 		self.spectrum_transforms
 			.iter_mut()
-			.find(|(entry_id, _config)| *entry_id == id)
-			.map(|(_id, config)| config)
+			.find(|entry| entry.id == id)
 			.ok_or(Error::MissingTransform { id })
 	}
 }

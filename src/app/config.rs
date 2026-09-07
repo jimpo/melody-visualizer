@@ -207,17 +207,19 @@ impl Config {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::note::Note;
 
 	#[test]
-	fn the_spiral_key_is_a_log_frequency_inside_the_range_the_control_offers() {
+	fn the_spiral_key_is_a_log_frequency_of_a_note_on_the_keyboard() {
 		let GraphicGeneratorConfig::Spiral(config) = Config::default().graphic_generator;
-		// `gui/control_pane.rs` builds the key-frequency slider from
-		// `Note::log_frequency`, spanning C3 to C4. A Hz value in the field is
-		// far outside that, and the control opens on a position unrelated to it.
-		let range = note!(C, 3).log_frequency()..=note!(C, 4).log_frequency();
+		// The key row in `gui/control_pane.rs` presses the key of the note
+		// nearest `key_log_freq`. A Hz value in the field names a note some
+		// thirty octaves up, whose pitch class has nothing to do with the key.
+		let range = note!(A, 0)..=note!(C, 8);
+		let key = Note::nearest(config.key_log_freq);
 		assert!(
-			range.contains(&config.key_log_freq),
-			"key_log_freq is {}, outside the {:?} the slider spans",
+			range.contains(&key),
+			"key_log_freq {} is {key}, outside the {:?} on a keyboard",
 			config.key_log_freq,
 			range,
 		);

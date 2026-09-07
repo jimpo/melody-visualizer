@@ -1,9 +1,5 @@
-// The port list uses GtkTreeView/GtkListStore, deprecated in GTK 4 in favour of
-// GtkColumnView. Keeping them is an intentional, scoped decision; migrating to
-// ColumnView is tracked as separate future work.
-#![allow(deprecated)]
-
-use gtk::{TreeIter, TreeSelection, prelude::*};
+use gio::prelude::*;
+use gtk::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::app::config::{
@@ -13,24 +9,28 @@ use crate::audio::source::events::ConnectionChanged;
 use crate::audio::source::{PortName, SourceType};
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
-	VolumeNormalizerController, app::events::ConfigChanged, control_pane::PORT_NAME_COL,
+	VolumeNormalizerController, app::events::ConfigChanged,
 };
 use crate::error::Error;
-use crate::gui::{controls, error_dialog, handle_async_err};
-use crate::note; // TODO: Rename this macro to not conflict with module.
+use crate::gui::controls::key_row::key_name;
+use crate::gui::{controls, error_dialog};
 use crate::note::Note;
 use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::TransformId;
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
 
-const MIN_NOTE: Note = note!(A, 0);
-const MAX_NOTE: Note = note!(C, 8);
-
 const SEMITONES_PER_OCTAVE: f64 = 12.0;
 
 /// The gap between the dot, the name and the summary on a stage row.
 const ROW_SPACING: i32 = 12;
+
+/// The gap between the tick and the name on a port row.
+const PORT_ROW_SPACING: i32 = 10;
+
+/// The tick that marks the connected port.
+const PORT_TICK_ICON: &str = "object-select-symbolic";
+const PORT_TICK_SIZE: i32 = 14;
 
 // Ideas: Maybe have a StatusBar at the box for async updates.
 
@@ -39,11 +39,8 @@ pub fn new(
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
-	let port_view: gtk::TreeView = builder.object("port_list").unwrap();
+	let port_list: gtk::ListBox = builder.object("port_list").unwrap();
 	let spectrum_caption: gtk::Label = builder.object("spectrum_caption").unwrap();
-	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
-	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
-	let key_freq_scale: gtk::Scale = builder.object("key_freq_scale").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
 
@@ -52,63 +49,81 @@ pub fn new(
 		source_type_selection.append(&selector);
 	}
 
-	port_view.set_model(Some(controller.borrow().port_store()));
+	let port_subscription = connect_port_list(controller, &port_list);
 
-	// TODO: Maybe bound min/max frequency using window size.
+	spectrum_caption.set_label(&spectrum_caption_text(&app_controller.borrow()));
 
-	min_freq_scale.set_adjustment(&gtk::Adjustment::new(
-		MIN_NOTE.log_frequency(),
-		MIN_NOTE.log_frequency(),
-		MAX_NOTE.log_frequency(),
-		1.0 / 12.0,
-		0.0,
-		0.0,
-	));
-	max_freq_scale.set_adjustment(&gtk::Adjustment::new(
-		MIN_NOTE.log_frequency(),
-		MIN_NOTE.log_frequency(),
-		MAX_NOTE.log_frequency(),
-		1.0 / 12.0,
-		0.0,
-		0.0,
-	));
-	key_freq_scale.set_adjustment(&gtk::Adjustment::new(
-		note!(C, 3).log_frequency(),
-		note!(C, 3).log_frequency(),
-		note!(C, 4).log_frequency(),
-		1.0 / 12.0,
-		0.0,
-		0.0,
-	));
+	build_accordion(&app_controller, &builder, vec![port_subscription])
+}
 
-	// Connect signal handler functions.
-	let controller_clone = controller.clone();
-	min_freq_scale
-		.connect_change_value(move |_scale, _, value| on_min_freq_change(&controller_clone, value));
+/// Fill the port list from the controller's model, and keep it and the
+/// source's connection in step both ways.
+fn connect_port_list(
+	controller: &Rc<RefCell<ControlPaneController>>,
+	port_list: &gtk::ListBox,
+) -> SubscriptionHandle {
+	let ports = controller.borrow().ports().clone();
+	let app_controller = controller.borrow().app_controller().clone();
+
+	port_list.bind_model(Some(&ports), |item| build_port_row(item).upcast());
 
 	let controller_clone = controller.clone();
-	max_freq_scale
-		.connect_change_value(move |_scale, _, value| on_max_freq_change(&controller_clone, value));
+	port_list.connect_row_selected(move |_list, row| {
+		let controller = controller_clone.borrow();
+		let port = row.and_then(|row| controller.port_at(row.index() as u32));
+		on_port_selected(&controller.app_controller().borrow(), port);
+	});
 
-	let controller_clone = controller.clone();
-	key_freq_scale
-		.connect_change_value(move |_scale, _, value| on_key_freq_change(&controller_clone, value));
+	// The connected port is what JACK reports, so the selection follows it
+	// rather than the click: a connection made outside the app selects its row
+	// too, and a port that JACK drops leaves nothing selected.
+	select_connected_port(&app_controller.borrow(), &ports, port_list);
+	let app_controller_clone = app_controller.clone();
+	let port_list_clone = port_list.clone();
+	ports.connect_items_changed(move |ports, _position, _removed, _added| {
+		select_connected_port(&app_controller_clone.borrow(), ports, &port_list_clone);
+	});
+	let app_controller_clone = app_controller.clone();
+	let port_list = port_list.clone();
+	app_controller
+		.borrow()
+		.pubsub()
+		.subscribe(move |_: &ConnectionChanged| {
+			select_connected_port(&app_controller_clone.borrow(), &ports, &port_list);
+		})
+}
 
-	let selection = port_view.selection();
-	let controller_clone = app_controller.clone();
-	selection.connect_changed(move |selection| on_port_selected(&controller_clone, selection));
+/// A port row: a tick, shown only while the row is selected, and the name.
+fn build_port_row(item: &glib::Object) -> gtk::Box {
+	let name = item
+		.downcast_ref::<gtk::StringObject>()
+		.map(|item| item.string())
+		.unwrap_or_default();
 
-	{
-		// Set initial control values.
-		let app_controller = app_controller.borrow();
-		spectrum_caption.set_label(&spectrum_caption_text(&app_controller));
-		min_freq_scale.set_value(app_controller.config.min_freq.log2());
-		max_freq_scale.set_value(app_controller.config.max_freq.log2());
-		// TODO:
-		// key_freq_scale.set_value(app_controller.config.key_freq.log2());
-	}
+	let tick = gtk::Image::builder()
+		.icon_name(PORT_TICK_ICON)
+		.pixel_size(PORT_TICK_SIZE)
+		.build();
+	let label = gtk::Label::builder().label(name).xalign(0.0).build();
 
-	build_accordion(&app_controller, &builder)
+	let row = gtk::Box::new(gtk::Orientation::Horizontal, PORT_ROW_SPACING);
+	row.append(&tick);
+	row.append(&label);
+	row
+}
+
+/// Select the row of the port feeding the source, or nothing when none is.
+fn select_connected_port(
+	app_controller: &AppController,
+	ports: &gtk::StringList,
+	port_list: &gtk::ListBox,
+) {
+	let row = app_controller.connected_input().and_then(|connected| {
+		(0..ports.n_items())
+			.find(|&position| ports.string(position).as_deref() == Some(connected.as_str()))
+			.and_then(|position| port_list.row_at_index(position as i32))
+	});
+	port_list.select_row(row.as_ref());
 }
 
 /// Builds the pane itself: one stage per step of the pipeline, stacked in the
@@ -116,6 +131,7 @@ pub fn new(
 fn build_accordion(
 	app_controller_ref: &Rc<RefCell<AppController>>,
 	builder: &gtk::Builder,
+	mut subscriptions: Vec<SubscriptionHandle>,
 ) -> Result<impl IsA<gtk::Widget> + use<>, Error> {
 	let app_controller = app_controller_ref.borrow();
 
@@ -124,11 +140,13 @@ fn build_accordion(
 			StageId::Source,
 			"Source",
 			&builder.object::<gtk::Widget>("source_body").unwrap(),
+			Switchable::No,
 		),
 		build_stage(
 			StageId::Spectrum,
 			spectrum_generator_name(&app_controller),
 			&builder.object::<gtk::Widget>("spectrum_body").unwrap(),
+			Switchable::No,
 		),
 	];
 	for (id, config) in app_controller.config.spectrum_transforms.iter() {
@@ -137,17 +155,19 @@ fn build_accordion(
 			StageId::Transform(*id),
 			spectrum_transform_name(config),
 			&body,
+			transform_switchable(config),
 		));
 	}
 	stages.push(build_stage(
 		StageId::Spiral,
 		graphic_generator_name(&app_controller),
-		&builder.object::<gtk::Widget>("spiral_body").unwrap(),
+		&controls::spiral::new(app_controller_ref),
+		Switchable::No,
 	));
 
 	let stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
 	for stage in stages.iter() {
-		stack.append(&stage.toggle);
+		stack.append(&stage.row);
 		stack.append(&stage.revealer);
 		stack.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 	}
@@ -158,10 +178,14 @@ fn build_accordion(
 
 	// A stage row reports what its stage is set to, so it has to follow both the
 	// config and the connection JACK reports separately from it.
-	let subscriptions = [
-		subscribe_to_summaries::<ConfigChanged>(app_controller_ref, &stages),
-		subscribe_to_summaries::<ConnectionChanged>(app_controller_ref, &stages),
-	];
+	subscriptions.push(subscribe_to_summaries::<ConfigChanged>(
+		app_controller_ref,
+		&stages,
+	));
+	subscriptions.push(subscribe_to_summaries::<ConnectionChanged>(
+		app_controller_ref,
+		&stages,
+	));
 
 	// Six stages with a body open overflow a short window.
 	let view = gtk::ScrolledWindow::builder()
@@ -180,16 +204,32 @@ fn build_accordion(
 	Ok(view)
 }
 
-/// One stage of the pipeline: the bar that opens it and the body beneath.
+/// One stage of the pipeline: the row that opens it and the body beneath.
 ///
-/// The bar is the whole toggle, because the design carries no disclosure arrow.
-/// Its background is what tells an open stage from a hovered one.
+/// The row is the whole toggle, because the design carries no disclosure
+/// arrow. Its background is what tells an open stage from a hovered one. A
+/// transform that can be switched off carries a switch at the end of its row,
+/// beside the toggle rather than inside it, since a button swallows the
+/// clicks of anything it holds.
 struct Stage {
 	id: StageId,
+	row: gtk::Box,
 	toggle: gtk::ToggleButton,
 	revealer: gtk::Revealer,
 	summary: gtk::Label,
 }
+
+/// Whether a stage row carries the switch that enables the stage.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Switchable {
+	Yes,
+	No,
+}
+
+/// The CSS class on a row whose switch is off.
+const DIMMED_CLASS: &str = "dimmed";
+/// The CSS class on the row of the open stage.
+const OPEN_CLASS: &str = "open";
 
 /// Which step of the pipeline a stage stands for. It names the colour of the
 /// row's dot and the config the row's summary reads.
@@ -214,7 +254,25 @@ impl StageId {
 	}
 }
 
-fn build_stage(id: StageId, name: &str, body: &impl IsA<gtk::Widget>) -> Stage {
+/// Whether a transform's row carries a switch.
+///
+/// The decibel converter has none: without it the spectrum is linear in
+/// power, which reads as a few spikes and nothing else, so it is not optional.
+fn transform_switchable(config: &SpectrumTransformConfig) -> Switchable {
+	match config {
+		SpectrumTransformConfig::DecibelConverter(_) => Switchable::No,
+		SpectrumTransformConfig::Diffuser(_) | SpectrumTransformConfig::VolumeNormalizer(_) => {
+			Switchable::Yes
+		}
+	}
+}
+
+fn build_stage(
+	id: StageId,
+	name: &str,
+	body: &impl IsA<gtk::Widget>,
+	switchable: Switchable,
+) -> Stage {
 	let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
 	dot.add_css_class("stage-dot");
 	dot.add_css_class(id.dot_class());
@@ -234,20 +292,60 @@ fn build_stage(id: StageId, name: &str, body: &impl IsA<gtk::Widget>) -> Stage {
 	bar.append(&name_label);
 	bar.append(&summary);
 
-	let toggle = gtk::ToggleButton::builder().child(&bar).build();
-	toggle.add_css_class("stage-row");
+	let toggle = gtk::ToggleButton::builder()
+		.child(&bar)
+		.hexpand(true)
+		.build();
+	toggle.add_css_class("stage-toggle");
+
+	let row = gtk::Box::new(gtk::Orientation::Horizontal, ROW_SPACING);
+	row.add_css_class("stage-row");
+	row.append(&toggle);
 
 	let revealer = gtk::Revealer::builder()
 		.transition_type(gtk::RevealerTransitionType::SlideDown)
 		.child(body)
 		.build();
 
+	if switchable == Switchable::Yes {
+		add_switch(&row, body);
+	}
+
 	Stage {
 		id,
+		row,
 		toggle,
 		revealer,
 		summary,
 	}
+}
+
+/// The switch at the end of a stage row. It means *enabled*, not bypassed.
+///
+/// Off dims the row and the body, and the body stays reachable but
+/// insensitive: what the stage is set to can be read without switching it
+/// back on. The row's summary keeps saying the same thing either way. What
+/// the switch changes about the pipeline is nothing yet: no stage of the
+/// chain can be skipped.
+fn add_switch(row: &gtk::Box, body: &impl IsA<gtk::Widget>) {
+	let switch = gtk::Switch::builder()
+		.active(true)
+		.valign(gtk::Align::Center)
+		.build();
+
+	row.append(&switch);
+
+	let row = row.clone();
+	let body = body.clone();
+	switch.connect_active_notify(move |switch| {
+		let enabled = switch.is_active();
+		body.set_sensitive(enabled);
+		if enabled {
+			row.remove_css_class(DIMMED_CLASS);
+		} else {
+			row.add_css_class(DIMMED_CLASS);
+		}
+	});
 }
 
 /// Keep at most one stage open. Clicking the open stage's bar closes it, which
@@ -262,7 +360,13 @@ fn connect_exclusive_open(stages: &Rc<Vec<Stage>>) {
 				return;
 			};
 			let open = toggle.is_active();
-			stages[index].revealer.set_reveal_child(open);
+			let stage = &stages[index];
+			stage.revealer.set_reveal_child(open);
+			if open {
+				stage.row.add_css_class(OPEN_CLASS);
+			} else {
+				stage.row.remove_css_class(OPEN_CLASS);
+			}
 			if open {
 				for (other_index, other) in stages.iter().enumerate() {
 					if other_index != index {
@@ -323,22 +427,27 @@ fn transform_summary(app_controller: &AppController, id: TransformId) -> String 
 		.expect("a stage row is built from a transform of the fixed chain");
 	match config {
 		SpectrumTransformConfig::DecibelConverter(config) => {
-			format!("floor {:.0} dB", 10.0 * config.min_level.log10())
+			format!(
+				"floor {}",
+				controls::decibel_converter::floor_text(config.min_level)
+			)
 		}
-		SpectrumTransformConfig::Diffuser(config) => {
-			format!("{:.1} semitones", config.width * SEMITONES_PER_OCTAVE)
+		SpectrumTransformConfig::Diffuser(config) => controls::diffuser::width_text(config.width),
+		SpectrumTransformConfig::VolumeNormalizer(config) => {
+			format!(
+				"rate {}",
+				controls::volume_normalizer::rate_text(config.rate)
+			)
 		}
-		SpectrumTransformConfig::VolumeNormalizer(config) => format!("rate {:.2}", config.rate),
 	}
 }
 
 fn spiral_summary(app_controller: &AppController) -> String {
-	let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
 	format!(
 		"{}–{} · key {}",
 		Note::nearest(app_controller.config.min_freq.log2()),
 		Note::nearest(app_controller.config.max_freq.log2()),
-		Note::nearest(config.key_log_freq).pitch_class,
+		key_name(controls::spiral::key(app_controller).pitch_class),
 	)
 }
 
@@ -372,21 +481,18 @@ fn build_transform_control(
 	}
 }
 
-fn on_port_selected(app_controller: &RefCell<AppController>, selection: &TreeSelection) {
-	let port_name = selection
-		.selected()
-		.map(|(port_store, iter)| get_port_name(&port_store, &iter));
-	if let Err(err) = app_controller.borrow().connect_port(port_name) {
+/// Feed the source from `port`, unless it already is.
+///
+/// The selection follows the connection as well as leading it, so a selection
+/// that only echoes what JACK reports must not be sent back to JACK: connecting
+/// a port that is already connected is an error there.
+fn on_port_selected(app_controller: &AppController, port: Option<PortName>) {
+	if port == app_controller.connected_input() {
+		return;
+	}
+	if let Err(err) = app_controller.connect_port(port) {
 		error_dialog(err);
 	}
-}
-
-fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> PortName {
-	port_store
-		.get_value(iter, PORT_NAME_COL)
-		.get::<String>()
-		.expect("values in PORT_NAME_COL are strings")
-		.into()
 }
 
 // fn on_source_type_toggled(
@@ -403,56 +509,6 @@ fn get_port_name<TM: IsA<gtk::TreeModel>>(port_store: &TM, iter: &TreeIter) -> P
 // 		log::error!("failed to change source type: {}", err);
 // 	}
 // }
-
-fn on_min_freq_change(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	value: f64,
-) -> glib::Propagation {
-	let controller = controller_ref.borrow_mut();
-	let mut app_controller = controller.app_controller().borrow_mut();
-
-	let freq = value.exp2();
-	if freq > app_controller.config.max_freq {
-		return glib::Propagation::Stop;
-	}
-
-	app_controller.config.min_freq = freq;
-	handle_async_err(app_controller.update_spectrum_params());
-	glib::Propagation::Proceed
-}
-
-fn on_max_freq_change(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	value: f64,
-) -> glib::Propagation {
-	let controller = controller_ref.borrow_mut();
-	let mut app_controller = controller.app_controller().borrow_mut();
-
-	let freq = value.exp2();
-	if freq < app_controller.config.min_freq {
-		return glib::Propagation::Stop;
-	}
-
-	app_controller.config.max_freq = freq;
-	handle_async_err(app_controller.update_spectrum_params());
-	glib::Propagation::Proceed
-}
-
-fn on_key_freq_change(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	value: f64,
-) -> glib::Propagation {
-	let async_update = {
-		let controller = controller_ref.borrow_mut();
-		let mut app_controller = controller.app_controller().borrow_mut();
-		let GraphicGeneratorConfig::Spiral(config) = &mut app_controller.config.graphic_generator;
-		config.key_log_freq = value.log2();
-		app_controller.update_graphic_generator()
-	};
-
-	handle_async_err(async_update);
-	glib::Propagation::Proceed
-}
 
 fn build_source_type_selectors(
 	app_controller: &Rc<RefCell<AppController>>,

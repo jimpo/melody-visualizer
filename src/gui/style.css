@@ -94,6 +94,11 @@ drawingarea {
 	font-size: 14px;
 }
 
+.control-value {
+	font-size: 14px;
+	color: @ink_dim;
+}
+
 .stage-summary {
 	font-size: 13px;
 	color: @ink_dim;
@@ -104,28 +109,86 @@ drawingarea {
 	color: @ink_dim;
 }
 
-/* A stage: the header row that toggles it, and the body beneath. */
+/* A stage: the header row that toggles it, and the body beneath. The row is
+ * a box around the toggle, and around the switch where the stage has one, so
+ * the row paints its own states and the toggle paints none. */
 
 .stage-row {
 	min-height: 52px;
 	padding: 0 16px;
-	background-color: transparent;
-	background-image: none;
-	border: none;
-	border-radius: 0;
-	box-shadow: none;
 }
 
 .stage-row:hover {
 	background-color: @row_hover;
 }
 
-/* Open, whichever way the row carries that state: a toggle reports `:checked`,
- * a list-box row `:selected`. */
-.stage-row:checked,
-.stage-row:selected {
+.stage-row.open {
 	background-color: @row_open;
 	color: @ink;
+}
+
+.stage-toggle,
+.stage-toggle:hover,
+.stage-toggle:active,
+.stage-toggle:checked {
+	min-height: 52px;
+	padding: 0;
+	background-color: transparent;
+	background-image: none;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	color: @ink;
+}
+
+/* A stage switched off: the row dims, its summary still says what the stage
+ * is set to. */
+
+.stage-row.dimmed .stage-dot {
+	opacity: 0.35;
+}
+
+.stage-row.dimmed .stage-name {
+	color: alpha(@ink, 0.4);
+}
+
+.stage-row.dimmed .stage-summary {
+	color: alpha(@ink, 0.28);
+}
+
+.stage-body:disabled {
+	opacity: 0.4;
+}
+
+/* The switch: a 40 by 24 pill with a 20 px knob, the accent when on. */
+
+#control_pane switch {
+	min-width: 40px;
+	min-height: 24px;
+	padding: 0;
+	background-color: alpha(@ink, 0.18);
+	background-image: none;
+	border: none;
+	box-shadow: none;
+}
+
+#control_pane switch:checked {
+	background-color: @accent;
+}
+
+#control_pane switch slider {
+	min-width: 20px;
+	min-height: 20px;
+	margin: 2px;
+	border-radius: 99px;
+	background-color: @ink;
+	background-image: none;
+	border: none;
+	box-shadow: 0 1px 2px alpha(black, 0.4);
+}
+
+#control_pane switch image {
+	opacity: 0;
 }
 
 .stage-dot {
@@ -162,6 +225,47 @@ drawingarea {
 	border-radius: 12px;
 }
 
+/* The port list: a boxed list whose selected row is the port feeding the
+ * source. Every row carries the tick, so the names line up whichever row is
+ * selected; only the selected row shows it. */
+
+.port-list row {
+	min-height: 44px;
+	padding: 0 14px;
+	background-color: transparent;
+	border-top: 1px solid @hairline;
+}
+
+/* The card is rounded, so the rows at its ends are too, or a selected end row
+ * would paint square corners over the card's round ones. */
+.port-list row:first-child {
+	border-top: none;
+	border-top-left-radius: 11px;
+	border-top-right-radius: 11px;
+}
+
+.port-list row:last-child {
+	border-bottom-left-radius: 11px;
+	border-bottom-right-radius: 11px;
+}
+
+.port-list row:hover {
+	background-color: @row_hover;
+}
+
+.port-list row:selected {
+	background-color: @accent;
+	color: @ink;
+}
+
+.port-list row image {
+	opacity: 0;
+}
+
+.port-list row:selected image {
+	opacity: 1;
+}
+
 /* Scoped to a stage body: a stage row is a button too, and it is square. */
 #control_pane .stage-body button {
 	border-radius: 6px;
@@ -171,4 +275,49 @@ drawingarea {
 #control_pane scale highlight,
 #control_pane switch {
 	border-radius: 99px;
+}
+
+/* The pitch range slider paints its fill in its CSS colour. */
+.range-slider {
+	color: @accent;
+}
+
+/* The key row: twelve flat keys, the black ones darker, the one that is down
+ * in the accent. Only the ends of the row are rounded. */
+
+#control_pane .key-row button {
+	min-width: 0;
+	min-height: 34px;
+	padding: 0;
+	font-size: 12px;
+	color: @ink;
+	background-color: alpha(@ink, 0.08);
+	background-image: none;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+#control_pane .key-row button.black-key {
+	color: alpha(@ink, 0.7);
+	background-color: alpha(black, 0.32);
+}
+
+#control_pane .key-row button:hover {
+	background-color: alpha(@ink, 0.14);
+}
+
+#control_pane .key-row button:checked {
+	color: @ink;
+	background-color: @accent;
+}
+
+#control_pane .key-row button:first-child {
+	border-top-left-radius: 6px;
+	border-bottom-left-radius: 6px;
+}
+
+#control_pane .key-row button:last-child {
+	border-top-right-radius: 6px;
+	border-bottom-right-radius: 6px;
 }

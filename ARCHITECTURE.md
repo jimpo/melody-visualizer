@@ -230,9 +230,10 @@ written down, not a gap in the writing.
 
 | Parameter | Bound | Note |
 |---|---|---|
-| `Diffuser::width` | `0..10` octaves | `width_adjustment` declares only `upper`; GTK defaults `lower` to 0. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
+| `Diffuser::width` | `0..10` semitones | The slider in `gui/controls/diffuser.rs` moves in semitones, so the field spans `0..10/12` octaves. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
 | `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
+| `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
 | `Config::samples_per_octave` | 180, internal | The quadratic cost driver. No GUI control, and exposing it is deferred |
 | `audio::Config::dft_window_size` | 2048, internal | Sets the tick rate through `interval()`, at half a window |
 
@@ -247,8 +248,9 @@ unbounded channel of `events::Event`, both of which close when the source drops.
 
 Nothing is connected to that port at startup. The user picks a JACK output port
 in the control pane and `AppController::connect_port` asks the source to
-connect it. The control pane keeps its list current by subscribing to
-`PortsChanged` and re-reading `JackSource::available_inputs`.
+connect it. `ControlPaneController` keeps a `GtkStringList` of those ports current by
+subscribing to `PortsChanged` and re-reading `JackSource::available_inputs`,
+and the pane's port list is bound to that model.
 
 That list is correct the moment the notification arrives. JACK keeps listing a
 port for a few milliseconds after announcing that it was unregistered
@@ -260,7 +262,9 @@ subtracts it, forgetting it again once JACK's own list agrees.
 reads it back off the port every time, and the `ports_connected` callback
 reports `ConnectionChanged` whenever the graph around the input port moves.
 A connection made with `jack_connect`, or by any other client, therefore shows
-in the control pane exactly like one the app made itself.
+in the control pane exactly like one the app made itself: the port list selects
+the row of whichever port JACK reports, and sends a selection back to JACK only
+when it names a different port.
 
 The `JackSource` trait (`audio/source.rs`) exists so a second source type could be
 slotted in behind the same interface. Only `Audio` is implemented.
@@ -411,7 +415,16 @@ source, the spectrum generator, each transform in chain order, then the graphic
 generator. A stage is a bar over a `GtkRevealer`, at most one is open, and every
 bar reports what its stage is set to whether it is open or not. The chain the
 pane shows is fixed — nothing in the GUI adds, removes or reorders a
-transform.
+transform. A transform that can be done without carries a switch on its row
+that means *enabled*: off dims the row and makes the body insensitive, and the
+row goes on reporting what the stage is set to.
+
+The stage bodies are built from a small widget vocabulary in `gui/controls/`:
+a captioned slider for each transform, a boxed list for the ports, a row of
+twelve keys for the spiral's key, and a two-handle slider for its pitch range.
+GTK 4 has no two-handle scale, so that last one is a `GtkDrawingArea` over two
+`GtkAdjustment`s that clamp each other, drawn with cairo and driven by a drag
+gesture.
 
 **Shutdown**: `connect_destroy` calls `AppController::shutdown()`, which drops
 the JACK source and closes each renderer's command channel. Closing a channel
@@ -501,6 +514,9 @@ candidate for its own change.
   ways out.
 - `TransformChain::remove` and `reorder` exist, but nothing in the GUI calls
   them: transforms can still only be appended.
+- **The switch on a transform row reaches nothing.** Neither `Config` nor
+  `TransformChain` has a notion of a disabled stage, so switching a transform
+  off dims its row and changes nothing about the spectrum.
 - The spectrum thread's own loop — timing, backpressure, shutdown — has no
   tests. The chain it drives is covered without one, since `SpectrumRenderer`
   is drivable on its own, but `SpectrumProcessor` is reachable only by spawning
@@ -520,9 +536,6 @@ candidate for its own change.
 
 ### GUI
 
-- **The GTK 4 migration is incomplete.** The port list still uses the deprecated
-  `GtkTreeView`/`GtkListStore` behind `#![allow(deprecated)]`. `GtkColumnView` is
-  the target.
 - **Frame timing ignores the compositor.** A fixed 40 ms `glib::timeout_add_local`
   should become GTK 4's frame clock (`add_tick_callback`), which aligns repaints
   with vsync and reports the real frame deadline.
@@ -548,5 +561,4 @@ candidate for its own change.
   same process trips glib's thread guard and the process takes a non-unwinding
   panic. See [DEVELOPMENT.md](DEVELOPMENT.md#testing) for the workaround and the
   fix this needs.
-- The crate builds clean under `cargo clippy --all-targets -- -D warnings`, with
-  one suppressed lint (see **GUI**, above).
+- The crate builds clean under `cargo clippy --all-targets -- -D warnings`.

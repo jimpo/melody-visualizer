@@ -323,12 +323,18 @@ fn transform_summary(app_controller: &AppController, id: TransformId) -> String 
 		.expect("a stage row is built from a transform of the fixed chain");
 	match config {
 		SpectrumTransformConfig::DecibelConverter(config) => {
-			format!("floor {:.0} dB", 10.0 * config.min_level.log10())
+			format!(
+				"floor {}",
+				controls::decibel_converter::floor_text(config.min_level)
+			)
 		}
-		SpectrumTransformConfig::Diffuser(config) => {
-			format!("{:.1} semitones", config.width * SEMITONES_PER_OCTAVE)
+		SpectrumTransformConfig::Diffuser(config) => controls::diffuser::width_text(config.width),
+		SpectrumTransformConfig::VolumeNormalizer(config) => {
+			format!(
+				"rate {}",
+				controls::volume_normalizer::rate_text(config.rate)
+			)
 		}
-		SpectrumTransformConfig::VolumeNormalizer(config) => format!("rate {:.2}", config.rate),
 	}
 }
 

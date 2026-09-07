@@ -94,6 +94,11 @@ drawingarea {
 	font-size: 14px;
 }
 
+.control-value {
+	font-size: 14px;
+	color: @ink_dim;
+}
+
 .stage-summary {
 	font-size: 13px;
 	color: @ink_dim;

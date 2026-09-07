@@ -56,37 +56,4 @@
       </object>
     </child>
   </object>
-
-  <object class="GtkBox" id="spiral_body">
-    <property name="orientation">vertical</property>
-    <style>
-      <class name="stage-body"/>
-    </style>
-    <child>
-      <object class="GtkLabel">
-        <property name="label">Lowest pitch</property>
-        <property name="xalign">0</property>
-        <style>
-          <class name="control-label"/>
-        </style>
-      </object>
-    </child>
-    <child>
-      <object class="GtkScale" id="min_freq_scale">
-      </object>
-    </child>
-    <child>
-      <object class="GtkLabel">
-        <property name="label">Highest pitch</property>
-        <property name="xalign">0</property>
-        <style>
-          <class name="control-label"/>
-        </style>
-      </object>
-    </child>
-    <child>
-      <object class="GtkScale" id="max_freq_scale">
-      </object>
-    </child>
-  </object>
 </interface>

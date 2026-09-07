@@ -277,6 +277,11 @@ drawingarea {
 	border-radius: 99px;
 }
 
+/* The pitch range slider paints its fill in its CSS colour. */
+.range-slider {
+	color: @accent;
+}
+
 /* The key row: twelve flat keys, the black ones darker, the one that is down
  * in the accent. Only the ends of the row are rounded. */
 

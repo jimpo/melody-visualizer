@@ -230,9 +230,10 @@ written down, not a gap in the writing.
 
 | Parameter | Bound | Note |
 |---|---|---|
-| `Diffuser::width` | `0..10` octaves | `width_adjustment` declares only `upper`; GTK defaults `lower` to 0. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
+| `Diffuser::width` | `0..10` semitones | The slider in `gui/controls/diffuser.rs` moves in semitones, so the field spans `0..10/12` octaves. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
 | `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
+| `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
 | `Config::samples_per_octave` | 180, internal | The quadratic cost driver. No GUI control, and exposing it is deferred |
 | `audio::Config::dft_window_size` | 2048, internal | Sets the tick rate through `interval()`, at half a window |
 
@@ -417,6 +418,13 @@ pane shows is fixed — nothing in the GUI adds, removes or reorders a
 transform. A transform that can be done without carries a switch on its row
 that means *enabled*: off dims the row and makes the body insensitive, and the
 row goes on reporting what the stage is set to.
+
+The stage bodies are built from a small widget vocabulary in `gui/controls/`:
+a captioned slider for each transform, a boxed list for the ports, a row of
+twelve keys for the spiral's key, and a two-handle slider for its pitch range.
+GTK 4 has no two-handle scale, so that last one is a `GtkDrawingArea` over two
+`GtkAdjustment`s that clamp each other, drawn with cairo and driven by a drag
+gesture.
 
 **Shutdown**: `connect_destroy` calls `AppController::shutdown()`, which drops
 the JACK source and closes each renderer's command channel. Closing a channel

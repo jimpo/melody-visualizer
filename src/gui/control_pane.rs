@@ -12,17 +12,13 @@ use crate::controllers::{
 	VolumeNormalizerController, app::events::ConfigChanged,
 };
 use crate::error::Error;
-use crate::gui::controls::key_row::{KeyRow, key_name};
-use crate::gui::{controls, error_dialog, handle_async_err};
-use crate::note; // TODO: Rename this macro to not conflict with module.
+use crate::gui::controls::key_row::key_name;
+use crate::gui::{controls, error_dialog};
 use crate::note::Note;
 use crate::pubsub::SubscriptionHandle;
 use crate::spectrum::TransformId;
 
 const UI_DEF: &str = include_str!("control_pane.ui.xml");
-
-const MIN_NOTE: Note = note!(A, 0);
-const MAX_NOTE: Note = note!(C, 8);
 
 const SEMITONES_PER_OCTAVE: f64 = 12.0;
 
@@ -45,9 +41,6 @@ pub fn new(
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
 	let port_list: gtk::ListBox = builder.object("port_list").unwrap();
 	let spectrum_caption: gtk::Label = builder.object("spectrum_caption").unwrap();
-	let min_freq_scale: gtk::Scale = builder.object("min_freq_scale").unwrap();
-	let max_freq_scale: gtk::Scale = builder.object("max_freq_scale").unwrap();
-	let spiral_body: gtk::Box = builder.object("spiral_body").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
 
@@ -58,42 +51,7 @@ pub fn new(
 
 	let port_subscription = connect_port_list(controller, &port_list);
 
-	// TODO: Maybe bound min/max frequency using window size.
-
-	min_freq_scale.set_adjustment(&gtk::Adjustment::new(
-		MIN_NOTE.log_frequency(),
-		MIN_NOTE.log_frequency(),
-		MAX_NOTE.log_frequency(),
-		1.0 / 12.0,
-		0.0,
-		0.0,
-	));
-	max_freq_scale.set_adjustment(&gtk::Adjustment::new(
-		MIN_NOTE.log_frequency(),
-		MIN_NOTE.log_frequency(),
-		MAX_NOTE.log_frequency(),
-		1.0 / 12.0,
-		0.0,
-		0.0,
-	));
-	spiral_body.append(&build_key_row(&app_controller).widget);
-
-	// Connect signal handler functions.
-	let controller_clone = controller.clone();
-	min_freq_scale
-		.connect_change_value(move |_scale, _, value| on_min_freq_change(&controller_clone, value));
-
-	let controller_clone = controller.clone();
-	max_freq_scale
-		.connect_change_value(move |_scale, _, value| on_max_freq_change(&controller_clone, value));
-
-	{
-		// Set initial control values.
-		let app_controller = app_controller.borrow();
-		spectrum_caption.set_label(&spectrum_caption_text(&app_controller));
-		min_freq_scale.set_value(app_controller.config.min_freq.log2());
-		max_freq_scale.set_value(app_controller.config.max_freq.log2());
-	}
+	spectrum_caption.set_label(&spectrum_caption_text(&app_controller.borrow()));
 
 	build_accordion(&app_controller, &builder, vec![port_subscription])
 }
@@ -203,7 +161,7 @@ fn build_accordion(
 	stages.push(build_stage(
 		StageId::Spiral,
 		graphic_generator_name(&app_controller),
-		&builder.object::<gtk::Widget>("spiral_body").unwrap(),
+		&controls::spiral::new(app_controller_ref),
 		Switchable::No,
 	));
 
@@ -489,7 +447,7 @@ fn spiral_summary(app_controller: &AppController) -> String {
 		"{}–{} · key {}",
 		Note::nearest(app_controller.config.min_freq.log2()),
 		Note::nearest(app_controller.config.max_freq.log2()),
-		key_name(spiral_key(app_controller).pitch_class),
+		key_name(controls::spiral::key(app_controller).pitch_class),
 	)
 }
 
@@ -551,73 +509,6 @@ fn on_port_selected(app_controller: &AppController, port: Option<PortName>) {
 // 		log::error!("failed to change source type: {}", err);
 // 	}
 // }
-
-fn on_min_freq_change(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	value: f64,
-) -> glib::Propagation {
-	let controller = controller_ref.borrow_mut();
-	let mut app_controller = controller.app_controller().borrow_mut();
-
-	let freq = value.exp2();
-	if freq > app_controller.config.max_freq {
-		return glib::Propagation::Stop;
-	}
-
-	app_controller.config.min_freq = freq;
-	handle_async_err(app_controller.update_spectrum_params());
-	glib::Propagation::Proceed
-}
-
-fn on_max_freq_change(
-	controller_ref: &Rc<RefCell<ControlPaneController>>,
-	value: f64,
-) -> glib::Propagation {
-	let controller = controller_ref.borrow_mut();
-	let mut app_controller = controller.app_controller().borrow_mut();
-
-	let freq = value.exp2();
-	if freq < app_controller.config.min_freq {
-		return glib::Propagation::Stop;
-	}
-
-	app_controller.config.max_freq = freq;
-	handle_async_err(app_controller.update_spectrum_params());
-	glib::Propagation::Proceed
-}
-
-/// The octave the key is set in. Only its pitch class shows: every octave of
-/// the key sits on the same spoke of the spiral.
-const KEY_OCTAVE: i8 = 4;
-
-/// The key row, down on the key the spiral is set to and moving it after that.
-fn build_key_row(app_controller: &Rc<RefCell<AppController>>) -> KeyRow {
-	let key_row = KeyRow::new("Key", "Sits at the top of the wheel and anchors the hue.");
-	key_row.set_selected(spiral_key(&app_controller.borrow()).pitch_class);
-
-	let app_controller = app_controller.clone();
-	key_row.connect_selected(move |pitch_class| {
-		let async_update = {
-			let mut app_controller = app_controller.borrow_mut();
-			let GraphicGeneratorConfig::Spiral(config) =
-				&mut app_controller.config.graphic_generator;
-			config.key_log_freq = Note {
-				octave: KEY_OCTAVE,
-				pitch_class,
-			}
-			.log_frequency();
-			app_controller.update_graphic_generator()
-		};
-		handle_async_err(async_update);
-	});
-	key_row
-}
-
-/// The note the spiral is keyed to.
-fn spiral_key(app_controller: &AppController) -> Note {
-	let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
-	Note::nearest(config.key_log_freq)
-}
 
 fn build_source_type_selectors(
 	app_controller: &Rc<RefCell<AppController>>,

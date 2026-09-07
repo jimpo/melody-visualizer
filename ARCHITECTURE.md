@@ -131,7 +131,7 @@ The pipeline is paced by two independent timers. Do not conflate them.
 
 | Clock | Where | Rate | Drives |
 |---|---|---|---|
-| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — half a DFT window, so ~21 ms at 2048 samples / 48 kHz | How often a new `Spectrum` is produced |
+| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — the part of a DFT window that `audio::Config::overlap` leaves, so ~21 ms at 2048 samples / 48 kHz and half of it overlapping | How often a new `Spectrum` is produced |
 | **Frame timer** | GTK thread (`glib::timeout_add_local`) | 40 ms (25 fps) | How often a frame is rendered and repainted |
 
 The spectrum thread is the **only** timed producer. The graphic thread has no
@@ -235,7 +235,7 @@ written down, not a gap in the writing.
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
 | `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
 | `Config::samples_per_octave` | 180, internal | The quadratic cost driver. No GUI control, and exposing it is deferred |
-| `audio::Config::dft_window_size` | 2048, internal | Sets the tick rate through `interval()`, at half a window |
+| `audio::Config::dft_window_size` | 2048, internal | With the overlap, sets the tick rate through `interval()` |
 
 ### JACK client and port wiring
 
@@ -552,8 +552,8 @@ candidate for its own change.
   which is wrong; the value is a visualization choice, not a hearing limit.
 - Config changes reach the renderers as several independent RPCs
   (`sync_spectrum_transforms`, `update_spectrum_params`,
-  `update_graphic_generator`). There is no single "apply this config" path, so a
-  new setting is easy to forget to wire up.
+  `update_spectrum_generator`, `update_graphic_generator`). There is no single
+  "apply this config" path, so a new setting is easy to forget to wire up.
 
 ### Cross-cutting
 

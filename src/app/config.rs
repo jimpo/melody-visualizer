@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use crate::audio::source::SourceType;
 use crate::error::Error;
 use crate::graphic::{
@@ -6,8 +8,8 @@ use crate::graphic::{
 };
 use crate::note;
 use crate::spectrum::{
-	Hz, SpectrumParams, SpectrumTransform, TransformId,
-	generators::audio,
+	Hz, SpectrumGenerator, SpectrumParams, SpectrumTransform, TransformId,
+	generators::audio::{self, AudioSpectrumGenerator},
 	transforms::{
 		decibel_converter::DecibelConverter,
 		diffuser::{self, Diffuser},
@@ -39,6 +41,28 @@ impl SpectrumGeneratorConfig {
 	pub fn source_type(&self) -> SourceType {
 		match self {
 			Self::Audio(_) => SourceType::Audio,
+		}
+	}
+
+	/// Reconfigures `generator` in place.
+	///
+	/// The generator holds the audio input it reads from, so it is
+	/// reconfigured rather than rebuilt: rebuilding one would mean opening the
+	/// source again.
+	pub fn update(self, generator: &mut dyn SpectrumGenerator) -> Result<(), Error> {
+		match self {
+			Self::Audio(config) => {
+				match (generator as &mut dyn Any).downcast_mut::<AudioSpectrumGenerator>() {
+					Some(generator) => {
+						generator.set_config(config);
+						Ok(())
+					}
+					None => Err(Error::UnexpectedConfigEntry(
+						"config names an audio generator, but the chain holds another kind"
+							.to_string(),
+					)),
+				}
+			}
 		}
 	}
 }
@@ -160,6 +184,7 @@ impl Default for Config {
 			samples_per_octave: 180,
 			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config {
 				dft_window_size: 2048,
+				overlap: 0.5,
 			}),
 			spectrum_transforms: transforms
 				.into_iter()
@@ -208,6 +233,35 @@ impl Config {
 mod tests {
 	use super::*;
 	use crate::note::Note;
+	use crate::spectrum::generators::audio::AudioSpectrumGenerator;
+	use crate::test_support::sample_reader;
+
+	#[test]
+	fn a_config_update_reaches_a_running_generator() {
+		let config = audio::Config {
+			dft_window_size: 2048,
+			overlap: 0.5,
+		};
+		let mut generator = AudioSpectrumGenerator::new(config.clone(), sample_reader(&[]), 48_000);
+		let half_overlapped = generator.interval();
+
+		SpectrumGeneratorConfig::Audio(audio::Config {
+			overlap: 0.75,
+			..config
+		})
+		.update(&mut generator)
+		.expect("the generator is of the kind the config names");
+
+		// Three quarters of a window overlapping leaves half the hop that half
+		// of one does, so the generator ticks twice as often.
+		let ticks = generator.interval().as_secs_f64() * 2.0;
+		assert!(
+			(ticks - half_overlapped.as_secs_f64()).abs() < 1e-6,
+			"the generator ticks every {} s, expected {} s",
+			generator.interval().as_secs_f64(),
+			half_overlapped.as_secs_f64() / 2.0,
+		);
+	}
 
 	#[test]
 	fn the_spiral_key_is_a_log_frequency_of_a_note_on_the_keyboard() {

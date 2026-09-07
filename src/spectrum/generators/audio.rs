@@ -9,12 +9,22 @@ use std::{
 use crate::audio::SampleReader;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 
-// Half of the DFT window should overlap with the previous.
-const TARGET_OVERLAP: (u64, u64) = (1, 2);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
 	pub dft_window_size: usize,
+	/// The part of each DFT window that repeats the one before it, as a
+	/// fraction of the window.
+	///
+	/// What is left is the hop: the audio the spectrum advances by per tick,
+	/// and so the tick interval itself. At 0.5 each window shares half its
+	/// samples with the last and the spectrum advances twice per window.
+	pub overlap: f64,
+}
+
+/// The audio one tick advances by, in samples: the part of a window that does
+/// not repeat the one before it.
+pub fn hop_samples(dft_window_size: usize, overlap: f64) -> f64 {
+	dft_window_size as f64 * (1.0 - overlap)
 }
 
 pub struct AudioSpectrumGenerator {
@@ -23,6 +33,7 @@ pub struct AudioSpectrumGenerator {
 	/// so that the spectrum thread allocates nothing per tick.
 	samples: Vec<f32>,
 	analyzer: Analyzer,
+	overlap: f64,
 	/// The overrun count as of the last tick that logged one. The counter itself
 	/// only ever grows; this is what turns it into a per-tick delta.
 	reported_overruns: u64,
@@ -32,6 +43,7 @@ impl Debug for AudioSpectrumGenerator {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("AudioSpectrumGenerator")
 			.field("analyzer", &self.analyzer)
+			.field("overlap", &self.overlap)
 			.finish()
 	}
 }
@@ -42,10 +54,20 @@ impl AudioSpectrumGenerator {
 			audio_buffer,
 			samples: Vec::new(),
 			analyzer: Analyzer::new(WindowShape::Hann, sample_rate),
+			overlap: config.overlap,
 			reported_overruns: 0,
 		};
 		generator.set_window_size(config.dft_window_size);
 		generator
+	}
+
+	/// Applies `config`, keeping the DFT plan when the window size is the one
+	/// already planned for.
+	pub fn set_config(&mut self, config: Config) {
+		if config.dft_window_size != self.analyzer.window_size() {
+			self.set_window_size(config.dft_window_size);
+		}
+		self.overlap = config.overlap;
 	}
 
 	pub fn set_window_size(&mut self, dft_window_size: usize) {
@@ -86,12 +108,10 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 		self.analyzer.fill_bins(buffer)
 	}
 
+	/// The time the hop covers: the audio between one window and the next.
 	fn interval(&self) -> Duration {
-		let (overlap_numerator, overlap_denominator) = TARGET_OVERLAP;
-		Duration::from_micros(
-			(1_000_000 * self.analyzer.window_size() as u64 * overlap_numerator)
-				/ (self.analyzer.sample_rate as u64 * overlap_denominator),
-		)
+		let hop = hop_samples(self.analyzer.window_size(), self.overlap);
+		Duration::from_secs_f64(hop / self.analyzer.sample_rate as f64)
 	}
 
 	fn set_sample_rate(&mut self, sample_rate: u32) {
@@ -252,12 +272,14 @@ mod tests {
 
 	const SAMPLE_RATE: u32 = 48_000;
 	const WINDOW: usize = 2048;
+	const OVERLAP: f64 = 0.5;
 
 	/// A generator over `samples`, at the default window size and sample rate.
 	fn generator(samples: &[f32]) -> AudioSpectrumGenerator {
 		AudioSpectrumGenerator::new(
 			Config {
 				dft_window_size: WINDOW,
+				overlap: OVERLAP,
 			},
 			sample_reader(samples),
 			SAMPLE_RATE,
@@ -385,19 +407,36 @@ mod tests {
 		assert_eq!(spectrum.values(), []);
 	}
 
-	#[test]
-	fn the_tick_interval_is_half_a_window() {
-		for window in [512, 1024, 2048, 4096] {
-			let mut generator = generator(&[]);
-			generator.set_window_size(window);
+	/// The seconds of audio one window covers.
+	fn window_seconds(window: usize, sample_rate: u32) -> f64 {
+		window as f64 / sample_rate as f64
+	}
 
-			// Whole microseconds: the tick clock has no finer resolution.
-			let half_window_micros = (1_000_000 * window as u64) / (2 * SAMPLE_RATE as u64);
-			assert_eq!(
-				generator.interval(),
-				Duration::from_micros(half_window_micros),
-				"consecutive windows overlap by half",
-			);
+	/// How far apart two of these durations may be and still count as equal.
+	/// A `Duration` holds whole nanoseconds, so a tick that divides a window
+	/// unevenly does not multiply back to it exactly.
+	const TOLERANCE_SECONDS: f64 = 1e-6;
+
+	#[test]
+	fn the_overlap_says_how_many_ticks_a_window_takes() {
+		// A window advances in one tick with nothing overlapping, in two when
+		// half of it repeats, in four when three quarters do.
+		for (overlap, ticks) in [(0.0, 1.0), (0.5, 2.0), (0.75, 4.0)] {
+			for window in [512, 1024, 2048, 4096] {
+				let mut generator = generator(&[]);
+				generator.set_config(Config {
+					dft_window_size: window,
+					overlap,
+				});
+
+				let ticked = generator.interval().as_secs_f64() * ticks;
+				let expected = window_seconds(window, SAMPLE_RATE);
+				assert!(
+					(ticked - expected).abs() < TOLERANCE_SECONDS,
+					"a {window}-sample window at {overlap} overlap took {ticked} s \
+					 to advance, expected {expected} s",
+				);
+			}
 		}
 	}
 
@@ -406,9 +445,11 @@ mod tests {
 		let mut generator = generator(&[]);
 		generator.set_sample_rate(96_000);
 
-		assert_eq!(
-			generator.interval(),
-			Duration::from_micros((1_000_000 * WINDOW as u64) / (2 * 96_000)),
+		let ticked = generator.interval().as_secs_f64() / (1.0 - OVERLAP);
+		let expected = window_seconds(WINDOW, 96_000);
+		assert!(
+			(ticked - expected).abs() < TOLERANCE_SECONDS,
+			"{ticked} s, expected {expected} s"
 		);
 	}
 

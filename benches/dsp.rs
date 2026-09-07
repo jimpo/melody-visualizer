@@ -42,6 +42,8 @@ use melody_visualizer::test_support::{renderer, sample_reader, seconds_per_call}
 use melody_visualizer::traits::Configurable;
 
 const SAMPLE_RATE: u32 = 48_000;
+/// The overlap the default configuration analyses at.
+const OVERLAP: f64 = 0.5;
 /// Repetitions the summary averages one stage over.
 const WARMUP: usize = 50;
 const RUNS: usize = 500;
@@ -72,6 +74,7 @@ fn generator(window: usize) -> AudioSpectrumGenerator {
 	AudioSpectrumGenerator::new(
 		audio::Config {
 			dft_window_size: window,
+			overlap: OVERLAP,
 		},
 		sample_reader(&signal(window)),
 		SAMPLE_RATE,

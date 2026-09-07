@@ -157,7 +157,12 @@ impl fmt::Debug for SpectrumParams {
 	}
 }
 
-pub trait SpectrumGenerator: Debug + Send {
+/// The source of spectra at the head of the chain.
+///
+/// `Any` is a supertrait so that a generator can be downcast to the concrete
+/// kind its config describes, which is how a config change reaches one that is
+/// already running.
+pub trait SpectrumGenerator: Any + Debug + Send {
 	fn generate(&mut self, buffer: SpectrumBuffer) -> Spectrum;
 	fn interval(&self) -> Duration;
 

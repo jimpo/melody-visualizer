@@ -1,7 +1,7 @@
 //! The bodies of the stages, and the widget vocabulary they are built from.
 //!
-//! A transform stage is one captioned slider; the spiral stage combines the
-//! range slider and the key row. The helpers here carry the spacing and the
+//! A transform stage is one captioned slider; the spectrum and spiral stages
+//! combine several groups. The helpers here carry the spacing and the
 //! label row every group shares.
 
 pub mod captioned_slider;
@@ -9,6 +9,7 @@ pub mod decibel_converter;
 pub mod diffuser;
 pub mod key_row;
 pub mod range_slider;
+pub mod spectrum;
 pub mod spiral;
 pub mod volume_normalizer;
 

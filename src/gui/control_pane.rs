@@ -40,7 +40,6 @@ pub fn new(
 	let builder = gtk::Builder::from_string(UI_DEF);
 	let source_type_selection: gtk::Box = builder.object("source_type_selection").unwrap();
 	let port_list: gtk::ListBox = builder.object("port_list").unwrap();
-	let spectrum_caption: gtk::Label = builder.object("spectrum_caption").unwrap();
 
 	let app_controller = controller.borrow().app_controller().clone();
 
@@ -50,8 +49,6 @@ pub fn new(
 	}
 
 	let port_subscription = connect_port_list(controller, &port_list);
-
-	spectrum_caption.set_label(&spectrum_caption_text(&app_controller.borrow()));
 
 	build_accordion(&app_controller, &builder, vec![port_subscription])
 }
@@ -145,7 +142,7 @@ fn build_accordion(
 		build_stage(
 			StageId::Spectrum,
 			spectrum_generator_name(&app_controller),
-			&builder.object::<gtk::Widget>("spectrum_body").unwrap(),
+			&controls::spectrum::new(app_controller_ref),
 			Switchable::No,
 		),
 	];
@@ -411,8 +408,9 @@ fn stage_summary(app_controller: &AppController, id: StageId) -> String {
 	match id {
 		StageId::Source => source_name(app_controller),
 		StageId::Spectrum => format!(
-			"1/{} tone",
-			(app_controller.config.samples_per_octave as f64 / SEMITONES_PER_OCTAVE).round()
+			"1/{} tone · {}",
+			(app_controller.config.samples_per_octave as f64 / SEMITONES_PER_OCTAVE).round(),
+			controls::spectrum::rate_text(app_controller),
 		),
 		StageId::Transform(id) => transform_summary(app_controller, id),
 		StageId::Spiral => spiral_summary(app_controller),
@@ -448,15 +446,6 @@ fn spiral_summary(app_controller: &AppController) -> String {
 		Note::nearest(app_controller.config.min_freq.log2()),
 		Note::nearest(app_controller.config.max_freq.log2()),
 		key_name(controls::spiral::key(app_controller).pitch_class),
-	)
-}
-
-/// The grid the spectrum stage analyses on, in the terms its controls set.
-fn spectrum_caption_text(app_controller: &AppController) -> String {
-	let SpectrumGeneratorConfig::Audio(generator) = &app_controller.config.spectrum_generator;
-	format!(
-		"{} bins / octave · window {}",
-		app_controller.config.samples_per_octave, generator.dft_window_size,
 	)
 }
 

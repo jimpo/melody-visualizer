@@ -173,7 +173,16 @@ One sample's journey:
    an `rustfft` forward DFT, and **bins the output into log-spaced frequency
    buckets** so that every octave gets equal screen space. It keeps power
    (amplitude²), which Parseval's theorem preserves, and interpolates power —
-   not amplitude — between adjacent bins.
+   not amplitude. Each DFT bin spreads its power as a triangle in log frequency,
+   peaking at that bin and reaching zero at its two neighbours, so the grid stays
+   filled at the low end, where it is tens of bins to a DFT bin, and the triangle
+   collapses to a linear split between the two nearest bins at the top, where the
+   grid is the coarser of the two. **A bin holds power, not power per octave.**
+   Spreading a tone over the ±1 DFT bin the window resolves keeps the total but
+   lowers the peak, and it lowers it most at the bottom of the range where that
+   width is widest — so a bass note is drawn dimmer than a treble note of the
+   same energy. Giving the bass real resolution rather than a wide hump is what
+   a longer window buys, not a change to the binning.
 3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through a
    `TransformChain`: `Diffuser` (spatial smoothing), `VolumeNormalizer`
    (auto-gain), `DecibelConverter` (log scaling). Order is position in the

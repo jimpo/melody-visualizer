@@ -217,6 +217,22 @@ impl Analyzer {
 
 	/// Folds the DFT output into `buffer`'s log-spaced power bins.
 	///
+	/// Each DFT bin spreads its power as a triangle in log frequency, peaking at
+	/// the bin's own frequency and reaching zero at its two neighbours'. Every
+	/// triangle carries exactly its bin's power, so the total is preserved, and
+	/// they overlap, so no output bin between two DFT bins is left empty. Where
+	/// the grid is the coarser of the two the triangle is narrower than one
+	/// output bin, and the same arithmetic gives the two nearest bins a linear
+	/// split of the power.
+	///
+	/// A bin therefore holds power, not power per octave, and one DFT bin is
+	/// worth tens of output bins at 200 Hz and less than one at 20 kHz. So a
+	/// tone the analysis cannot place better than ±23 Hz is drawn as the wide,
+	/// low hump that width deserves, and the same tone an octave up as a narrow,
+	/// tall one. Spreading it is the point — a comb of spikes with empty bins
+	/// between them claims a precision the window does not have — but it does
+	/// mean a bass note reaches a lower peak than a treble note of equal energy.
+	///
 	/// # Preconditions
 	/// - [`run_dft`](Self::run_dft) has been called since the window size last
 	///   changed.
@@ -228,37 +244,88 @@ impl Analyzer {
 			// https://github.com/rust-lang/rust/issues/70758
 			spectrum.iter_mut().for_each(|val| *val = 0.0);
 
+			// Neither a grid too short to have a step nor a rate that gives the
+			// DFT's bins no frequency has any bin to put power in.
 			let log_freqs = spectrum_params.log_frequencies();
-			let mut i = 1; // i indexes into spectrum
+			if log_freqs.len() < 2 || self.sample_rate == 0 {
+				return;
+			}
+
+			// The grid is exponentially spaced, so its log frequencies step by
+			// a constant and an index past either end is arithmetic. The first
+			// and last bins need one such neighbour to be weighed against.
+			let base = log_freqs[0];
+			let step = log_freqs[1] - base;
+			let grid_log_freq = |i: isize| base + i as f64 * step;
+			let last_bin = log_freqs.len() as isize - 1;
+
+			let dft_log_freq = |j: usize| ((self.sample_rate as f64 * j as f64) / n as f64).log2();
 
 			// DFT applied to real values is even symmetric, meaning values n / 2 + 1, .., n - 1
 			// are complex conjugates of samples 1, .., n / 2 - 1. Looked at another way, the DFT
 			// output folds around the Nyquist frequency, so only take values below the Nyquist
 			// frequency. Also skip the DC component because it has no log frequency.
 			for j in 1..(n / 2) {
-				let dft_out_freq = (self.sample_rate as f64 * j as f64) / n as f64;
-				let dft_out_log_freq = dft_out_freq.log2();
+				let peak = dft_log_freq(j);
+				let right = dft_log_freq(j + 1);
+				// DC has no log frequency to anchor the first bin's lower side,
+				// so mirror its upper one. That bin sits at 23 Hz on the default
+				// window, below any grid a listener would ask for.
+				let left = if j == 1 {
+					peak - (right - peak)
+				} else {
+					dft_log_freq(j - 1)
+				};
+				let power = dft_out_to_val(&self.dft_window[j], n);
 
-				// Advance j until log_freqs[i - 1] <= dft_out_log_freq.
-				if log_freqs[i - 1] > dft_out_log_freq {
-					continue;
+				// Outside [left, right] the moment is a straight line, so a bin
+				// clear of the triangle takes nothing however far the ends
+				// reach. That makes a generous range safe and a tight one moot.
+				let first = (((left - base) / step).floor() as isize).clamp(0, last_bin);
+				let last = (((right - base) / step).ceil() as isize).clamp(0, last_bin);
+
+				let mut previous = triangle_moment(grid_log_freq(first - 1), left, peak, right);
+				let mut current = triangle_moment(grid_log_freq(first), left, peak, right);
+				for i in first..=last {
+					let next = triangle_moment(grid_log_freq(i + 1), left, peak, right);
+					spectrum[i as usize] += power * (previous - 2.0 * current + next) / step;
+					previous = current;
+					current = next;
 				}
-
-				// Advance i until dft_out_log_freq < log_freqs[i].
-				while dft_out_log_freq >= log_freqs[i] {
-					i += 1;
-					if i >= log_freqs.len() {
-						return;
-					}
-				}
-
-				let dft_out_val = dft_out_to_val(&self.dft_window[j], n);
-				let interp_ratio =
-					(dft_out_log_freq - log_freqs[i - 1]) / (log_freqs[i] - log_freqs[i - 1]);
-				spectrum[i - 1] += (1.0 - interp_ratio) * dft_out_val;
-				spectrum[i] += interp_ratio * dft_out_val;
 			}
 		})
+	}
+}
+
+/// The triangle of unit area that rises from zero at `left`, peaks at `peak` and
+/// falls to zero at `right`, integrated twice, at `x`.
+///
+/// An evenly spaced grid's bin covers a triangle of its own, one bin wide either
+/// side, and the share of the power a bin takes is what the two triangles have
+/// in common. Integrating twice is what turns that overlap into arithmetic: the
+/// grid's triangle is the second difference of a straight line, so the overlap
+/// is the second difference of this function across the bin and its neighbours,
+/// divided by the grid step.
+///
+/// # Preconditions
+/// - `left < peak < right`
+fn triangle_moment(x: f64, left: f64, peak: f64, right: f64) -> f64 {
+	let (rise, fall) = (peak - left, right - peak);
+	let height = 2.0 / (rise + fall);
+
+	if x <= left {
+		0.0
+	} else if x <= peak {
+		height * (x - left).powi(3) / (6.0 * rise)
+	} else if x <= right {
+		// The rising side in full, then the falling side less the tail of it
+		// still to come.
+		height * rise.powi(2) / 6.0 + (x - peak)
+			- height * (fall.powi(3) - (right - x).powi(3)) / (6.0 * fall)
+	} else {
+		// Past the triangle the area is fixed at one, so the integral of it
+		// climbs by one for every step in `x`.
+		height * (rise.powi(2) - fall.powi(2)) / 6.0 + fall + (x - right)
 	}
 }
 
@@ -338,6 +405,27 @@ mod tests {
 				"a {frequency} Hz sine peaked at {peak} Hz, more than one DFT bin away",
 			);
 		}
+	}
+
+	#[test]
+	fn a_sine_leaves_no_gap_in_the_bins_it_reaches() {
+		// The grid is 28 bins to a DFT bin at 250 Hz, so a tone there is where a
+		// binning that only ever reached two of them would comb the worst.
+		let spectrum = analyze(&[(250.0, 1.0)], 1196);
+		let values = spectrum.values();
+
+		let reached = |value: &f64| *value > 0.0;
+		let first = values.iter().position(reached).expect("the tone is binned");
+		let last = values
+			.iter()
+			.rposition(reached)
+			.expect("the tone is binned");
+
+		let gaps = values[first..=last].iter().filter(|&&v| v == 0.0).count();
+		assert_eq!(
+			gaps, 0,
+			"a 250 Hz sine left {gaps} empty bins between bin {first} and bin {last}",
+		);
 	}
 
 	#[test]

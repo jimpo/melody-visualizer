@@ -3,7 +3,7 @@ use std::{any::Any, cmp::Ordering};
 use crate::spectrum::{Spectrum, SpectrumTransform};
 use crate::traits::Configurable;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
 	/// How fast the running peak follows the spectrum, per frame, in `(0, 1]`.
 	///

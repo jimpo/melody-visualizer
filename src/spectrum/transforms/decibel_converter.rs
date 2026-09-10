@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::spectrum::{Spectrum, SpectrumTransform};
 use crate::traits::Configurable;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
 	pub min_level: f64,
 }

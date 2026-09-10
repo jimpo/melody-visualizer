@@ -9,7 +9,7 @@ edition = "2024"
 # generation gtk4 0.11 pulls so only one copy of each links (gdk = gdk4).
 gtk = { package = "gtk4", version = "0.11", features = ["v4_10"] }
 gdk = { package = "gdk4", version = "0.11" }
-glib = "0.22"
+glib = { version = "0.22", features = ["v2_72"] }
 gio = "0.22"
 cairo = { package = "cairo-rs", version = "0.22" }
 derive_more = { version = "2", features = ["display", "from", "error"] }
@@ -22,6 +22,8 @@ log = "0.4.8"
 palette = "0.7"
 rustfft = "6"
 async-channel = "2.5.0"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
 
 [features]
 # Exposes `test_support` to dependents. The self dev-dependency below turns it
@@ -37,6 +39,7 @@ criterion = { version = "0.8", default-features = false, features = [
 	"cargo_bench_support",
 ] }
 rand = "0.10"
+tempfile = "3"
 
 [[bench]]
 name = "dsp"

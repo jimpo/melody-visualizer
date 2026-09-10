@@ -30,6 +30,7 @@ pub struct AppController {
 
 impl AppController {
 	pub async fn new() -> Result<Rc<RefCell<Self>>, Error> {
+		let config = Config::load()?;
 		let pubsub = PubSub::new(None, glib::Priority::DEFAULT);
 		let notifier = pubsub.notifier();
 
@@ -49,7 +50,7 @@ impl AppController {
 
 		let sample_rate_subscription = subscribe_to_sample_rate(&pubsub, spectrum_renderer.clone());
 		let mut controller = AppController {
-			config: Config::default(),
+			config,
 			source: None,
 			pubsub,
 			notifier,
@@ -108,7 +109,7 @@ impl AppController {
 
 	pub fn update_graphic_generator(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let config = self.config.graphic_generator.clone();
-		self.notify_and_log_err(events::ConfigChanged);
+		self.config_changed();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
 				renderer.update_generator(|generator| config.update(generator));
@@ -120,7 +121,7 @@ impl AppController {
 	/// applies it to the running generator.
 	pub fn update_spectrum_generator(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let config = self.config.spectrum_generator.clone();
-		self.notify_and_log_err(events::ConfigChanged);
+		self.config_changed();
 		self.spectrum_renderer
 			.exec_cloned(move |renderer| config.update(renderer.generator_mut()))
 			.map(|result| {
@@ -132,7 +133,7 @@ impl AppController {
 
 	pub fn update_spectrum_params(&self) -> impl Future<Output = Result<(), Error>> + use<> {
 		let spectrum_params = self.config.spectrum_params();
-		self.notify_and_log_err(events::ConfigChanged);
+		self.config_changed();
 		self.graphic_renderer
 			.exec_cloned(move |renderer| {
 				renderer.set_spectrum_params(spectrum_params);
@@ -148,7 +149,7 @@ impl AppController {
 			Ok(config) => config.clone(),
 			Err(err) => return Either::Right(future::err(err)),
 		};
-		self.notify_and_log_err(events::ConfigChanged);
+		self.config_changed();
 		let fut = self
 			.spectrum_renderer
 			.exec_cloned(move |renderer| {
@@ -180,7 +181,7 @@ impl AppController {
 		if let Err(err) = self.config.set_transform_enabled(id, enabled) {
 			return Either::Right(future::err(err));
 		}
-		self.notify_and_log_err(events::ConfigChanged);
+		self.config_changed();
 		let fut = self
 			.spectrum_renderer
 			.exec_cloned(move |renderer| {
@@ -257,6 +258,14 @@ impl AppController {
 		if let Err(err) = self.notifier.send(notification) {
 			log::error!("{}", Error::PubSub(err));
 		}
+	}
+
+	/// Persists the whole config before announcing its new values to views.
+	fn config_changed(&self) {
+		if let Err(err) = self.config.save() {
+			log::error!("failed to persist configuration: {err}");
+		}
+		self.notify_and_log_err(events::ConfigChanged);
 	}
 
 	/// Drops the JACK source and stops both renderer threads.

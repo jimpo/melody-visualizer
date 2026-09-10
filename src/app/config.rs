@@ -1,4 +1,9 @@
-use std::any::Any;
+use std::{
+	any::Any,
+	fs,
+	io::ErrorKind,
+	path::{Path, PathBuf},
+};
 
 use crate::audio::source::SourceType;
 use crate::error::Error;
@@ -18,7 +23,11 @@ use crate::spectrum::{
 };
 use crate::traits::Configurable;
 
-#[derive(Debug, Clone, PartialEq)]
+const STATE_DIR_NAME: &str = "melody-visualizer";
+const STATE_FILE_NAME: &str = "config.toml";
+const TEMP_FILE_NAME: &str = "config.toml.tmp";
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
 	pub min_freq: Hz,
 	pub max_freq: Hz,
@@ -37,7 +46,7 @@ pub struct Config {
 ///
 /// `enabled` is the bypass switch's state. It lives here so that rebuilding the
 /// chain from the config keeps a bypassed stage bypassed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransformEntry {
 	pub id: TransformId,
 	pub config: SpectrumTransformConfig,
@@ -56,7 +65,7 @@ impl FromIterator<TransformEntry> for TransformChain {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SpectrumGeneratorConfig {
 	Audio(audio::Config),
 }
@@ -135,7 +144,7 @@ macro_rules! define_graphic_generator_config {
 }
 
 define_graphic_generator_config! {
-	#[derive(Debug, Clone, PartialEq)]
+	#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 	pub enum GraphicGeneratorConfig {
 		Spiral,
 	}
@@ -185,7 +194,7 @@ macro_rules! define_spectrum_transform_config {
 }
 
 define_spectrum_transform_config! {
-	 #[derive(Debug, Clone, PartialEq)]
+	 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 	pub enum SpectrumTransformConfig {
 		DecibelConverter,
 		Diffuser,
@@ -232,6 +241,38 @@ impl Default for Config {
 }
 
 impl Config {
+	/// Reads the persisted configuration, or returns the defaults before the
+	/// application has written one.
+	pub fn load() -> Result<Self, Error> {
+		Self::load_from(&state_file_path())
+	}
+
+	/// Atomically replaces the persisted configuration with this complete
+	/// configuration tree.
+	pub fn save(&self) -> Result<(), Error> {
+		self.save_to(&state_file_path())
+	}
+
+	fn load_from(path: &Path) -> Result<Self, Error> {
+		let serialized = match fs::read_to_string(path) {
+			Ok(serialized) => serialized,
+			Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Self::default()),
+			Err(err) => return Err(Error::ConfigIo(err)),
+		};
+		toml::from_str(&serialized).map_err(Error::ConfigParse)
+	}
+
+	fn save_to(&self, path: &Path) -> Result<(), Error> {
+		let parent = path
+			.parent()
+			.expect("the state file always has an application directory");
+		fs::create_dir_all(parent).map_err(Error::ConfigIo)?;
+		let serialized = toml::to_string_pretty(self).map_err(Error::ConfigSerialize)?;
+		let temporary = parent.join(TEMP_FILE_NAME);
+		fs::write(&temporary, serialized).map_err(Error::ConfigIo)?;
+		fs::rename(temporary, path).map_err(Error::ConfigIo)
+	}
+
 	pub fn spectrum_params(&self) -> SpectrumParams {
 		let octaves = self.max_freq.log2() - self.min_freq.log2();
 		let samples = (self.samples_per_octave as f64 * octaves).round() as usize;
@@ -279,12 +320,58 @@ impl Config {
 	}
 }
 
+fn state_file_path() -> PathBuf {
+	glib::user_state_dir()
+		.join(STATE_DIR_NAME)
+		.join(STATE_FILE_NAME)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 	use crate::note::Note;
 	use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 	use crate::test_support::sample_reader;
+	use tempfile::tempdir;
+
+	#[test]
+	fn config_round_trips_through_toml() {
+		let directory = tempdir().unwrap();
+		let path = directory.path().join("state/config.toml");
+		let mut config = Config {
+			min_freq: 55.0,
+			samples_per_octave: 96,
+			..Config::default()
+		};
+		config.spectrum_transforms[0].enabled = false;
+
+		config.save_to(&path).unwrap();
+
+		assert_eq!(Config::load_from(&path).unwrap(), config);
+		assert!(!path.with_file_name(TEMP_FILE_NAME).exists());
+	}
+
+	#[test]
+	fn a_missing_state_file_loads_the_defaults() {
+		let directory = tempdir().unwrap();
+
+		assert_eq!(
+			Config::load_from(&directory.path().join("missing.toml")).unwrap(),
+			Config::default(),
+		);
+	}
+
+	#[test]
+	fn malformed_state_is_reported() {
+		let directory = tempdir().unwrap();
+		let path = directory.path().join("config.toml");
+		fs::write(&path, "min_freq = [not a number]").unwrap();
+
+		assert!(matches!(
+			Config::load_from(&path),
+			Err(Error::ConfigParse(_))
+		));
+	}
 
 	#[test]
 	fn a_config_update_reaches_a_running_generator() {

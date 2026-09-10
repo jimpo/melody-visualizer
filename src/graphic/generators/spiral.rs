@@ -37,7 +37,30 @@ pub struct Config {
 	/// the fractional part of the difference matters; a value in the wrong unit
 	/// still draws a spiral, just one keyed to an arbitrary pitch.
 	pub key_log_freq: LogHz,
+	/// Whether to name each spoke by its interval from the key, in a ring
+	/// outside the outermost turn. The ring takes [`RING_ROOM`] pixels on top of
+	/// `outer_pad`.
+	#[serde(default)]
+	pub interval_ring: bool,
 }
+
+/// The interval names of the twelve spokes, clockwise from the key.
+const INTERVALS: [&str; 12] = [
+	"P1", "m2", "M2", "m3", "M3", "P4", "TT", "P5", "m6", "M6", "m7", "M7",
+];
+/// The pixels the interval ring takes from the spiral's radius. The labels
+/// reach about 8 px further, into `outer_pad`, so a padding under that clips
+/// them.
+pub const RING_ROOM: f64 = 23.0;
+/// Where a label's centre sits, in pixels outside the outermost turn.
+const LABEL_OFFSET: f64 = 20.0;
+/// Cairo matches the face through fontconfig, which falls back to its default
+/// face (DejaVu Sans on a stock Ubuntu) when it is not installed.
+// ponytail: cairo's toy text API offers only normal and bold, not the design's
+// weight 500; move to pangocairo if the weight matters.
+const LABEL_FACE: &str = "Playfair Display";
+const LABEL_SIZE: f64 = 13.0;
+const LABEL_ALPHA: f64 = 0.55;
 
 #[derive(Debug)]
 struct SegmentEdge {
@@ -90,11 +113,9 @@ impl SpiralGenerator {
 		self.edges.reserve(self.params.log_frequencies().len());
 
 		let r_min = self.config.center_pad;
-		let r_max =
-			(cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.config.outer_pad).max(r_min);
+		let r_max = self.r_max();
 		let r_scale = (r_max - r_min) / (max_log_freq - min_log_freq);
-		let x_origin = self.x_max as f64 / 2.0;
-		let y_origin = self.y_max as f64 / 2.0;
+		let (x_origin, y_origin) = self.origin();
 
 		for log_freq in self.params.log_frequencies().iter().cloned() {
 			// Compute the fraction of an octave away from the key frequency on a log scale.
@@ -118,6 +139,50 @@ impl SpiralGenerator {
 				y_outer: y_origin - cos_theta * (r + thickness),
 			});
 		}
+	}
+
+	/// The radius of the outermost turn's centre line.
+	fn r_max(&self) -> f64 {
+		let ring = if self.config.interval_ring {
+			RING_ROOM
+		} else {
+			0.0
+		};
+		(cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.config.outer_pad - ring)
+			.max(self.config.center_pad)
+	}
+
+	fn origin(&self) -> (f64, f64) {
+		(self.x_max as f64 / 2.0, self.y_max as f64 / 2.0)
+	}
+
+	/// Names each spoke by its interval from the key, in upright labels outside
+	/// the outermost turn.
+	fn draw_interval_ring(&self, ctx: &cairo::Context) -> Result<(), cairo::Error> {
+		let r = self.r_max() + LABEL_OFFSET;
+		let (x_origin, y_origin) = self.origin();
+
+		ctx.set_source_rgba(1.0, 1.0, 1.0, LABEL_ALPHA);
+		ctx.select_font_face(
+			LABEL_FACE,
+			cairo::FontSlant::Normal,
+			cairo::FontWeight::Normal,
+		);
+		ctx.set_font_size(LABEL_SIZE);
+		let font = ctx.font_extents()?;
+		for (step, name) in INTERVALS.iter().enumerate() {
+			let (sin, cos) = (step as f64 / 12.0 * 2.0 * PI).sin_cos();
+			let (x, y) = (x_origin + sin * r, y_origin - cos * r);
+			let advance = ctx.text_extents(name)?.x_advance();
+			// Centred on the advance and the em box rather than on the ink, so
+			// the old-style figures that drop below the baseline keep their drop.
+			ctx.move_to(
+				x - advance / 2.0,
+				y + (font.ascent() - font.descent()) / 2.0,
+			);
+			ctx.show_text(name)?;
+		}
+		Ok(())
 	}
 }
 
@@ -178,6 +243,9 @@ impl GraphicGenerator for SpiralGenerator {
 			ctx.set_source(&*mesh)?;
 			ctx.paint()?;
 
+			if self.config.interval_ring {
+				self.draw_interval_ring(ctx)?;
+			}
 			Ok(())
 		})
 	}
@@ -225,6 +293,7 @@ mod tests {
 			outer_pad: OUTER_PAD,
 			center_pad: CENTER_PAD,
 			key_log_freq: note!(C, 4).log_frequency(),
+			interval_ring: false,
 		}
 	}
 
@@ -434,5 +503,35 @@ mod tests {
 			first.buffer.data, second.buffer.data,
 			"the same history, grid and size produce the same bytes",
 		);
+	}
+
+	#[test]
+	fn the_interval_ring_makes_room_and_labels_every_spoke() {
+		let mut generator = SpiralGenerator::new(Config {
+			interval_ring: true,
+			..config()
+		});
+		generator.set_size(SIZE, SIZE);
+		generator.set_params(&semitone_grid());
+
+		let r_max = R_MAX - RING_ROOM;
+		let last = generator.edges.last().expect("the grid is not empty");
+		assert!((radius(last) - r_max).abs() < 1e-6);
+
+		let graphic = render(&mut generator, 0.0);
+		for step in 0..12 {
+			let theta = step as f64 / 12.0 * 2.0 * PI;
+			let r = r_max + LABEL_OFFSET;
+			let x = (ORIGIN + r * theta.sin()).round() as i32;
+			let y = (ORIGIN - r * theta.cos()).round() as i32;
+			// The box a 13 px label fills, which lies clear of the outermost band.
+			let lit = (y - 6..=y + 6)
+				.flat_map(|y| (x - 8..=x + 8).map(move |x| (x, y)))
+				.any(|(x, y)| {
+					let (red, green, blue) = graphic.pixel(x, y);
+					red.max(green).max(blue) > 50
+				});
+			assert!(lit, "spoke {} has a label outside the outermost turn", step);
+		}
 	}
 }

@@ -235,6 +235,7 @@ impl Default for Config {
 				key_log_freq: note!(C, 4).log_frequency(),
 				outer_pad: 20.0,
 				center_pad: 50.0,
+				interval_ring: false,
 			}),
 		}
 	}

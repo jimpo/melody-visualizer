@@ -1,5 +1,6 @@
 //! The spiral stage's body: the pitch range it draws, the key it is aligned
-//! to, and the two paddings that fix its annulus on the surface.
+//! to, the ring of interval names, and the two paddings that fix its annulus
+//! on the surface.
 
 use gtk::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -10,7 +11,7 @@ use crate::graphic::generators::spiral;
 use crate::gui::controls::captioned_slider::CaptionedSlider;
 use crate::gui::controls::key_row::KeyRow;
 use crate::gui::controls::range_slider::RangeSlider;
-use crate::gui::controls::{CONTROL_SPACING, GROUP_SPACING, label_row};
+use crate::gui::controls::{CONTROL_SPACING, GROUP_SPACING, caption, label_row};
 use crate::gui::handle_async_err;
 use crate::note;
 use crate::note::Note;
@@ -37,6 +38,7 @@ pub fn new(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
 	body.add_css_class("stage-body");
 	body.append(&build_pitch_range(app_controller));
 	body.append(&build_key_row(app_controller).widget);
+	body.append(&build_interval_ring(app_controller));
 	body.append(&build_pad(
 		app_controller,
 		"Centre hole",
@@ -196,6 +198,41 @@ fn build_pad(
 	});
 
 	slider.widget
+}
+
+/// The switch that shows or hides the ring of interval names round the spiral.
+fn build_interval_ring(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
+	let (row, _value) = label_row("Interval ring");
+	let active = {
+		let app_controller = app_controller.borrow();
+		let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
+		config.interval_ring
+	};
+	let switch = gtk::Switch::builder()
+		.active(active)
+		.valign(gtk::Align::Center)
+		.build();
+	row.append(&switch);
+
+	let app_controller = app_controller.clone();
+	switch.connect_active_notify(move |switch| {
+		let async_update = {
+			let mut app_controller = app_controller.borrow_mut();
+			let GraphicGeneratorConfig::Spiral(config) =
+				&mut app_controller.config.graphic_generator;
+			config.interval_ring = switch.is_active();
+			app_controller.update_graphic_generator()
+		};
+		handle_async_err(async_update);
+	});
+
+	let group = gtk::Box::new(gtk::Orientation::Vertical, CONTROL_SPACING);
+	group.append(&row);
+	group.append(&caption(&format!(
+		"Names each spoke by its interval from the key. Takes {:.0} px from the spiral.",
+		spiral::RING_ROOM,
+	)));
+	group
 }
 
 /// The note the spiral is keyed to.

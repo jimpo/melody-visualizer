@@ -21,6 +21,13 @@ start a server of their own. To run the app headlessly (see
 sudo apt install jackd2 xvfb dbus-x11 imagemagick
 ```
 
+To play a file into the app (see [below](#playing-a-file)) you need PipeWire's
+tools instead of `jackd`:
+
+```bash
+sudo apt install pipewire-jack pipewire-bin
+```
+
 ## Build Commands
 
 ```bash
@@ -546,6 +553,26 @@ all: it redirects to a signed URL that expires within the hour and answers
 the bytes out of the packfile but not out of the project — the objects and the
 storage they bill for are kept forever, and every checkout materialises them.
 Deleting one branch is what ends a screenshot's life.
+
+## Playing a file
+
+On a desktop running PipeWire, `scripts/play-file.sh` runs the whole pipeline
+against real music: it launches the app under `pw-jack`, plays the file with
+`pw-cat`, links that stream to the app's input with `pw-link`, and closes the
+window when the file ends. Closing the window first ends the playback instead.
+The stream goes to the system output as well, so the track is heard and
+analysed at once. This is the one flow that wants a real session rather than
+the headless setup above: PipeWire is the JACK server, the window is the
+display's, and the sound is the default sink's.
+
+```bash
+$ scripts/play-file.sh ~/music/track.flac
+```
+
+The app has one input, so a stereo file feeds it one channel: the left, or the
+right with `CHANNEL=FR`. `APP_BIN` names another way to start the app from the
+repo root than `cargo run --release` (`cargo run` for a debug build, say), and
+`INPUT` the port to feed if it is not `Melody Visualizer:input`.
 
 ## Known upstream workarounds
 

@@ -37,4 +37,11 @@ pub enum Error {
 	},
 	#[display("invalid config entry reference: {}", _0)]
 	UnexpectedConfigEntry(#[error(not(source))] String),
+	#[display("configuration I/O error: {}", _0)]
+	#[from(skip)]
+	ConfigIo(io::Error),
+	#[display("failed to parse configuration: {}", _0)]
+	ConfigParse(toml::de::Error),
+	#[display("failed to serialize configuration: {}", _0)]
+	ConfigSerialize(toml::ser::Error),
 }

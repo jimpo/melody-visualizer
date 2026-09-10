@@ -3,7 +3,7 @@ use std::{any::Any, mem, sync::Arc};
 use crate::spectrum::{LogHz, Spectrum, SpectrumBuffer, SpectrumParams, SpectrumTransform};
 use crate::traits::Configurable;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
 	pub width: LogHz,
 }

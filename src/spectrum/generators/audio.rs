@@ -9,7 +9,7 @@ use std::{
 use crate::audio::SampleReader;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
 	pub dft_window_size: usize,
 	/// The part of each DFT window that repeats the one before it, as a

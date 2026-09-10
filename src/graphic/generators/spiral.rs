@@ -23,7 +23,7 @@ pub struct SpiralGenerator {
 	edges: Vec<SegmentEdge>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
 	/// Pixels between the outermost ring and the nearer edge of the surface.
 	pub outer_pad: f64,

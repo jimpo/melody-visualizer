@@ -185,6 +185,8 @@ pub trait SpectrumGenerator: Any + Debug + Send {
 	Ord,
 	derive_more::Display,
 	derive_more::From,
+	serde::Serialize,
+	serde::Deserialize,
 )]
 pub struct TransformId(pub u64);
 

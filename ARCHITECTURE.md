@@ -409,9 +409,10 @@ task is the only place the audio module and PubSub meet, which is what keeps
 
 ### Lifecycle
 
-**Startup** (`gui/window.rs::start`): `block_on(AppController::new())` spawns
-both renderer threads and the JACK client, then pushes the initial config to
-them. The window is built, the two panes are populated, and CSS is applied.
+**Startup** (`gui/window.rs::start`): `block_on(AppController::new())` loads the
+config from the user's XDG state directory, spawns both renderer threads and the
+JACK client, then pushes that config to them. The window is built, the two panes
+are populated, and CSS is applied.
 
 The window is a header bar over a `GtkPaned`: the visualization on the left, the
 control pane on the right at a fixed width. Only the visualization resizes with
@@ -563,9 +564,8 @@ candidate for its own change.
 
 ### Controls
 
-- **`Config` does not persist.** There is no serde derive, no load, no save. The
-  app starts from `Config::default()` every time. Persisting the config — and
-  named presets — is the largest single user-facing gap.
+- The live `Config` persists across application runs, but there is no way to
+  save and recall named presets.
 - `Config::default()` documents `min_freq: 200.0` as "low-end of human hearing",
   which is wrong; the value is a visualization choice, not a hearing limit.
 - Config changes reach the renderers as several independent RPCs

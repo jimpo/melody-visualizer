@@ -45,7 +45,8 @@ Unit tests live in `#[cfg(test)]` modules under `src/`; integration tests live i
 those targets — no extra flag is needed on the command line.
 
 Run the tests with [cargo-nextest](https://nexte.st/). It executes each test in
-its own process, which this crate **requires** — see the warning below.
+its own process, which this crate **requires** — see [The tests that need a JACK
+server](#the-tests-that-need-a-jack-server).
 
 ```bash
 $ cargo install cargo-nextest --locked   # one-time setup
@@ -53,19 +54,6 @@ $ cargo install cargo-nextest --locked   # one-time setup
 $ cargo nextest run                      # Run the test suite
 $ cargo nextest run -E 'test(pubsub)'    # Run the tests matching a filter expression
 ```
-
-> **`cargo test` currently aborts, even though every test passes.** The
-> `pubsub::tests::*` tests drive a glib main loop through
-> `test_support::run_in_glib_main_loop`, and that loop runs on the process-global
-> default `MainContext`. libtest runs many tests in one process, so the second
-> such test either touches a value glib pinned to another thread or polls a task
-> the first test left behind. Either way glib panics inside a non-unwinding
-> context and the process takes a `SIGABRT`. nextest's process-per-test isolation
-> sidesteps it entirely.
->
-> The real fix is for `run_in_glib_main_loop` to build a fresh `MainContext`
-> instead of using the thread default, and to drop its leftover yield task when
-> the test ends. Until then, use nextest.
 
 ### The tests that need a JACK server
 

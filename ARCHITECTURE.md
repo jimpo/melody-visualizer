@@ -575,9 +575,4 @@ candidate for its own change.
 
 ### Cross-cutting
 
-- **`cargo test` aborts**, even though every test passes. The glib main-loop
-  tests share the process-global default `MainContext`, so a second test in the
-  same process trips glib's thread guard and the process takes a non-unwinding
-  panic. See [DEVELOPMENT.md](DEVELOPMENT.md#testing) for the workaround and the
-  fix this needs.
 - The crate builds clean under `cargo clippy --all-targets -- -D warnings`.

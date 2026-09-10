@@ -79,37 +79,43 @@ pub fn sample_reader(samples: &[f32]) -> SampleReader {
 /// to it: awaiting `yield_rx.next()` resumes the test once every task higher than
 /// `Priority::LOW` (e.g. a pending notification dispatch) has run. The loop quits
 /// when the test future completes.
+///
+/// Each call runs on a fresh `MainContext`, pushed as the thread default for the
+/// duration, so components that resolve `MainContext::ref_thread_default()`
+/// (e.g. `PubSub::new(None, …)`) bind to it. Tests on concurrent threads share
+/// no context.
 pub fn run_in_glib_main_loop<F, U>(f: F)
 where
-	F: FnOnce(mpsc::Receiver<()>) -> U + Send + 'static,
+	F: FnOnce(mpsc::Receiver<()>) -> U + 'static,
 	U: Future<Output = ()>,
 {
-	let main_loop = Arc::new(MainLoop::new(None, false));
-	let main_context = main_loop.context();
+	let main_context = glib::MainContext::new();
+	let main_loop = MainLoop::new(Some(&main_context), false);
 
-	// The idea is to have an asynchronous test case that can yield control back to
-	// the main loop. We do that with a separate low-priority task that, every time
-	// it is polled, wakes up the test code. In effect, every time the test code
-	// yields, it is resumed when no tasks higher than PRIORITY_LOW are ready.
-	let (mut yield_tx, yield_rx) = mpsc::channel(0);
+	main_context
+		.with_thread_default(|| {
+			// The idea is to have an asynchronous test case that can yield control back
+			// to the main loop. We do that with a separate low-priority task that, every
+			// time it is polled, wakes up the test code. In effect, every time the test
+			// code yields, it is resumed when no tasks higher than PRIORITY_LOW are ready.
+			let (mut yield_tx, yield_rx) = mpsc::channel(0);
 
-	main_context.spawn_with_priority(glib::Priority::LOW, async move {
-		loop {
-			yield_tx.send(()).await.unwrap();
-		}
-	});
+			main_context.spawn_local_with_priority(glib::Priority::LOW, async move {
+				loop {
+					yield_tx.send(()).await.unwrap();
+				}
+			});
 
-	let main_loop_clone = main_loop.clone();
-	main_context.spawn(async move {
-		let main_context = main_loop_clone.context();
-		main_context.spawn_local(async move {
-			// Quit main loop after test code completes.
-			f(yield_rx).await;
-			main_loop_clone.quit();
-		});
-	});
+			let main_loop_clone = main_loop.clone();
+			main_context.spawn_local(async move {
+				// Quit main loop after test code completes.
+				f(yield_rx).await;
+				main_loop_clone.quit();
+			});
 
-	main_loop.run();
+			main_loop.run();
+		})
+		.expect("a fresh MainContext is not owned by another thread");
 }
 
 /// The DSP chain `config` describes, reading its audio from `reader`.

@@ -41,6 +41,12 @@ criterion = { version = "0.8", default-features = false, features = [
 rand = "0.10"
 tempfile = "3"
 
+# The spiral's pixel loop is plain Rust, which runs an order of magnitude slower
+# unoptimised, and `tests/render_budget.rs` times it in the profile the tests
+# build in. The `test` profile inherits this one.
+[profile.dev]
+opt-level = 1
+
 [[bench]]
 name = "dsp"
 harness = false

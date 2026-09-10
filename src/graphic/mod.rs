@@ -115,6 +115,15 @@ impl GraphicBuffer {
 		((word >> 16) as u8, (word >> 8) as u8, word as u8)
 	}
 
+	/// The pixels, for a generator that writes them without cairo.
+	///
+	/// Rgb24 is one native-endian `0x00RRGGBB` word per pixel. A row of those is
+	/// already four-byte aligned, so the stride is four times the width and the
+	/// words run row-major with no padding between rows.
+	pub fn data_mut(&mut self) -> &mut [u8] {
+		&mut self.data
+	}
+
 	pub fn draw(mut self, draw: impl Fn(&Context) -> Result<(), Error>) -> Result<Graphic, Error> {
 		self.with_image_surface(|surface| draw(&Context::new(surface)?))?;
 		Ok(Graphic { buffer: self })
@@ -186,7 +195,7 @@ impl GraphicBuffer {
 ///
 /// A generator derives its geometry from the frequency grid and the surface
 /// size. Both arrive through their own hook, so [`generate`](Self::generate)
-/// draws and nothing else.
+/// never compares them with what it drew last.
 ///
 /// # Preconditions
 /// - [`set_params`](Self::set_params) and [`set_size`](Self::set_size) have been
@@ -203,14 +212,16 @@ pub trait GraphicGenerator: Debug + Send {
 		spectrum_history: &VecDeque<Spectrum>,
 	) -> Result<Graphic, Error>;
 
-	/// Rebuilds whatever the generator derives from the frequency grid.
+	/// Hands the generator the frequency grid, to rebuild whatever it derives
+	/// from it now or before the next frame.
 	///
 	/// Called when the grid changes, and once when the generator joins a
 	/// renderer. The default does nothing, which is right for a generator whose
 	/// output depends only on the values it is handed.
 	fn set_params(&mut self, _params: &Arc<SpectrumParams>) {}
 
-	/// Rebuilds whatever the generator derives from the surface size.
+	/// Hands the generator the surface size, to rebuild whatever it derives
+	/// from it now or before the next frame.
 	///
 	/// Called when the size changes, and once when the generator joins a
 	/// renderer. The default does nothing, which is right for a generator that

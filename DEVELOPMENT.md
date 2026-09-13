@@ -324,7 +324,7 @@ let sample = f32::from_ne_bytes(
 visible at the definition.
 
 ```rust
-/// Scales every power value in place by the weight of its frequency bin.
+/// Scales every amplitude value in place by the weight of its frequency bin.
 ///
 /// # Preconditions
 /// - `data.len()` must equal `params.samples()`
@@ -590,7 +590,7 @@ before being copied or extended.
 | Term | Definition |
 |---|---|
 | **Overrun** | Audio the RT thread dropped because the capture ring was full. Counted in an atomic on `SampleWriter`, read off `SampleReader::overruns` on the spectrum thread and logged as a warning |
-| **Spectrum** | One frame of frequency-domain data: non-negative power values plus the `SpectrumParams` that give each bin its frequency |
+| **Spectrum** | One frame of frequency-domain data: non-negative amplitude values plus the `SpectrumParams` that give each bin its frequency |
 | **SpectrumParams** | The log-spaced frequency grid. Shared as an `Arc` and compared with `Arc::ptr_eq`; a pointer mismatch is what invalidates downstream caches |
 | **SpectrumBuffer** | A `Spectrum` with no meaningful contents — the recycled allocation that cycles back from the graphic thread |
 | **Spectrum transform** | One stage of the DSP chain (`Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |

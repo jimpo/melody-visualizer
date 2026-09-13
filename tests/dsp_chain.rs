@@ -19,7 +19,7 @@ use melody_visualizer::test_support::{renderer, sample_reader, sine_wave};
 const SAMPLE_RATE: u32 = 48_000;
 
 /// A peak counts as one when it stands this far above the normalized output.
-/// The quietest note of the chord reaches about 0.09, and the leakage between
+/// The quietest note of the chord reaches about 0.27, and the leakage between
 /// the notes stays below 0.01.
 const PEAK_THRESHOLD: f64 = 0.05;
 
@@ -35,17 +35,19 @@ fn peak_indices(spectrum: &Spectrum) -> Vec<usize> {
 		.collect()
 }
 
-/// The total power within a quarter-octave of `frequency`.
+/// The amplitude of the band within a quarter-octave of `frequency`.
 ///
-/// The stages ahead of it spread a note's power over neighbouring bins by
-/// differing amounts, so a band is what the note's magnitude means; the peak
-/// value alone is not it.
-fn band_power(spectrum: &Spectrum, frequency: f64) -> f64 {
+/// The stages ahead of it spread a note over neighbouring bins by differing
+/// amounts, so a band is what the note's magnitude means; the peak value alone
+/// is not it. The bins hold amplitude and the powers of a band's bins add, so
+/// the band's amplitude is the root of the sum of their squares.
+fn band_amplitude(spectrum: &Spectrum, frequency: f64) -> f64 {
 	let quarter_octave = 2.0f64.powf(0.25);
 	std::iter::zip(spectrum.params().frequencies(), spectrum.values())
 		.filter(|(bin, _)| **bin > frequency / quarter_octave && **bin < frequency * quarter_octave)
-		.map(|(_, power)| power)
-		.sum()
+		.map(|(_, amplitude)| amplitude * amplitude)
+		.sum::<f64>()
+		.sqrt()
 }
 
 #[test]
@@ -66,9 +68,8 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 
 	let signal = sine_wave(&chord, SAMPLE_RATE, window);
 	let params = Arc::new(config.spectrum_params());
-	let mut renderer = renderer(&config, sample_reader(&signal), SAMPLE_RATE);
-
-	let spectrum = renderer.render(SpectrumBuffer::new(params.clone()));
+	let spectrum = renderer(&config, sample_reader(&signal), SAMPLE_RATE)
+		.render(SpectrumBuffer::new(params.clone()));
 
 	assert!(
 		spectrum.values().iter().all(|value| value.is_finite()),
@@ -107,13 +108,27 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	);
 	assert_eq!(peaks[2] - peaks[1], peaks[1] - peaks[0]);
 
-	// A spectrum holds power, so halving an amplitude quarters a note's share.
-	let power = chord.map(|(frequency, _)| band_power(&spectrum, frequency));
-	for (note, expected_ratio) in [(1, 0.25), (2, 0.0625)] {
-		let ratio = power[note] / power[0];
+	// A spectrum holds amplitude, so halving an amplitude halves a note's share.
+	// Pinned with the diffuser bypassed: it spreads amplitude linearly, which
+	// takes more of the power of a narrow treble peak than of a wide bass hump,
+	// and so moves these ratios by up to a fifth.
+	let diffuser = config
+		.spectrum_transforms
+		.iter()
+		.find(|entry| matches!(entry.config, SpectrumTransformConfig::Diffuser(_)))
+		.expect("the default chain holds a diffuser")
+		.id;
+	let mut undiffused = config.clone();
+	undiffused.set_transform_enabled(diffuser, false).unwrap();
+	let undiffused = renderer(&undiffused, sample_reader(&signal), SAMPLE_RATE)
+		.render(SpectrumBuffer::new(params.clone()));
+
+	let amplitude = chord.map(|(frequency, _)| band_amplitude(&undiffused, frequency));
+	for (note, expected_ratio) in [(1, 0.5), (2, 0.25)] {
+		let ratio = amplitude[note] / amplitude[0];
 		assert!(
 			(ratio / expected_ratio - 1.0).abs() < 0.05,
-			"note {note} holds {ratio} of the lowest note's power, expected {expected_ratio}",
+			"note {note} holds {ratio} of the lowest note's amplitude, expected {expected_ratio}",
 		);
 	}
 
@@ -126,7 +141,7 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	);
 	assert!(
 		spectrum.values().iter().all(|&value| value >= 0.0),
-		"power is never negative, and the consumer clamps only from above",
+		"amplitude is never negative, and the consumer clamps only from above",
 	);
 }
 

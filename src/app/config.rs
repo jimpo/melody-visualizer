@@ -206,7 +206,7 @@ impl Default for Config {
 	fn default() -> Self {
 		let transforms = vec![
 			// SpectrumTransformConfig::DecibelConverter(decibel_converter::Config {
-			// 	min_level: 1.0e-6,
+			// 	min_level: 1.0e-3,
 			// }),
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),

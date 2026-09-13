@@ -44,7 +44,7 @@ Each boundary carries exactly one kind of value. Keep it that way.
 
 - **Audio engine → DSP**: raw `f32` samples through a lock-free ring buffer, and
   nothing else. The audio client never computes anything.
-- **DSP → Visualizer**: a `Spectrum` — a vector of non-negative power values plus
+- **DSP → Visualizer**: a `Spectrum` — a vector of non-negative amplitude values plus
   the `SpectrumParams` that give each bin its frequency. The DSP never knows
   about pixels; the visualizer never knows about audio.
 - **Controls → DSP and Visualizer**: a command, never shared mutable state. See
@@ -171,13 +171,17 @@ One sample's journey:
 2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
    `AudioSpectrumGenerator` peeks the newest window, applies a Hann window, runs
    an `rustfft` forward DFT, and **bins the output into log-spaced frequency
-   buckets** so that every octave gets equal screen space. It keeps power
-   (amplitude²), which Parseval's theorem preserves, and interpolates power —
-   not amplitude. Each DFT bin spreads its power as a triangle in log frequency,
-   peaking at that bin and reaching zero at its two neighbours, so the grid stays
-   filled at the low end, where it is tens of bins to a DFT bin, and the triangle
-   collapses to a linear split between the two nearest bins at the top, where the
-   grid is the coarser of the two. **A bin holds power, not power per octave.**
+   buckets** so that every octave gets equal screen space. It bins power
+   (amplitude²), which Parseval's theorem preserves and which adds across
+   incoherent components, and interpolates power — not amplitude. Each DFT bin
+   spreads its power as a triangle in log frequency, peaking at that bin and
+   reaching zero at its two neighbours, so the grid stays filled at the low end,
+   where it is tens of bins to a DFT bin, and the triangle collapses to a linear
+   split between the two nearest bins at the top, where the grid is the coarser
+   of the two. **A bin sums power, not power per octave.** The square root comes
+   last, once per bin, so the generator emits amplitude and every transform after
+   it works in that unit: a partial at half the amplitude of another is drawn at
+   half its value, not a quarter.
    Spreading a tone over the ±1 DFT bin the window resolves keeps the total but
    lowers the peak, and it lowers it most at the bottom of the range where that
    width is widest — so a bass note is drawn dimmer than a treble note of the
@@ -210,10 +214,10 @@ and each stage changes both. What follows is the contract as the code stands.
 
 | Stage | Output units | Range |
 |---|---|---|
-| `AudioSpectrumGenerator` | power (amplitude², per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
-| `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both total power and range |
+| `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
+| `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
 | `VolumeNormalizer` | fraction of a running peak | nominally `[0, ~1]`, **not clamped** — a transient louder than the peak has caught up with exceeds 1 |
-| `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 6]` at the default `min_level` of 1e-6 |
+| `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 3]` at the default `min_level` of 1e-3 (−60 dB in amplitude) |
 | `SpiralGenerator` (consumer) | — | **assumes** `[0, 1]`: `0.2 + 0.8 * spectrum[i].min(1.0)` |
 
 Two rules follow, and a new transform has to answer both:
@@ -229,7 +233,7 @@ roughly what the consumer expects:
 
 - The generator alone emits values around 0.06, so with no transforms the spiral
   renders nearly black.
-- `DecibelConverter` emits up to 6.0. After the normalizer everything above 0.1
+- `DecibelConverter` emits up to 3.0. After the normalizer everything above 0.1
   saturates to white; on its own, everything above 1.0 does. This is very likely
   why `Config::default` has it commented out rather than deleted.
 
@@ -437,11 +441,11 @@ the stage in the running chain, and the row goes on reporting what the stage is
 set to. The switch's state lives on the config entry, so it opens on what the
 config says and a chain rebuilt from the config keeps the same stages bypassed.
 Only the diffuser qualifies today. The volume normalizer is the stage that
-rescales raw power into the `[0, 1]` the spiral consumes, so bypassing it leaves
+rescales raw amplitude into the `[0, 1]` the spiral consumes, so bypassing it leaves
 every value on the black floor — see
 [§ Value ranges along the chain](#value-ranges-along-the-chain). The decibel
 converter is withheld for its own reason: without it the spectrum is linear in
-power, which reads as a few spikes and nothing else.
+amplitude, which reads as a few spikes and nothing else.
 
 The spectrum stage exposes two sliders, both in units a listener can read
 without the sample rate: the **Window** in milliseconds, which is the audio

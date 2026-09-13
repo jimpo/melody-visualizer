@@ -257,16 +257,16 @@ impl StageId {
 /// Whether a transform's row carries a switch.
 ///
 /// The decibel converter has none: without it the spectrum is linear in
-/// power, which reads as a few spikes and nothing else, so it is not optional.
+/// amplitude, which reads as a few spikes and nothing else, so it is not optional.
 ///
 /// The volume normalizer has none either: it is the stage that rescales raw
-/// power into the `[0, 1]` the spiral consumes, so bypassing it leaves raw
-/// power in the buffer and blanks the display. Measured on a full-scale 440 Hz
-/// sine through the default chain, the output spectrum peaks at 1.0 with the
-/// normalizer on and 0.0142 with it bypassed, which `SpiralGenerator` maps to
-/// about 0.21 — its black floor. See ARCHITECTURE.md § *Value ranges along the
-/// chain*; a chain whose output range no longer depends on one stage makes the
-/// switch safe to offer, which is JIM-264.
+/// amplitude into the `[0, 1]` the spiral consumes, so bypassing it leaves raw
+/// amplitude in the buffer and blanks the display. Measured on a full-scale
+/// 440 Hz sine through the default chain, the output spectrum peaks at 1.0 with
+/// the normalizer on and about 0.065 with it bypassed, which `SpiralGenerator`
+/// maps to about 0.25 — barely above its black floor. See ARCHITECTURE.md
+/// § *Value ranges along the chain*; a chain whose output range no longer
+/// depends on one stage makes the switch safe to offer, which is JIM-264.
 fn transform_switchable(entry: &TransformEntry) -> Switchable {
 	match entry.config {
 		SpectrumTransformConfig::DecibelConverter(_)

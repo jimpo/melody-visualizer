@@ -170,18 +170,22 @@ mod tests {
 	}
 
 	#[test]
-	fn total_power_is_preserved() {
+	fn the_sum_of_the_values_is_preserved() {
 		let mut diffuser = diffuser(1.0, 129);
+		// The values are amplitude, so this is not their power: spreading them
+		// linearly spreads less power than spreading power would, which a
+		// display does not show.
+		//
 		// Away from the ends, where the window would hang off the edge and the
-		// power under it would be dropped.
+		// values under it would be dropped.
 		let mut values = vec![0.0; 129];
 		for (offset, value) in values[40..90].iter_mut().enumerate() {
 			*value = (offset % 7) as f64;
 		}
-		let power = values.iter().sum::<f64>();
+		let sum = values.iter().sum::<f64>();
 
 		let output = diffuser.transform(spectrum(&values));
 
-		assert!((output.values().iter().sum::<f64>() - power).abs() < 1e-12);
+		assert!((output.values().iter().sum::<f64>() - sum).abs() < 1e-12);
 	}
 }

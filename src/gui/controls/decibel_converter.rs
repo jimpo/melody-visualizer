@@ -13,9 +13,10 @@ const MAX_DECADES: f64 = 10.0;
 
 /// The floor in the words the stage row and the control both use.
 ///
+/// The spectrum holds amplitude, so a level is 20·log₁₀ of it in decibels.
 /// Typeset with a real minus sign, since the value is nearly always negative.
 pub fn floor_text(min_level: f64) -> String {
-	format!("{:.0} dB", 10.0 * min_level.log10()).replace('-', "−")
+	format!("{:.0} dB", 20.0 * min_level.log10()).replace('-', "−")
 }
 
 pub fn new(

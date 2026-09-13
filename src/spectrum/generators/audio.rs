@@ -167,7 +167,7 @@ impl WindowShape {
 }
 
 /// The DFT half of the generator: windowing and the transform, then folding the
-/// output into log-spaced power bins.
+/// output into log-spaced amplitude bins.
 ///
 /// The two steps are separate because only one of them is ours — the transform
 /// is `rustfft`'s — and they convert different things: samples to complex bins,
@@ -224,7 +224,12 @@ impl Analyzer {
 		self.dft.process(&mut self.dft_window);
 	}
 
-	/// Folds the DFT output into `buffer`'s log-spaced power bins.
+	/// Folds the DFT output into `buffer`'s log-spaced bins, as amplitude.
+	///
+	/// The binning splits and sums power, because the powers of incoherent
+	/// components add and their amplitudes do not. Each bin takes the square
+	/// root of its power last, so a partial at half the amplitude of another is
+	/// drawn at half its value.
 	///
 	/// Each DFT bin spreads its power as a triangle in log frequency, peaking at
 	/// the bin's own frequency and reaching zero at its two neighbours'. Every
@@ -234,7 +239,7 @@ impl Analyzer {
 	/// output bin, and the same arithmetic gives the two nearest bins a linear
 	/// split of the power.
 	///
-	/// A bin therefore holds power, not power per octave, and one DFT bin is
+	/// A bin therefore sums power, not power per octave, and one DFT bin is
 	/// worth tens of output bins at 200 Hz and less than one at 20 kHz. So a
 	/// tone the analysis cannot place better than ±20 Hz is drawn as the wide,
 	/// low hump that width deserves, and the same tone an octave up as a narrow,
@@ -302,6 +307,12 @@ impl Analyzer {
 					current = next;
 				}
 			}
+
+			// The second differences are never negative, but rounding can leave
+			// a bin clear of every triangle a hair below zero.
+			spectrum
+				.iter_mut()
+				.for_each(|val| *val = val.max(0.0).sqrt());
 		})
 	}
 }
@@ -339,8 +350,9 @@ fn triangle_moment(x: f64, left: f64, peak: f64, right: f64) -> f64 {
 }
 
 // Parseval's theorem states that power, proportional to square of amplitude, is preserved
-// under FFT. Therefore, we need the interpolations to split power, not amplitude. The division
-// by N on the coefficient appears in the IFFT formula.
+// under FFT. Therefore, we need the interpolations to split power, not amplitude; `fill_bins`
+// takes the square root once the power is binned. The division by N on the coefficient appears
+// in the IFFT formula.
 fn dft_out_to_val(dft_out: &Complex64, n: usize) -> f64 {
 	(dft_out / n as f64).norm_sqr()
 }
@@ -454,7 +466,12 @@ mod tests {
 			})
 			.sum::<f64>()
 			/ WINDOW as f64;
-		let binned_power = spectrum.values().iter().sum::<f64>();
+		// The bins hold amplitude, so their power is the sum of their squares.
+		let binned_power = spectrum
+			.values()
+			.iter()
+			.map(|value| value * value)
+			.sum::<f64>();
 
 		// Half, because the DFT of a real signal is symmetric about the Nyquist
 		// frequency and the binning loop takes only the lower half. Counting the
@@ -480,14 +497,19 @@ mod tests {
 		let signal = sine_wave(&[(frequency, 1.0)], SAMPLE_RATE, WINDOW);
 		let spectrum = generator(&signal).generate(SpectrumBuffer::new(params));
 
-		let values = spectrum.values();
-		let lower_share = values[0] / (values[0] + values[1]);
+		// The bins hold amplitude; the split is of power.
+		let power: Vec<f64> = spectrum
+			.values()
+			.iter()
+			.map(|value| value * value)
+			.collect();
+		let lower_share = power[0] / (power[0] + power[1]);
 		assert!(
 			(lower_share - 0.75).abs() < 0.05,
 			"the nearer bin should take three quarters of the power, took {lower_share}",
 		);
 		assert!(
-			values[2] < 1e-9,
+			power[2] < 1e-9,
 			"no power belongs two octaves above the tone",
 		);
 	}
@@ -499,7 +521,11 @@ mod tests {
 		// A constant signal carries its power at DC, which the binning loop
 		// skips because zero has no logarithm. What is left is the window's own
 		// numerical leakage, orders of magnitude below the signal.
-		let binned_power = spectrum.values().iter().sum::<f64>();
+		let binned_power = spectrum
+			.values()
+			.iter()
+			.map(|value| value * value)
+			.sum::<f64>();
 		let signal_power = 1.0;
 		assert!(
 			binned_power / signal_power < 1e-9,

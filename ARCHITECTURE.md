@@ -131,7 +131,7 @@ The pipeline is paced by two independent timers. Do not conflate them.
 
 | Clock | Where | Rate | Drives |
 |---|---|---|---|
-| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — the part of a DFT window that `audio::Config::overlap` leaves, so ~21 ms at 2048 samples / 48 kHz and half of it overlapping | How often a new `Spectrum` is produced |
+| **Spectrum tick** | Spectrum thread `select!` arm (`futures_timer::Delay`) | `generator.interval()` — one over `audio::Config::update_rate`, so 20 ms at the default 50 / sec, whatever the window | How often a new `Spectrum` is produced |
 | **Frame timer** | GTK thread (`glib::timeout_add_local`) | 40 ms (25 fps) | How often a frame is rendered and repainted |
 
 The spectrum thread is the **only** timed producer. The graphic thread has no
@@ -164,8 +164,8 @@ Nothing in the pipeline queues unbounded work.
 One sample's journey:
 
 1. **Capture** — `audio/`. `AudioProcessHandler::process` writes the input
-   port's `f32` samples into a JACK `RingBuffer` (128 KiB, lock-free SPSC) as
-   native-endian bytes through a `SampleWriter`, and bumps that writer's atomic
+   port's `f32` samples into a JACK `RingBuffer` (lock-free SPSC, sized for the
+   longest window plus the slowest hop at 192 kHz) as native-endian bytes through a `SampleWriter`, and bumps that writer's atomic
    overrun count by whatever did not fit. Nothing else happens on the RT thread.
    The matching `SampleReader` carries both ends to the spectrum thread.
 2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
@@ -246,9 +246,9 @@ written down, not a gap in the writing.
 | `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
 | `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
-| `Config::samples_per_octave` | 12..360 | The **Pitch resolution** slider in `gui/controls/spectrum.rs` moves it, in the 1..30 bins a semitone divides into. The quadratic cost driver — see the cliff in DEVELOPMENT.md |
-| `audio::Config::dft_window_size` | 128..4096 | Derived rather than set: `audio::dft_window_size` picks the shortest power of two whose bins are as close together as the grid's are in the octave below Nyquist. With the overlap, sets the tick rate through `interval()` |
-| `audio::Config::overlap` | `0..0.75` | The **Update rate** slider in `gui/controls/spectrum.rs` moves the overlap and reads out the rate it produces. Beyond 0.75 the rate climbs steeply for ever less new audio per tick |
+| `Config::samples_per_octave` | 180 by default | The density of the display grid the DFT output is folded onto, not a resolution: no control moves it. The quadratic cost driver — see the cliff in DEVELOPMENT.md |
+| `audio::Config::window_ms` | `10..1000` | The **Window** slider in `gui/controls/spectrum.rs`. The generator sizes the DFT to the milliseconds times the live sample rate, rounded, and re-plans when JACK changes the rate. The ring is sized for `audio::MAX_WINDOW_MS` |
+| `audio::Config::update_rate` | `1..100` / sec | The **Update rate** slider in `gui/controls/spectrum.rs`. Sets the tick through `interval()`, independent of the window; a hop longer than the window skips audio. The ring is sized for the hop at `audio::MIN_UPDATE_RATE` |
 
 ### JACK client and port wiring
 
@@ -442,6 +442,14 @@ every value on the black floor — see
 [§ Value ranges along the chain](#value-ranges-along-the-chain). The decibel
 converter is withheld for its own reason: without it the spectrum is linear in
 power, which reads as a few spikes and nothing else.
+
+The spectrum stage exposes two sliders, both in units a listener can read
+without the sample rate: the **Window** in milliseconds, which is the audio
+each spectrum analyses and so both its frequency resolution and its latency,
+and the **Update rate** in spectra per second. Neither reads out hertz, bins or
+samples. The display grid's density, `samples_per_octave`, is not a control: it
+is constant per octave and says nothing about how well pitches separate, which
+the window alone decides.
 
 The stage bodies are built from a small widget vocabulary in `gui/controls/`:
 a captioned slider for each transform, a boxed list for the ports, a row of

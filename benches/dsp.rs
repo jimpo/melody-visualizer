@@ -42,8 +42,6 @@ use melody_visualizer::test_support::{renderer, sample_reader, seconds_per_call}
 use melody_visualizer::traits::Configurable;
 
 const SAMPLE_RATE: u32 = 48_000;
-/// The overlap the default configuration analyses at.
-const OVERLAP: f64 = 0.5;
 /// Repetitions the summary averages one stage over.
 const WARMUP: usize = 50;
 const RUNS: usize = 500;
@@ -70,13 +68,13 @@ fn grid(bins: usize) -> Arc<SpectrumParams> {
 ///
 /// The reader peeks rather than consumes, so it never runs dry: the stage
 /// downstream of it is what the measurement is limited by.
-fn generator(window: usize) -> AudioSpectrumGenerator {
+fn generator(window_ms: u32) -> AudioSpectrumGenerator {
 	AudioSpectrumGenerator::new(
 		audio::Config {
-			dft_window_size: window,
-			overlap: OVERLAP,
+			window_ms,
+			..audio::Config::default()
 		},
-		sample_reader(&signal(window)),
+		sample_reader(&signal(audio::window_samples(window_ms, SAMPLE_RATE))),
 		SAMPLE_RATE,
 	)
 }
@@ -98,7 +96,7 @@ fn analyzer(window: usize) -> Analyzer {
 fn spectrum(bins: usize) -> Spectrum {
 	let params = grid(bins);
 	let mut renderer = SpectrumRenderer::new();
-	renderer.set_generator(Box::new(generator(2048)));
+	renderer.set_generator(Box::new(generator(audio::Config::default().window_ms)));
 	*renderer.transforms_mut() = Config::default().spectrum_transforms.into_iter().collect();
 	renderer.render(SpectrumBuffer::new(params))
 }
@@ -140,7 +138,8 @@ fn transforms(bins: usize) -> Vec<(String, Box<dyn SpectrumTransform>)> {
 
 fn bench_generator(criterion: &mut Criterion) {
 	let mut group = criterion.benchmark_group("generator");
-	for window in [512, 1024, 2048, 4096, 8192] {
+	for window_ms in [10, 50, 200, audio::MAX_WINDOW_MS] {
+		let window = audio::window_samples(window_ms, SAMPLE_RATE);
 		let grid = grid(DEFAULT_BINS);
 
 		// The DFT converts samples, so it is measured in them.
@@ -163,7 +162,7 @@ fn bench_generator(criterion: &mut Criterion) {
 			});
 		});
 		group.bench_function(BenchmarkId::new("spectrum", window), |bencher| {
-			let mut generator = generator(window);
+			let mut generator = generator(window_ms);
 			let mut buffer = SpectrumBuffer::new(grid.clone());
 			bencher.iter(|| {
 				buffer = generator
@@ -215,7 +214,7 @@ fn bench_chain(criterion: &mut Criterion) {
 	let mut group = criterion.benchmark_group("chain");
 	group.throughput(Throughput::Elements(1));
 	group.bench_function("default", |bencher| {
-		let (mut renderer, mut buffer) = default_chain();
+		let (mut renderer, mut buffer) = chain(audio::Config::default().window_ms);
 		bencher.iter(|| {
 			buffer = renderer.render(std::mem::take(&mut buffer)).into_buffer();
 		});
@@ -223,33 +222,31 @@ fn bench_chain(criterion: &mut Criterion) {
 	group.finish();
 }
 
-/// The chain the app runs, and a buffer to recycle through it.
-fn default_chain() -> (SpectrumRenderer, SpectrumBuffer) {
-	let config = Config::default();
-	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
-	let signal = signal(generator_config.dft_window_size);
+/// The chain the app runs at a `window_ms` window, and a buffer to recycle
+/// through it.
+fn chain(window_ms: u32) -> (SpectrumRenderer, SpectrumBuffer) {
+	let mut config = Config::default();
+	let SpectrumGeneratorConfig::Audio(generator_config) = &mut config.spectrum_generator;
+	generator_config.window_ms = window_ms;
+	let signal = signal(audio::window_samples(window_ms, SAMPLE_RATE));
 	let renderer = renderer(&config, sample_reader(&signal), SAMPLE_RATE);
 	let buffer = SpectrumBuffer::new(Arc::new(config.spectrum_params()));
 	(renderer, buffer)
 }
 
 /// Print each stage's capacity, the capacity of the whole chain, and how much of
-/// the tick budget the chain uses.
+/// the tick budget the chain uses, at a `window_ms` window.
 ///
 /// The composed capacity is the reciprocal sum, because the stages share one
-/// thread. Headroom is against the tick rate the configured window implies, not
-/// a fixed constant: a transform's cost depends on the bin count, but the rate
-/// demanded of it is `1 / interval`, which scales with the window.
-fn print_summary() {
-	let config = Config::default();
+/// thread. Headroom is against the configured update rate: the transforms'
+/// cost depends on the bin count and the generator's on the window, but the
+/// rate demanded of both is `1 / interval`.
+fn print_summary(window_ms: u32) {
 	let grid = grid(DEFAULT_BINS);
 
 	let mut stages = Vec::new();
 
-	let mut generator = {
-		let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
-		generator(generator_config.dft_window_size)
-	};
+	let mut generator = generator(window_ms);
 	let tick = generator.interval();
 	let mut buffer = SpectrumBuffer::new(grid.clone());
 	stages.push((
@@ -274,7 +271,7 @@ fn print_summary() {
 		));
 	}
 
-	let (mut renderer, mut chain_buffer) = default_chain();
+	let (mut renderer, mut chain_buffer) = chain(window_ms);
 	let composed = seconds_per_call(WARMUP, RUNS, || {
 		chain_buffer = renderer
 			.render(std::mem::take(&mut chain_buffer))
@@ -284,7 +281,8 @@ fn print_summary() {
 	let required = 1.0 / tick.as_secs_f64();
 	println!();
 	println!(
-		"DSP throughput: {} bins, {} Hz, {:.3} ms per tick ({:.1} spectra/s required)",
+		"DSP throughput: {} ms window, {} bins, {} Hz, {:.3} ms per tick ({:.1} spectra/s required)",
+		window_ms,
 		DEFAULT_BINS,
 		SAMPLE_RATE,
 		tick.as_secs_f64() * 1000.0,
@@ -333,5 +331,6 @@ fn main() {
 	bench_chain(&mut criterion);
 	criterion.final_summary();
 
-	print_summary();
+	print_summary(audio::Config::default().window_ms);
+	print_summary(audio::MAX_WINDOW_MS);
 }

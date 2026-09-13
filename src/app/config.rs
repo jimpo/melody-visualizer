@@ -211,17 +211,13 @@ impl Default for Config {
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];
-		// A fifteenth of a semitone, which the "Pitch resolution" control in
-		// `gui/controls/spectrum.rs` moves and the window follows.
-		let samples_per_octave = 180;
 		Config {
 			min_freq: 200.0,   // Low-end of human hearing
 			max_freq: 20000.0, // High-end of human hearing
-			samples_per_octave,
-			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config {
-				dft_window_size: audio::dft_window_size(samples_per_octave),
-				overlap: 0.5,
-			}),
+			// A fifteenth of a semitone. The density of the display grid, which
+			// no control moves.
+			samples_per_octave: 180,
+			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config::default()),
 			spectrum_transforms: transforms
 				.into_iter()
 				.enumerate()
@@ -376,29 +372,39 @@ mod tests {
 
 	#[test]
 	fn a_config_update_reaches_a_running_generator() {
-		let config = audio::Config {
-			dft_window_size: 2048,
-			overlap: 0.5,
-		};
+		let config = audio::Config::default();
 		let mut generator = AudioSpectrumGenerator::new(config.clone(), sample_reader(&[]), 48_000);
-		let half_overlapped = generator.interval();
+		let before = generator.interval();
 
 		SpectrumGeneratorConfig::Audio(audio::Config {
-			overlap: 0.75,
+			update_rate: config.update_rate * 2,
 			..config
 		})
 		.update(&mut generator)
 		.expect("the generator is of the kind the config names");
 
-		// Three quarters of a window overlapping leaves half the hop that half
-		// of one does, so the generator ticks twice as often.
 		let ticks = generator.interval().as_secs_f64() * 2.0;
 		assert!(
-			(ticks - half_overlapped.as_secs_f64()).abs() < 1e-6,
+			(ticks - before.as_secs_f64()).abs() < 1e-6,
 			"the generator ticks every {} s, expected {} s",
 			generator.interval().as_secs_f64(),
-			half_overlapped.as_secs_f64() / 2.0,
+			before.as_secs_f64() / 2.0,
 		);
+	}
+
+	#[test]
+	fn a_generator_section_missing_its_fields_loads_their_defaults() {
+		let directory = tempdir().unwrap();
+		let path = directory.path().join("config.toml");
+		let mut serialized = toml::to_string_pretty(&Config::default()).unwrap();
+		// State whose generator section holds none of the fields it reads.
+		serialized = serialized
+			.replace("window_ms = 50", "dft_window_size = 2048")
+			.replace("update_rate = 50", "overlap = 0.5");
+		assert!(serialized.contains("dft_window_size"));
+		fs::write(&path, serialized).unwrap();
+
+		assert_eq!(Config::load_from(&path).unwrap(), Config::default());
 	}
 
 	#[test]

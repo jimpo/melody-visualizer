@@ -25,7 +25,7 @@ use melody_visualizer::audio::source::{JackSource, PortName, SourceType, events:
 use melody_visualizer::audio::{AudioSource, CLIENT_NAME, SampleReader};
 use melody_visualizer::test_support::jackd::{RampSource, Server};
 
-/// The capture ring the app itself allocates: about 0.7 s of audio at 48 kHz.
+/// A capture ring of about 0.7 s of audio at 48 kHz.
 const RING_BYTES: usize = 128 * 1024;
 
 /// A ring far too small for one period, so that it overruns on every cycle.

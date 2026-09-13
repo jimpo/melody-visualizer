@@ -18,6 +18,7 @@ use crate::spectrum::{
 	transforms::{
 		decibel_converter::DecibelConverter,
 		diffuser::{self, Diffuser},
+		harmonic_summation::{self, HarmonicSummation},
 		volume_normalizer::{self, VolumeNormalizer},
 	},
 };
@@ -198,6 +199,7 @@ define_spectrum_transform_config! {
 	pub enum SpectrumTransformConfig {
 		DecibelConverter,
 		Diffuser,
+		HarmonicSummation,
 		VolumeNormalizer,
 	}
 }
@@ -208,6 +210,10 @@ impl Default for Config {
 			// SpectrumTransformConfig::DecibelConverter(decibel_converter::Config {
 			// 	min_level: 1.0e-3,
 			// }),
+			SpectrumTransformConfig::HarmonicSummation(harmonic_summation::Config {
+				decay: 0.8,
+				harmonics: 8,
+			}),
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];

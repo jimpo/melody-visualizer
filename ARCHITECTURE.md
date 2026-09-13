@@ -188,8 +188,14 @@ One sample's journey:
    same energy. Giving the bass real resolution rather than a wide hump is what
    a longer window buys, not a change to the binning.
 3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through a
-   `TransformChain`: `Diffuser` (spatial smoothing), `VolumeNormalizer`
-   (auto-gain), `DecibelConverter` (log scaling). Order is position in the
+   `TransformChain`: `HarmonicSummation` (pitch salience), `Diffuser` (spatial
+   smoothing), `VolumeNormalizer` (auto-gain), `DecibelConverter` (log
+   scaling). The harmonic summation scores each bin by its own value plus a
+   weight of `decay^(h−1)` of the value at `h` times its frequency, for `h` up
+   to `harmonics`. The fundamental collects its whole series and a harmonic
+   collects only its own sparse one, so the note, not its overtones, lights up
+   brightest. On the log grid a multiple of frequency is a constant index
+   shift, `round(bins_per_octave · log2(h))`, derived in `set_params`. Order is position in the
    chain, and both order and membership come from `Config`. What the values
    mean at each step is *Value ranges along the chain*, below.
 4. **Accumulate** — `graphic/renderer.rs`. The graphic thread pushes the spectrum
@@ -215,6 +221,7 @@ and each stage changes both. What follows is the contract as the code stands.
 | Stage | Output units | Range |
 |---|---|---|
 | `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
+| `HarmonicSummation` | amplitude, weighted sum | rescales: `[0, max · Σ decay^(h−1)]`, up to about 4.2× the input's peak at the defaults. A partial whose harmonics fall off the top of the grid keeps only its own value |
 | `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
 | `VolumeNormalizer` | fraction of a running peak | nominally `[0, ~1]`, **not clamped** — a transient louder than the peak has caught up with exceeds 1 |
 | `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 3]` at the default `min_level` of 1e-3 (−60 dB in amplitude) |
@@ -223,7 +230,8 @@ and each stage changes both. What follows is the contract as the code stands.
 Two rules follow, and a new transform has to answer both:
 
 1. **A transform declares whether it preserves the range or rescales it.** The
-   diffuser preserves; the normalizer and the decibel converter rescale.
+   diffuser preserves; the harmonic summation, the normalizer and the decibel
+   converter rescale.
 2. **The chain's last stage owns the output range**, because the consumer
    requires `[0, 1]` and clamps only from above. A negative value would pass
    straight into HSV; nothing emits one today and nothing forbids one either.
@@ -247,6 +255,8 @@ written down, not a gap in the writing.
 | Parameter | Bound | Note |
 |---|---|---|
 | `Diffuser::width` | `0..10` semitones | The slider in `gui/controls/diffuser.rs` moves in semitones, so the field spans `0..10/12` octaves. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
+| `HarmonicSummation::harmonics` | `1..16` | The fundamental counts as one, so 1 is the identity. Cost is O(bins × harmonics) |
+| `HarmonicSummation::decay` | `0..1` | The weight of each harmonic against the one below it. 0 is the identity |
 | `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
 | `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
@@ -315,7 +325,7 @@ a slider drag would otherwise cost, once per frame for as long as the drag lasts
 inside the render closure, and receives the drawn `Graphic` back.
 
 `SpectrumParams` is shared as an `Arc` and compared with `Arc::ptr_eq`. A pointer
-mismatch means the parameters changed, so caches (the diffuser window, the
+mismatch means the parameters changed, so caches (the diffuser window, the harmonic shifts, the
 spiral's pixel map, the graphic thread's history) rebuild themselves.
 This is how a parameter change propagates without an explicit invalidation
 message.
@@ -440,7 +450,7 @@ that means *enabled*: off dims the row, makes the body insensitive and bypasses
 the stage in the running chain, and the row goes on reporting what the stage is
 set to. The switch's state lives on the config entry, so it opens on what the
 config says and a chain rebuilt from the config keeps the same stages bypassed.
-Only the diffuser qualifies today. The volume normalizer is the stage that
+The harmonic summation and the diffuser qualify. The volume normalizer is the stage that
 rescales raw amplitude into the `[0, 1]` the spiral consumes, so bypassing it leaves
 every value on the black floor — see
 [§ Value ranges along the chain](#value-ranges-along-the-chain). The decibel

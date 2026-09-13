@@ -13,7 +13,7 @@ use std::sync::Arc;
 use melody_visualizer::app::Config;
 use melody_visualizer::app::config::{SpectrumGeneratorConfig, SpectrumTransformConfig};
 use melody_visualizer::spectrum::generators::audio;
-use melody_visualizer::spectrum::{Spectrum, SpectrumBuffer};
+use melody_visualizer::spectrum::{Spectrum, SpectrumBuffer, TransformId};
 use melody_visualizer::test_support::{renderer, sample_reader, sine_wave};
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -22,6 +22,28 @@ const SAMPLE_RATE: u32 = 48_000;
 /// The quietest note of the chord reaches about 0.27, and the leakage between
 /// the notes stays below 0.01.
 const PEAK_THRESHOLD: f64 = 0.05;
+
+/// The id of the first stage of the default chain whose config `is_kind`
+/// accepts.
+///
+/// Found by kind rather than by position, since the stages ahead of it in
+/// `Config::default` change.
+fn stage_id(config: &Config, is_kind: fn(&SpectrumTransformConfig) -> bool) -> TransformId {
+	config
+		.spectrum_transforms
+		.iter()
+		.find(|entry| is_kind(&entry.config))
+		.expect("the default chain holds the stage")
+		.id
+}
+
+/// The index of the largest value.
+fn loudest_index(spectrum: &Spectrum) -> usize {
+	let values = spectrum.values();
+	(0..values.len())
+		.max_by(|&a, &b| values[a].total_cmp(&values[b]))
+		.expect("a spectrum has bins")
+}
 
 /// The indices of the local maxima above [`PEAK_THRESHOLD`].
 fn peak_indices(spectrum: &Spectrum) -> Vec<usize> {
@@ -52,7 +74,16 @@ fn band_amplitude(spectrum: &Spectrum, frequency: f64) -> f64 {
 
 #[test]
 fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
-	let config = Config::default();
+	// Notes an octave apart are a harmonic series of the lowest, which the
+	// harmonic summation folds into it. Pinned with it bypassed, so the chord
+	// tests the rest of the chain.
+	let mut config = Config::default();
+	let harmonic_summation = stage_id(&config, |config| {
+		matches!(config, SpectrumTransformConfig::HarmonicSummation(_))
+	});
+	config
+		.set_transform_enabled(harmonic_summation, false)
+		.unwrap();
 	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
 	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
 
@@ -112,12 +143,9 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	// Pinned with the diffuser bypassed: it spreads amplitude linearly, which
 	// takes more of the power of a narrow treble peak than of a wide bass hump,
 	// and so moves these ratios by up to a fifth.
-	let diffuser = config
-		.spectrum_transforms
-		.iter()
-		.find(|entry| matches!(entry.config, SpectrumTransformConfig::Diffuser(_)))
-		.expect("the default chain holds a diffuser")
-		.id;
+	let diffuser = stage_id(&config, |config| {
+		matches!(config, SpectrumTransformConfig::Diffuser(_))
+	});
 	let mut undiffused = config.clone();
 	undiffused.set_transform_enabled(diffuser, false).unwrap();
 	let undiffused = renderer(&undiffused, sample_reader(&signal), SAMPLE_RATE)
@@ -168,14 +196,10 @@ fn a_switched_off_stage_is_the_same_as_no_stage_at_all() {
 	let params = Arc::new(config.spectrum_params());
 
 	// The diffuser spreads a partial across neighbouring bins, so leaving it out
-	// is a difference the output shows. It is found by kind rather than by
-	// position, since the stages ahead of it in `Config::default` change.
-	let diffuser = config
-		.spectrum_transforms
-		.iter()
-		.find(|entry| matches!(entry.config, SpectrumTransformConfig::Diffuser(_)))
-		.expect("the default chain holds a diffuser")
-		.id;
+	// is a difference the output shows.
+	let diffuser = stage_id(&config, |config| {
+		matches!(config, SpectrumTransformConfig::Diffuser(_))
+	});
 
 	let mut bypassed = config.clone();
 	bypassed.set_transform_enabled(diffuser, false).unwrap();
@@ -192,4 +216,51 @@ fn a_switched_off_stage_is_the_same_as_no_stage_at_all() {
 
 	assert_eq!(render(&bypassed).values(), render(&removed).values());
 	assert_ne!(render(&bypassed).values(), render(&config).values());
+}
+
+#[test]
+fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
+	let config = Config::default();
+	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
+
+	// A brass-like note: the second harmonic carries twice the fundamental's
+	// amplitude. Every partial sits on a DFT bin centre, as in the chord above.
+	let dft_bin = SAMPLE_RATE as f64 / window as f64;
+	let fundamental = 22.0 * dft_bin;
+	let note = [
+		(fundamental, 0.5),
+		(2.0 * fundamental, 1.0),
+		(3.0 * fundamental, 0.6),
+		(4.0 * fundamental, 0.4),
+	];
+	let signal = sine_wave(&note, SAMPLE_RATE, window);
+	let params = Arc::new(config.spectrum_params());
+	let render = |config| {
+		renderer(config, sample_reader(&signal), SAMPLE_RATE)
+			.render(SpectrumBuffer::new(params.clone()))
+	};
+	let bin_width = params.log_frequencies()[1] - params.log_frequencies()[0];
+	let bins_from = |index: usize, frequency: f64| {
+		((params.log_frequencies()[index] - frequency.log2()) / bin_width).abs()
+	};
+
+	let summed = render(&config);
+	let loudest = loudest_index(&summed);
+	assert!(
+		bins_from(loudest, fundamental) <= 1.0,
+		"the brightest bin is {} Hz, expected the fundamental at {fundamental} Hz",
+		params.frequencies()[loudest],
+	);
+
+	// Without the stage the spiral lights the second harmonic instead.
+	let mut unsummed = config.clone();
+	let harmonic_summation = stage_id(&config, |config| {
+		matches!(config, SpectrumTransformConfig::HarmonicSummation(_))
+	});
+	unsummed
+		.set_transform_enabled(harmonic_summation, false)
+		.unwrap();
+	let loudest = loudest_index(&render(&unsummed));
+	assert!(bins_from(loudest, 2.0 * fundamental) <= 1.0);
 }

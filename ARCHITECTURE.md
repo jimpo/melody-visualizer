@@ -429,8 +429,9 @@ task is the only place the audio module and PubSub meet, which is what keeps
 ### Lifecycle
 
 **Startup** (`gui/window.rs::start`): `block_on(AppController::new())` loads the
-config from the user's XDG state directory, spawns both renderer threads and the
-JACK client, then pushes that config to them. The window is built, the two panes
+config from the user's XDG state directory, adds any default stage the saved
+chain lacks (state saved before that stage existed), spawns both renderer
+threads and the JACK client, then pushes that config to them. The window is built, the two panes
 are populated, and CSS is applied.
 
 The window is a header bar over a `GtkPaned`: the visualization on the left, the

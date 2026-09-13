@@ -262,7 +262,41 @@ impl Config {
 			Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Self::default()),
 			Err(err) => return Err(Error::ConfigIo(err)),
 		};
-		toml::from_str(&serialized).map_err(Error::ConfigParse)
+		let mut config: Self = toml::from_str(&serialized).map_err(Error::ConfigParse)?;
+		config.add_missing_default_transforms();
+		Ok(config)
+	}
+
+	/// Inserts each default stage whose kind the chain lacks, at its default
+	/// position, with an id no entry holds.
+	///
+	/// No control removes a stage, so a missing kind means the state was saved
+	/// before that stage joined the default chain.
+	fn add_missing_default_transforms(&mut self) {
+		for (index, default) in Self::default().spectrum_transforms.into_iter().enumerate() {
+			let kind = std::mem::discriminant(&default.config);
+			if self
+				.spectrum_transforms
+				.iter()
+				.any(|entry| std::mem::discriminant(&entry.config) == kind)
+			{
+				continue;
+			}
+			let id = self
+				.spectrum_transforms
+				.iter()
+				.map(|entry| entry.id.0 + 1)
+				.max()
+				.unwrap_or(0);
+			let index = index.min(self.spectrum_transforms.len());
+			self.spectrum_transforms.insert(
+				index,
+				TransformEntry {
+					id: TransformId(id),
+					..default
+				},
+			);
+		}
 	}
 
 	fn save_to(&self, path: &Path) -> Result<(), Error> {
@@ -411,6 +445,23 @@ mod tests {
 		fs::write(&path, serialized).unwrap();
 
 		assert_eq!(Config::load_from(&path).unwrap(), Config::default());
+	}
+
+	#[test]
+	fn state_saved_before_a_stage_joined_the_defaults_gains_that_stage() {
+		let directory = tempdir().unwrap();
+		let path = directory.path().join("config.toml");
+		let mut config = Config::default();
+		config.spectrum_transforms.remove(0);
+		config.spectrum_transforms[0].enabled = false;
+		config.save_to(&path).unwrap();
+
+		let loaded = Config::load_from(&path).unwrap();
+
+		let mut expected = Config::default();
+		expected.spectrum_transforms[0].id = TransformId(3);
+		expected.spectrum_transforms[1].enabled = false;
+		assert_eq!(loaded, expected);
 	}
 
 	#[test]

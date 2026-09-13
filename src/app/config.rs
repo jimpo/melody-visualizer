@@ -462,7 +462,8 @@ mod tests {
 		let loaded = Config::load_from(&path).unwrap();
 
 		let mut expected = Config::default();
-		expected.spectrum_transforms[0].id = TransformId(3);
+		// The restored stage takes the id after the highest the saved chain holds.
+		expected.spectrum_transforms[0].id = TransformId(expected.spectrum_transforms.len() as u64);
 		expected.spectrum_transforms[1].enabled = false;
 		assert_eq!(loaded, expected);
 	}

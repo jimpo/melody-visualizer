@@ -1,9 +1,11 @@
 pub mod decibel_converter;
 pub mod diffuser;
+pub mod harmonic_summation;
 pub mod volume_normalizer;
 
 pub use decibel_converter::DecibelConverter;
 pub use diffuser::Diffuser;
+pub use harmonic_summation::HarmonicSummation;
 pub use volume_normalizer::VolumeNormalizer;
 
 #[cfg(test)]
@@ -28,6 +30,13 @@ mod tests {
 			(
 				"diffuser (default)",
 				Box::new(Diffuser::new(diffuser::Config { width: 1.0 / 24.0 })),
+			),
+			(
+				"harmonic summation (default)",
+				Box::new(HarmonicSummation::new(harmonic_summation::Config {
+					decay: 0.8,
+					harmonics: 8,
+				})),
 			),
 			(
 				"volume normalizer (slowest)",

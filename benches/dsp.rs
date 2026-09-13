@@ -33,7 +33,8 @@ use melody_visualizer::spectrum::generators::audio::{
 };
 use melody_visualizer::spectrum::renderer::SpectrumRenderer;
 use melody_visualizer::spectrum::transforms::{
-	DecibelConverter, Diffuser, VolumeNormalizer, decibel_converter, diffuser, volume_normalizer,
+	DecibelConverter, Diffuser, HarmonicSummation, VolumeNormalizer, decibel_converter, diffuser,
+	harmonic_summation, volume_normalizer,
 };
 use melody_visualizer::spectrum::{
 	Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumParams, SpectrumTransform,
@@ -113,6 +114,13 @@ fn apply(transform: &mut dyn SpectrumTransform, spectrum: &mut Spectrum) {
 fn transforms(bins: usize) -> Vec<(String, Box<dyn SpectrumTransform>)> {
 	let params = grid(bins);
 	let mut built: Vec<(String, Box<dyn SpectrumTransform>)> = vec![
+		(
+			"harmonic_summation".to_string(),
+			Box::new(HarmonicSummation::new(harmonic_summation::Config {
+				decay: 0.8,
+				harmonics: 8,
+			})),
+		),
 		(
 			"diffuser".to_string(),
 			Box::new(Diffuser::new(diffuser::Config { width: 1.0 / 24.0 })),
@@ -263,6 +271,7 @@ fn print_summary(window_ms: u32) {
 		let seconds = seconds_per_call(WARMUP, RUNS, || apply(transform.as_mut(), &mut spectrum));
 		stages.push((
 			match name.as_str() {
+				"harmonic_summation" => "harmonic summation",
 				"diffuser" => "diffuser",
 				"volume_normalizer" => "volume normalizer",
 				_ => "decibel converter",

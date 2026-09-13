@@ -125,10 +125,11 @@ to keep up with.
 | Stage | Capacity | Headroom | % of tick |
 |---|--:|--:|--:|
 | Generator (DFT + binning) | 11,758 spectra/s | 235× | 0.43% |
+| HarmonicSummation (8 harmonics) | 270,274 spectra/s | 5,405× | 0.02% |
 | Diffuser (1/24 octave) | 232,155 spectra/s | 4,643× | 0.02% |
 | VolumeNormalizer | 522,999 spectra/s | 10,460× | 0.01% |
 | DecibelConverter | 118,342 spectra/s | 2,367× | 0.04% |
-| **Composed default chain** | **11,058 spectra/s** | **221×** | **0.45%** |
+| **Composed default chain** | **10,623 spectra/s** | **212×** | **0.47%** |
 
 At the one-second window (48,000 samples) the generator's capacity falls to 580
 spectra/s and the composed chain takes **8.2%** of the same tick — twelve times'
@@ -156,7 +157,8 @@ length itself grows with bin density. At width 1/24 octave:
 | 2392 | 15.56 µs | 64,300/s |
 | 4784 | 58.01 µs | 17,200/s |
 
-Every doubling of bins costs 4×. Width is the same story at a fixed bin count:
+Every doubling of bins costs 4×. `HarmonicSummation` is linear in comparison:
+bins × harmonics, about 3.7 µs at the default 1196 bins and 8 harmonics. Width is the same story at a fixed bin count:
 1/24 octave takes 4.2 µs, one octave 97 µs, ten octaves 830 µs — the last of
 those is 4% of the tick, from a slider the GUI already offers.
 
@@ -593,7 +595,7 @@ before being copied or extended.
 | **Spectrum** | One frame of frequency-domain data: non-negative amplitude values plus the `SpectrumParams` that give each bin its frequency |
 | **SpectrumParams** | The log-spaced frequency grid. Shared as an `Arc` and compared with `Arc::ptr_eq`; a pointer mismatch is what invalidates downstream caches |
 | **SpectrumBuffer** | A `Spectrum` with no meaningful contents — the recycled allocation that cycles back from the graphic thread |
-| **Spectrum transform** | One stage of the DSP chain (`Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |
+| **Spectrum transform** | One stage of the DSP chain (`HarmonicSummation`, `Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |
 | **Generator** | The head of a pipeline. A `SpectrumGenerator` makes a spectrum from samples; a `GraphicGenerator` makes a graphic from spectra |
 | **Spectrum tick** | The spectrum thread's timer, at `generator.interval()` — one over the update rate. It is the pipeline's only timed producer |
 | **Frame timer** | The GTK thread's 40 ms timer that requests a render. Independent of the spectrum tick |

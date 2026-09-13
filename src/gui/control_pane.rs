@@ -9,7 +9,7 @@ use crate::audio::source::events::ConnectionChanged;
 use crate::audio::source::{PortName, SourceType};
 use crate::controllers::{
 	AppController, ControlPaneController, DecibelConverterController, DiffuserController,
-	VolumeNormalizerController, app::events::ConfigChanged,
+	HarmonicSummationController, VolumeNormalizerController, app::events::ConfigChanged,
 };
 use crate::error::Error;
 use crate::gui::controls::key_row::key_name;
@@ -271,10 +271,12 @@ fn transform_switchable(entry: &TransformEntry) -> Switchable {
 	match entry.config {
 		SpectrumTransformConfig::DecibelConverter(_)
 		| SpectrumTransformConfig::VolumeNormalizer(_) => Switchable::No,
-		SpectrumTransformConfig::Diffuser(_) => Switchable::Yes {
-			id: entry.id,
-			enabled: entry.enabled,
-		},
+		SpectrumTransformConfig::Diffuser(_) | SpectrumTransformConfig::HarmonicSummation(_) => {
+			Switchable::Yes {
+				id: entry.id,
+				enabled: entry.enabled,
+			}
+		}
 	}
 }
 
@@ -463,6 +465,9 @@ fn transform_summary(app_controller: &AppController, id: TransformId) -> String 
 			)
 		}
 		SpectrumTransformConfig::Diffuser(config) => controls::diffuser::width_text(config.width),
+		SpectrumTransformConfig::HarmonicSummation(config) => {
+			controls::harmonic_summation::summary(config)
+		}
 		SpectrumTransformConfig::VolumeNormalizer(config) => {
 			format!(
 				"rate {}",
@@ -494,6 +499,10 @@ fn build_transform_control(
 		SpectrumTransformConfig::Diffuser(_) => {
 			let controller = DiffuserController::new(id, app_controller.clone());
 			controls::diffuser::new(&controller).map(|widget| widget.upcast())
+		}
+		SpectrumTransformConfig::HarmonicSummation(_) => {
+			let controller = HarmonicSummationController::new(id, app_controller.clone());
+			controls::harmonic_summation::new(&controller).map(|widget| widget.upcast())
 		}
 		SpectrumTransformConfig::VolumeNormalizer(_) => {
 			let controller = VolumeNormalizerController::new(id, app_controller.clone());
@@ -574,6 +583,7 @@ fn spectrum_transform_name(config: &SpectrumTransformConfig) -> &'static str {
 	match config {
 		SpectrumTransformConfig::DecibelConverter(_) => "Decibel Converter",
 		SpectrumTransformConfig::Diffuser(_) => "Diffuser",
+		SpectrumTransformConfig::HarmonicSummation(_) => "Harmonic Summation",
 		SpectrumTransformConfig::VolumeNormalizer(_) => "Volume Normalizer",
 	}
 }

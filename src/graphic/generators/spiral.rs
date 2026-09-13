@@ -1,12 +1,10 @@
-use cairo::{
-	Mesh,
-	MeshCorner::{MeshCorner0, MeshCorner1, MeshCorner2, MeshCorner3},
-};
-use palette::{Hsv, IntoColor, RgbHue, encoding::Srgb, rgb::Rgb};
+use palette::{FromColor, Hsv, RgbHue, encoding::Srgb, rgb::Rgb};
 use std::any::Any;
 use std::cmp;
 use std::collections::VecDeque;
-use std::f64::consts::PI;
+use std::f64::consts::{PI, TAU};
+use std::fmt;
+use std::iter;
 use std::sync::Arc;
 
 use crate::error::Error;
@@ -14,13 +12,25 @@ use crate::graphic::{Graphic, GraphicBuffer, GraphicGenerator};
 use crate::spectrum::{LogHz, Spectrum, SpectrumParams};
 use crate::traits::Configurable;
 
-#[derive(Debug)]
 pub struct SpiralGenerator {
 	x_max: i32,
 	y_max: i32,
 	config: Config,
 	params: Arc<SpectrumParams>,
-	edges: Vec<SegmentEdge>,
+	/// What every pixel shows, one entry a pixel in the buffer's row-major
+	/// order. Rebuilt on a change of size, grid or config.
+	map: Vec<Texel>,
+	/// Each bin's colour at full brightness, as a `0x00RRGGBB` word. Rebuilt
+	/// with `map`.
+	hues: Vec<u32>,
+	/// Each bin's colour at the brightness of the frame being drawn. `generate`
+	/// refills it; it lives here so that a frame allocates nothing.
+	lit: Vec<u32>,
+	/// Whether `map` and `hues` are out of date. A rebuild is a pass over every
+	/// pixel, so the hooks only set this and the next frame rebuilds: a slider
+	/// drag that reconfigures the generator many times a frame costs one
+	/// rebuild a frame.
+	stale: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -62,16 +72,16 @@ const LABEL_FACE: &str = "Playfair Display";
 const LABEL_SIZE: f64 = 13.0;
 const LABEL_ALPHA: f64 = 0.55;
 
-#[derive(Debug)]
-struct SegmentEdge {
-	hue: RgbHue<f64>,
-	saturation: f64,
-	x_inner: f64,
-	y_inner: f64,
-	x_center: f64,
-	y_center: f64,
-	x_outer: f64,
-	y_outer: f64,
+/// What one pixel of the surface shows: which bin lights it and how much.
+///
+/// A weight of zero is black whatever the bin, so a pixel off the ribbon needs
+/// no sentinel.
+#[derive(Clone, Copy)]
+struct Texel {
+	/// Index into the spectrum's values.
+	bin: u16,
+	/// Glow, 255 on the ribbon's centre line and falling to 0 with distance.
+	weight: u8,
 }
 
 impl Configurable for SpiralGenerator {
@@ -83,62 +93,104 @@ impl Configurable for SpiralGenerator {
 			y_max: 0,
 			config,
 			params: Arc::new(SpectrumParams::default()),
-			edges: Vec::new(),
+			map: Vec::new(),
+			hues: Vec::new(),
+			lit: Vec::new(),
+			stale: false,
 		}
 	}
 
 	fn set_config(&mut self, config: Config) {
 		self.config = config;
-		self.regenerate();
+		self.stale = true;
+	}
+}
+
+impl fmt::Debug for SpiralGenerator {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		// The map has an entry per pixel, far too many to print.
+		f.debug_struct("SpiralGenerator")
+			.field("x_max", &self.x_max)
+			.field("y_max", &self.y_max)
+			.field("config", &self.config)
+			.finish_non_exhaustive()
 	}
 }
 
 impl SpiralGenerator {
+	/// Rebuilds `hues` and `map` for the current size, grid and config.
+	///
+	/// The spiral places a bin of pitch `L` (in log₂ Hz) at radius
+	/// `r_min + r_scale · (L − min)`, a turn per octave clockwise from straight
+	/// up, with the key at the top. This inverts that per pixel: it finds the
+	/// nearest point of the ribbon, which bin lies there, and how far off the
+	/// pixel is.
 	fn regenerate(&mut self) {
-		if self.params.log_frequencies().is_empty() {
-			self.edges.clear();
+		self.hues.clear();
+		self.map.clear();
+
+		let log_frequencies = self.params.log_frequencies();
+		let (Some(&min), Some(&max)) = (log_frequencies.first(), log_frequencies.last()) else {
 			return;
-		}
+		};
+		let bins = log_frequencies.len();
+		assert!(
+			bins <= usize::from(u16::MAX) + 1,
+			"a texel holds its bin as a u16"
+		);
+		let key = self.config.key_log_freq;
 
-		let min_log_freq = self
-			.params
-			.min_log_freq()
-			.expect("params.log_frequencies() is not empty");
-		let max_log_freq = self
-			.params
-			.max_log_freq()
-			.expect("params.log_frequencies() is not empty");
-
-		self.edges.clear();
-		self.edges.reserve(self.params.log_frequencies().len());
+		self.hues.extend(log_frequencies.iter().map(|&log_freq| {
+			let turn = (log_freq - key).rem_euclid(1.0);
+			let hsv = <Hsv<Srgb, f64>>::new(RgbHue::from_radians(turn * TAU), 0.8, 1.0);
+			let rgb = Rgb::<Srgb, f64>::from_color(hsv).into_format::<u8>();
+			(u32::from(rgb.red) << 16) | (u32::from(rgb.green) << 8) | u32::from(rgb.blue)
+		}));
 
 		let r_min = self.config.center_pad;
-		let r_max = self.r_max();
-		let r_scale = (r_max - r_min) / (max_log_freq - min_log_freq);
+		let r_scale = (self.r_max() - r_min) / (max - min);
+		// The glow is a Gaussian in the distance from the centre line. A sigma of
+		// 5% of an octave leaves an eighth of full brightness a tenth of an octave
+		// out, and nothing past a fifth.
+		let sigma = 0.05 * r_scale;
 		let (x_origin, y_origin) = self.origin();
+		let (width, height) = (self.x_max, self.y_max);
 
-		for log_freq in self.params.log_frequencies().iter().cloned() {
-			// Compute the fraction of an octave away from the key frequency on a log scale.
-			let log_freq_delta = log_freq - self.config.key_log_freq;
-			let log_freq_delta_norm = log_freq_delta - log_freq_delta.floor();
+		// ponytail: about 30 ms at 1280x800 and 60 ms at 1920x1080, longer than a
+		// spectrum tick, so frames drop and the spectrum thread skips ticks while
+		// the window resizes or a slider drags. Skip the pixels outside the
+		// annulus, or solve in f32, if that shows.
+		let pixels = (0..height).flat_map(|y| (0..width).map(move |x| (x, y)));
+		self.map.extend(pixels.map(|(x, y)| {
+			// The pixel centre relative to the origin, y pointing up.
+			let dx = x as f64 + 0.5 - x_origin;
+			let dy = y_origin - (y as f64 + 0.5);
+			// Clockwise from straight up, as a fraction of a turn.
+			let turn = (dx.atan2(dy) / TAU).rem_euclid(1.0);
 
-			let r = r_min + r_scale * (log_freq - min_log_freq);
-			let thickness = r_scale * 0.1; // 10% of the distance between octaves.
-			let theta = log_freq_delta_norm * 2.0 * PI;
-			let sin_theta = theta.sin();
-			let cos_theta = theta.cos();
+			// The ribbon crosses this angle once an octave, at every pitch
+			// `key + turn + k` for a whole number `k`, and those crossings are
+			// `r_scale` apart. `pitch` is what this radius would carry on the
+			// centre line, relative to the key, so the nearest crossing is the `k`
+			// it rounds to. A pixel midway between two turns is ten sigmas from
+			// both and stays black.
+			let pitch = ((dx * dx + dy * dy).sqrt() - r_min) / r_scale + min - key;
+			let k = (pitch - turn).round();
+			// Distance off the centre line, in sigmas. Past four the weight rounds
+			// to zero, which is most of the surface, so `exp` is skipped there.
+			let sigmas = r_scale * (pitch - turn - k) / sigma;
 
-			self.edges.push(SegmentEdge {
-				hue: RgbHue::from_radians(theta),
-				saturation: 0.80,
-				x_inner: x_origin + sin_theta * (r - thickness),
-				y_inner: y_origin - cos_theta * (r - thickness),
-				x_center: x_origin + sin_theta * r,
-				y_center: y_origin - cos_theta * r,
-				x_outer: x_origin + sin_theta * (r + thickness),
-				y_outer: y_origin - cos_theta * (r + thickness),
-			});
-		}
+			let bin = ((key + turn + k - min) / (max - min) * (bins - 1) as f64).round();
+			if sigmas.abs() < 4.0 && (0.0..bins as f64).contains(&bin) {
+				Texel {
+					bin: bin as u16,
+					weight: (255.0 * (-0.5 * sigmas * sigmas).exp()).round() as u8,
+				}
+			} else {
+				// Off the ribbon: too far from its centre line, or beyond either end.
+				Texel { bin: 0, weight: 0 }
+			}
+		}));
 	}
 
 	/// The radius of the outermost turn's centre line.
@@ -186,79 +238,73 @@ impl SpiralGenerator {
 	}
 }
 
+/// `colour`, a `0x00RRGGBB` word, with every channel scaled by `weight / 255`.
+///
+/// Multiplying by `weight + 1` and dividing by 256 keeps both ends exact, black
+/// at 0 and `colour` itself at 255, at the price of a multiply and a shift.
+fn dim(colour: u32, weight: u8) -> u32 {
+	let factor = u32::from(weight) + 1;
+	let channel = |shift: u32| ((((colour >> shift) & 0xff) * factor) >> 8) << shift;
+	channel(16) | channel(8) | channel(0)
+}
+
 impl GraphicGenerator for SpiralGenerator {
 	fn generate(
 		&mut self,
-		buffer: GraphicBuffer,
+		mut buffer: GraphicBuffer,
 		spectrum_history: &VecDeque<Spectrum>,
 	) -> Result<Graphic, Error> {
-		let spectrum = spectrum_history.front().map(|spectrum| spectrum.values());
+		if self.stale {
+			self.regenerate();
+			self.stale = false;
+		}
 
-		buffer.draw(|ctx| {
-			ctx.set_source_rgb(0.0, 0.0, 0.0);
-			ctx.rectangle(0.0, 0.0, self.x_max as f64, self.y_max as f64);
-			ctx.fill()?;
+		let values = spectrum_history.front().map(|spectrum| spectrum.values());
 
-			if self.edges.is_empty() {
-				return Ok(());
+		self.lit.clear();
+		self.lit
+			.extend(self.hues.iter().enumerate().map(|(bin, &hue)| {
+				let value = values.map_or(0.0, |values| values[bin].min(1.0));
+				dim(hue, (255.0 * (0.2 + 0.8 * value)).round() as u8)
+			}));
+
+		let pixels = buffer.data_mut();
+		if self.map.is_empty() {
+			// No grid yet, so nothing lights the surface.
+			pixels.fill(0);
+		} else {
+			assert_eq!(
+				pixels.len(),
+				4 * self.map.len(),
+				"the map is built for the size of the buffer",
+			);
+			for (pixel, texel) in iter::zip(pixels.as_chunks_mut::<4>().0, &self.map) {
+				// Most of the surface is off the ribbon, and black needs no lookup.
+				let colour = if texel.weight == 0 {
+					0
+				} else {
+					dim(self.lit[usize::from(texel.bin)], texel.weight)
+				};
+				*pixel = colour.to_ne_bytes();
 			}
+		}
 
-			let mesh = Mesh::new();
-
-			for i in 1..self.edges.len() {
-				let edge1 = &self.edges[i - 1];
-				let edge2 = &self.edges[i];
-
-				let value1 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i - 1].min(1.0));
-				let value2 = 0.2 + 0.8 * spectrum.map_or(0.0, |spectrum| spectrum[i].min(1.0));
-
-				let color1: Rgb<Srgb, f64> =
-					<Hsv<Srgb, f64>>::new(edge1.hue, edge1.saturation, value1).into_color();
-				let color2: Rgb<Srgb, f64> =
-					<Hsv<Srgb, f64>>::new(edge2.hue, edge2.saturation, value2).into_color();
-
-				mesh.begin_patch();
-				mesh.line_to(edge1.x_center, edge1.y_center);
-				mesh.line_to(edge2.x_center, edge2.y_center);
-				mesh.line_to(edge2.x_outer, edge2.y_outer);
-				mesh.line_to(edge1.x_outer, edge1.y_outer);
-				mesh.set_corner_color_rgb(MeshCorner0, color1.red, color1.green, color1.blue);
-				mesh.set_corner_color_rgb(MeshCorner1, color2.red, color2.green, color2.blue);
-				mesh.set_corner_color_rgb(MeshCorner2, 0.0, 0.0, 0.0);
-				mesh.set_corner_color_rgb(MeshCorner3, 0.0, 0.0, 0.0);
-				mesh.end_patch();
-
-				mesh.begin_patch();
-				mesh.line_to(edge2.x_center, edge2.y_center);
-				mesh.line_to(edge1.x_center, edge1.y_center);
-				mesh.line_to(edge1.x_inner, edge1.y_inner);
-				mesh.line_to(edge2.x_inner, edge2.y_inner);
-				mesh.set_corner_color_rgb(MeshCorner0, color1.red, color1.green, color1.blue);
-				mesh.set_corner_color_rgb(MeshCorner1, color2.red, color2.green, color2.blue);
-				mesh.set_corner_color_rgb(MeshCorner2, 0.0, 0.0, 0.0);
-				mesh.set_corner_color_rgb(MeshCorner3, 0.0, 0.0, 0.0);
-				mesh.end_patch();
-			}
-
-			ctx.set_source(&*mesh)?;
-			ctx.paint()?;
-
-			if self.config.interval_ring {
-				self.draw_interval_ring(ctx)?;
-			}
-			Ok(())
-		})
+		if self.config.interval_ring {
+			buffer.draw(|ctx| Ok(self.draw_interval_ring(ctx)?))
+		} else {
+			Ok(Graphic { buffer })
+		}
 	}
 
 	fn set_params(&mut self, params: &Arc<SpectrumParams>) {
 		self.params = params.clone();
-		self.regenerate();
+		self.stale = true;
 	}
 
 	fn set_size(&mut self, width: i32, height: i32) {
 		self.x_max = width;
 		self.y_max = height;
-		self.regenerate();
+		self.stale = true;
 	}
 
 	fn history_len(&self) -> usize {
@@ -287,6 +333,8 @@ mod tests {
 	const ORIGIN: f64 = SIZE as f64 / 2.0;
 	/// The radius of the outermost ring, from `regenerate`'s `r_max`.
 	const R_MAX: f64 = ORIGIN - OUTER_PAD;
+	/// The distance between two turns of the ribbon.
+	const OCTAVE: f64 = (R_MAX - CENTER_PAD) / OCTAVES as f64;
 
 	fn config() -> Config {
 		Config {
@@ -314,7 +362,17 @@ mod tests {
 		let mut generator = SpiralGenerator::new(config());
 		generator.set_size(SIZE, SIZE);
 		generator.set_params(&semitone_grid());
+		refresh(&mut generator);
 		generator
+	}
+
+	/// Draws a frame with no history, which rebuilds whatever the hooks left
+	/// stale.
+	fn refresh(generator: &mut SpiralGenerator) {
+		let buffer = GraphicBuffer::new(generator.x_max, generator.y_max);
+		generator
+			.generate(buffer, &VecDeque::new())
+			.expect("rendering onto a CPU surface needs no display");
 	}
 
 	/// `generator`'s frame for a spectrum whose every bin holds `value`.
@@ -326,23 +384,28 @@ mod tests {
 			.expect("rendering onto a CPU surface needs no display")
 	}
 
-	/// The distance of `edge`'s centre line from the surface centre.
-	fn radius(edge: &SegmentEdge) -> f64 {
-		(edge.x_center - ORIGIN).hypot(edge.y_center - ORIGIN)
+	/// The radius of bin `index`'s centre line on [`keyed_to_c`]'s surface.
+	fn radius(index: usize) -> f64 {
+		CENTER_PAD + (R_MAX - CENTER_PAD) * index as f64 / (BINS - 1) as f64
 	}
 
-	/// The angle of `edge` about the surface centre, clockwise from straight up.
-	///
-	/// In `(-π, π]`, so a spoke a hair either side of the origin reads as a small
-	/// angle rather than one close to a full turn.
-	fn angle(edge: &SegmentEdge) -> f64 {
-		(edge.x_center - ORIGIN).atan2(ORIGIN - edge.y_center)
+	/// Where bin `index`'s centre line lands on [`keyed_to_c`]'s surface: a turn
+	/// an octave, clockwise from a C straight up.
+	fn centre(index: usize) -> (f64, f64) {
+		let theta = (index % 12) as f64 / 12.0 * TAU;
+		let radius = radius(index);
+		(ORIGIN + radius * theta.sin(), ORIGIN - radius * theta.cos())
+	}
+
+	/// The texel of the pixel that `(x, y)` falls in.
+	fn texel_at(generator: &SpiralGenerator, (x, y): (f64, f64)) -> Texel {
+		generator.map[y as usize * generator.x_max as usize + x as usize]
 	}
 
 	/// The brightest channel within a pixel of `(x, y)`.
 	///
-	/// The neighbourhood absorbs the rounding between a mesh drawn in floating
-	/// point and the pixel grid it lands on.
+	/// The neighbourhood absorbs the rounding between a point in floating point
+	/// and the pixel grid it lands on.
 	fn brightest_near(graphic: &Graphic, x: f64, y: f64) -> u8 {
 		let (x, y) = (x.round() as i32, y.round() as i32);
 		(-1..=1)
@@ -360,81 +423,104 @@ mod tests {
 	fn pitch_class_c_sits_at_the_angle_origin_in_every_octave() {
 		let generator = keyed_to_c();
 		for index in (0..BINS).step_by(12) {
-			let angle = angle(&generator.edges[index]);
-			assert!(
-				angle.abs() < 1e-6,
-				"bin {} is a C, so it belongs at angle 0, not {}",
+			let texel = texel_at(&generator, (ORIGIN, ORIGIN - radius(index)));
+			assert_eq!(
+				usize::from(texel.bin),
 				index,
-				angle,
+				"straight up at this radius is a C, bin {}",
+				index,
 			);
+			assert!(texel.weight > 200, "and it is on the centre line");
 		}
 	}
 
 	#[test]
 	fn frequencies_an_octave_apart_share_an_angle_and_a_hue() {
 		let generator = keyed_to_c();
-		// A tritone from the key, so neither the angle nor the hue sits on the
-		// wrap-around where two representations of the same direction differ.
-		let [first, second, third] = [6, 18, 30].map(|index: usize| &generator.edges[index]);
-		for other in [second, third] {
-			assert!((angle(first) - angle(other)).abs() < 1e-6);
-			assert!(
-				(first.hue.into_positive_degrees() - other.hue.into_positive_degrees()).abs()
-					< 1e-6,
+		// A tritone from the key, half a turn round, so neither the angle nor the
+		// hue sits on the wrap-around where two representations of the same
+		// direction differ.
+		let indices = [6, 18, 30];
+		for index in indices {
+			let texel = texel_at(&generator, (ORIGIN, ORIGIN + radius(index)));
+			assert_eq!(
+				usize::from(texel.bin),
+				index,
+				"straight down is the tritone in every octave",
 			);
 		}
+		let [first, second, third] = indices.map(|index| generator.hues[index]);
+		assert_eq!(first, second);
+		assert_eq!(first, third);
 	}
 
 	#[test]
 	fn radius_increases_with_log_frequency() {
 		let generator = keyed_to_c();
+		// Up the spoke every C sits on, from the centre to the edge.
+		let bins = (0..SIZE / 2)
+			.rev()
+			.map(|y| generator.map[(y * SIZE + SIZE / 2) as usize])
+			.filter(|texel| texel.weight > 0)
+			.map(|texel| texel.bin)
+			.collect::<Vec<_>>();
+		assert_eq!(bins.first(), Some(&0));
+		assert_eq!(bins.last(), Some(&(BINS as u16 - 1)));
 		assert!(
-			generator
-				.edges
-				.windows(2)
-				.all(|pair| radius(&pair[0]) < radius(&pair[1])),
+			bins.is_sorted(),
 			"radius is the log-frequency axis, so it never doubles back",
 		);
 	}
 
 	#[test]
-	fn the_edges_span_the_configured_annulus() {
+	fn the_ribbon_spans_the_configured_annulus() {
 		let generator = keyed_to_c();
-		let first = generator.edges.first().expect("the grid is not empty");
-		let last = generator.edges.last().expect("the grid is not empty");
+		// Straight up, where both ends of a spiral keyed to C sit.
+		let straight_up = |radius: f64| texel_at(&generator, (ORIGIN, ORIGIN - radius));
 
-		assert!((radius(first) - CENTER_PAD).abs() < 1e-6);
-		assert!((radius(last) - R_MAX).abs() < 1e-6);
+		let first = straight_up(CENTER_PAD);
+		let last = straight_up(R_MAX);
+		assert_eq!(usize::from(first.bin), 0);
+		assert_eq!(usize::from(last.bin), BINS - 1);
+		assert!(first.weight > 200 && last.weight > 200);
 
-		// Each edge is a band of ten per cent of an octave either side of its
-		// centre line.
-		let thickness = (R_MAX - CENTER_PAD) / OCTAVES as f64 * 0.1;
-		let inner = (last.x_inner - ORIGIN).hypot(last.y_inner - ORIGIN);
-		let outer = (last.x_outer - ORIGIN).hypot(last.y_outer - ORIGIN);
-		assert!((inner - (R_MAX - thickness)).abs() < 1e-6);
-		assert!((outer - (R_MAX + thickness)).abs() < 1e-6);
+		// The glow's visible edge is about a tenth of an octave either side of
+		// the centre line, and it is gone by a quarter.
+		for radius in [CENTER_PAD - 0.1 * OCTAVE, R_MAX + 0.1 * OCTAVE] {
+			assert!(straight_up(radius).weight < 128);
+		}
+		for radius in [CENTER_PAD - 0.25 * OCTAVE, R_MAX + 0.25 * OCTAVE] {
+			assert_eq!(straight_up(radius).weight, 0);
+		}
 	}
 
 	#[test]
 	fn geometry_is_rebuilt_on_a_size_change_and_on_a_params_change() {
 		let mut generator = keyed_to_c();
-		let outermost = radius(generator.edges.last().expect("the grid is not empty"));
 
 		generator.set_size(SIZE / 2, SIZE / 2);
-		let resized = generator.edges.last().expect("the grid is not empty");
+		refresh(&mut generator);
+		assert_eq!(generator.map.len(), (SIZE / 2 * SIZE / 2) as usize);
 		let origin = SIZE as f64 / 4.0;
-		assert!(
-			((resized.x_center - origin).hypot(resized.y_center - origin) - (origin - OUTER_PAD))
-				.abs() < 1e-6,
-			"a smaller surface rescales the annulus; the old radius was {}",
-			outermost,
+		let outermost = texel_at(&generator, (origin, OUTER_PAD));
+		assert_eq!(
+			usize::from(outermost.bin),
+			BINS - 1,
+			"a smaller surface rescales the annulus to its own edge",
 		);
+		assert!(outermost.weight > 128);
 
 		generator.set_params(&Arc::new(SpectrumParams::exp_spaced(7, 200.0, 3200.0)));
+		refresh(&mut generator);
 		assert_eq!(
-			generator.edges.len(),
+			generator.hues.len(),
 			7,
-			"a new grid gives one edge per bin of it",
+			"a new grid gives one colour per bin of it",
+		);
+		assert_eq!(
+			generator.map.iter().map(|texel| texel.bin).max(),
+			Some(6),
+			"and the map reaches its last bin",
 		);
 	}
 
@@ -464,8 +550,8 @@ mod tests {
 		let graphic = render(&mut generator, 1.0);
 
 		for index in (1..BINS).step_by(6) {
-			let edge = &generator.edges[index];
-			let brightest = brightest_near(&graphic, edge.x_center, edge.y_center);
+			let (x, y) = centre(index);
+			let brightest = brightest_near(&graphic, x, y);
 			assert!(
 				brightest > 150,
 				"bin {} is at full scale, so its band is near full brightness, not {}",
@@ -483,8 +569,8 @@ mod tests {
 		// `generate` maps a bin to `0.2 + 0.8 * value`, so a silent spectrum
 		// still draws the spiral at a fifth of full brightness.
 		for index in (1..BINS).step_by(6) {
-			let edge = &generator.edges[index];
-			let brightest = brightest_near(&graphic, edge.x_center, edge.y_center);
+			let (x, y) = centre(index);
+			let brightest = brightest_near(&graphic, x, y);
 			assert!(
 				(20..90).contains(&brightest),
 				"bin {} is silent, so its band is dim but visible, not {}",
@@ -492,6 +578,24 @@ mod tests {
 				brightest,
 			);
 		}
+	}
+
+	#[test]
+	fn a_config_change_is_drawn_by_the_next_frame() {
+		let mut generator = keyed_to_c();
+		// Half an octave up puts the key on the tritone, which turns every C to
+		// the bottom of the wheel.
+		generator.set_config(Config {
+			key_log_freq: config().key_log_freq + 0.5,
+			..config()
+		});
+		refresh(&mut generator);
+		let texel = texel_at(&generator, (ORIGIN, ORIGIN + radius(12)));
+		assert_eq!(
+			usize::from(texel.bin),
+			12,
+			"the map is rebuilt for the new key before the frame that draws it",
+		);
 	}
 
 	#[test]
@@ -515,10 +619,15 @@ mod tests {
 		generator.set_params(&semitone_grid());
 
 		let r_max = R_MAX - RING_ROOM;
-		let last = generator.edges.last().expect("the grid is not empty");
-		assert!((radius(last) - r_max).abs() < 1e-6);
-
 		let graphic = render(&mut generator, 0.0);
+		let outermost = texel_at(&generator, (ORIGIN, ORIGIN - r_max));
+		assert_eq!(
+			usize::from(outermost.bin),
+			BINS - 1,
+			"the outermost turn moves in to make room for the ring",
+		);
+		assert!(outermost.weight > 200);
+
 		for step in 0..12 {
 			let theta = step as f64 / 12.0 * 2.0 * PI;
 			let r = r_max + LABEL_OFFSET;

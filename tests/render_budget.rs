@@ -2,13 +2,8 @@
 //!
 //! `benches/graphic.rs` is where the surface and bin-count sweeps live;
 //! benchmarks nobody runs catch no regressions, so this is the one timing
-//! assertion the ordinary test run makes for the graphic stage.
-//!
-//! It is looser than it looks, and deliberately so. The visualizer has about
-//! six times the headroom the DSP has fifty times of, so the threshold cannot
-//! be set an order of magnitude clear of the measurement the way
-//! `tests/dsp_budget.rs` sets its own. It is placed to fail on a genuine
-//! regression and not on a loaded machine.
+//! assertion the ordinary test run makes for the graphic stage. It is placed to
+//! fail on a genuine regression and not on a loaded machine.
 
 use melody_visualizer::app::Config;
 use melody_visualizer::graphic::GraphicBuffer;
@@ -23,20 +18,16 @@ const FRAMES: usize = 50;
 
 /// The share of one frame the render may take.
 ///
-/// One threshold serves both profiles, unlike `tests/dsp_budget.rs`. Almost all
-/// of this stage's time is inside cairo, which is compiled optimized either
-/// way, so an unoptimized build measures within a fifth of a release one — the
-/// mesh the Rust code assembles is not what the frame costs.
-///
-/// A frame takes 10-13% of the budget, so this leaves about three times the
-/// margin. That is as much as a stage with six times' headroom can be given
-/// while the gate still means anything.
-const BUDGET: f64 = 0.40;
+/// One threshold serves both profiles, unlike `tests/dsp_budget.rs`, because
+/// `Cargo.toml` optimises the dev profile the tests build in. A frame takes
+/// 1.3% of the budget in a release build and 1.7% in a test one, so this
+/// leaves about six times the margin.
+const BUDGET: f64 = 0.10;
 
 #[test]
 fn a_frame_stays_inside_the_frame_timer() {
 	let config = Config::default();
-	// Every bin carrying energy is the most expensive mesh to paint.
+	// A loud frame, every bin at full scale.
 	let values = vec![1.0; config.spectrum_params().samples()];
 
 	let mut renderer = graphic_renderer(&config, &values);
@@ -47,7 +38,7 @@ fn a_frame_stays_inside_the_frame_timer() {
 	let seconds = seconds_per_call(WARMUP, FRAMES, || {
 		buffer = renderer
 			.render(std::mem::take(&mut buffer))
-			.expect("rasterising onto an in-memory surface needs no display")
+			.expect("rendering into an in-memory buffer needs no display")
 			.into_buffer();
 	});
 

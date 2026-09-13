@@ -7,22 +7,18 @@
 //!
 //! This is the stage with the least headroom in the pipeline. The whole DSP
 //! chain costs a tenth of a percent of its own tick; one frame at 1600x1000
-//! costs about a sixth of this one.
+//! costs about a fiftieth of this one.
 //!
 //! Two sweeps, and they scale opposite to the DSP:
 //!
-//! 1. **Surface area** dominates. cairo rasterises the mesh gradient over every
-//!    pixel, and the cost tracks the pixel count.
-//! 2. **Bin count** is nearly flat. Sixteen times the bins costs well under
-//!    twice the time, because the patches are not what the time goes on.
+//! 1. **Surface area** is the whole cost. A frame is one pass over a map with
+//!    an entry per pixel, so the cost tracks the pixel count.
+//! 2. **Bin count** is flat. A bin costs one colour a frame, which is nothing
+//!    beside a million pixels.
 //!
-//! So adding spectral resolution is close to free for the visualizer while
-//! resizing the window is what costs — the opposite of the DSP, where bins drive
-//! a quadratic. Anyone tuning `samples_per_octave` needs both facts together.
-//!
-//! The `background` group fills the surface and draws no mesh. `render` minus
-//! `background` is what the mesh paint costs, which is the number to look at
-//! before clipping the paint to the annulus.
+//! So adding spectral resolution is free for the visualizer while resizing the
+//! window is what costs — the opposite of the DSP, where bins drive a
+//! quadratic. Anyone tuning `samples_per_octave` needs both facts together.
 //!
 //! Run with `cargo bench --bench graphic`. The summary alone is
 //! `cargo bench --bench graphic -- --test`.
@@ -55,10 +51,9 @@ const SURFACES: [(i32, i32); 6] = [
 /// A spectrum's worth of broadband values, seeded so every run draws the same
 /// frame.
 ///
-/// Every bin carries energy, which is what the mesh gradient costs most to
-/// paint and what real music gives the visualizer. A chord would leave most of
-/// the spiral at the base brightness, and cairo's work would not change much —
-/// but the values would no longer be the ones the app draws.
+/// Every bin carries energy, which is what real music gives the visualizer. The
+/// values do not change what a frame costs, but they keep the frame one the app
+/// could draw.
 fn values(samples: usize) -> Vec<f64> {
 	let mut rng = StdRng::seed_from_u64(0);
 	(0..samples).map(|_| rng.random_range(0.0..1.0)).collect()
@@ -86,20 +81,7 @@ fn seconds_per_frame(renderer: &mut GraphicRenderer, width: i32, height: i32) ->
 fn render(renderer: &mut GraphicRenderer, buffer: GraphicBuffer) -> Graphic {
 	renderer
 		.render(buffer)
-		.expect("rasterising onto an in-memory surface needs no display")
-}
-
-/// The black fill `generate` lays down before painting the mesh over it.
-fn background(buffer: GraphicBuffer) -> Graphic {
-	let (width, height) = (buffer.width() as f64, buffer.height() as f64);
-	buffer
-		.draw(|ctx| {
-			ctx.set_source_rgb(0.0, 0.0, 0.0);
-			ctx.rectangle(0.0, 0.0, width, height);
-			ctx.fill()?;
-			Ok(())
-		})
-		.expect("a plain fill needs no display")
+		.expect("rendering into an in-memory buffer needs no display")
 }
 
 fn bench_surface(criterion: &mut Criterion) {
@@ -114,12 +96,6 @@ fn bench_surface(criterion: &mut Criterion) {
 			let mut buffer = GraphicBuffer::new(width, height);
 			bencher.iter(|| {
 				buffer = render(&mut renderer, std::mem::take(&mut buffer)).into_buffer();
-			});
-		});
-		group.bench_function(BenchmarkId::new("background", &size), |bencher| {
-			let mut buffer = GraphicBuffer::new(width, height);
-			bencher.iter(|| {
-				buffer = background(std::mem::take(&mut buffer)).into_buffer();
 			});
 		});
 	}

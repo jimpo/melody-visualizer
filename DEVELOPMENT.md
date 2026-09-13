@@ -162,7 +162,7 @@ default. Benchmarks catch nothing if nobody runs them; that test does.
 ### The visualizer
 
 `benches/graphic.rs` measures the graphic stage in frames/s against the 25 fps
-frame timer. It needs no display: cairo's `ImageSurface` is CPU rasterisation,
+frame timer. It needs no display: the spiral writes its pixels in plain Rust,
 so thousands of frames render with no X server.
 
 ```bash
@@ -171,33 +171,38 @@ $ cargo bench --bench graphic -- --test  # the summary alone
 ```
 
 **This is the stage with the least headroom.** The whole DSP chain costs a tenth
-of a percent of its tick; one frame at 1600x1000 costs about a fifth of the 40 ms
-frame. Six times' headroom against the DSP's five hundred, so this is where
-optimisation effort belongs if it is ever needed.
+of a percent of its tick; one frame at 1600x1000 costs about a fiftieth of the
+40 ms frame. Fifty times' headroom against the DSP's eight hundred, so this is
+where optimisation effort belongs if it is ever needed.
 
 Cost scales **opposite to the DSP**: it is driven by pixel area, not bin count.
 
 | Surface | % of frame | Max fps |  | Bins @ 1600x1000 | % of frame |
 |---|--:|--:|---|---|--:|
-| 640x480 | 6.2% | 404 |  | 299 (45/octave) | 19.1% |
-| 1280x800 | 11.3% | 221 |  | 1196 (default) | 21.0% |
-| 1600x1000 | 21.9% | 114 |  | 4784 (720/octave) | 30.2% |
-| 3840x2160 | 69.3% | 36 |  | | |
+| 640x480 | 0.44% | 5,725 |  | 299 (45/octave) | 1.94% |
+| 1280x800 | 1.29% | 1,931 |  | 1196 (default) | 1.96% |
+| 1600x1000 | 1.98% | 1,261 |  | 4784 (720/octave) | 1.99% |
+| 3840x2160 | 11.2% | 224 |  | | |
 
-Sixteen times the bins costs 1.6 times the time; 6.7 times the pixels costs 3.5
-times. cairo rasterising the mesh gradient over the surface is what the frame
-goes on, not the 2,392 mesh patches. So **adding spectral resolution is nearly
-free for the visualizer, while resizing the window is what costs** — anyone
-tuning `samples_per_octave` needs that alongside the DSP's quadratic in bins.
+`SpiralGenerator` keeps a map with an entry per pixel: which bin lights it, and
+how brightly. A frame is one pass over that map, a lookup and a multiply a
+pixel, so its cost follows the pixel count and the bin count does not enter it.
+So **adding spectral resolution is free for the visualizer, while resizing the
+window is what costs** — anyone tuning `samples_per_octave` needs that
+alongside the DSP's quadratic in bins.
 
-The `render/background` group fills the surface and paints no mesh.
-`render/spiral` minus `render/background` is the mesh paint, which is the number
-to look at before clipping that paint to the annulus.
+Building the map costs far more than drawing from it. It inverts the spiral at
+every pixel, which takes about 30 ms at 1280x800, 60 ms at 1920x1080 and 230 ms
+at 3840x2160. A change of size, grid or spiral config marks the map stale and
+the next frame rebuilds it, so a window resize or a slider drag costs one
+rebuild a frame. Frames drop while it lasts, and spectrum ticks with them: the
+spectrum thread gets its buffer back only between the graphic thread's
+commands, so it skips, and logs, every tick a rebuild outlasts.
 
 `tests/render_budget.rs` is the gate, at 1280x800. One threshold covers both
-build profiles: nearly all of the time is inside cairo, which is compiled
-optimized either way, so an unoptimized build measures within a fifth of a
-release one.
+build profiles because `Cargo.toml` optimises the dev profile. Unoptimised, the
+pixel loop runs an order of magnitude slower, and the gate would measure that
+instead.
 
 ## Style guide
 

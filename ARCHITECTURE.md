@@ -18,7 +18,7 @@ The GTK thread holds all the controllers (state) and views (widgets), wired
 together by a PubSub event bus. Audio enters on JACK's real-time thread and lands
 in a lock-free ring buffer. A dedicated spectrum thread FFTs those samples into a
 log-frequency `Spectrum` and applies a transform chain; a dedicated graphic
-thread turns spectra into cairo pixel buffers. Those two threads pass buffers
+thread turns spectra into pixel buffers. Those two threads pass buffers
 back and forth over a pair of mpsc channels, recycling them to avoid per-frame
 allocation. The GTK thread commands and configures both background threads by
 shipping them closures over `AsyncProcessor` and awaiting the replies, then blits
@@ -105,7 +105,7 @@ to JACK.
 4. **Spectrum thread** (`SpectrumProcessor`). Reads samples, runs the FFT, bins
    into log-spaced buckets, applies the transform chain.
 5. **Graphic thread** (`GraphicProcessor`). Keeps the recent spectra and, when
-   asked, draws a frame with cairo.
+   asked, draws a frame.
 
 Threads 4 and 5 are each **one blocking call around one async loop**:
 `futures::executor::block_on(process_loop())`, with a `select!` that multiplexes
@@ -191,10 +191,13 @@ One sample's journey:
 4. **Accumulate** — `graphic/renderer.rs`. The graphic thread pushes the spectrum
    onto a bounded `spectrum_history` whose length the active generator declares.
 5. **Draw** — `graphic/generators/spiral.rs`. On a render RPC, the generator
-   draws the history into a `GraphicBuffer`, a raw RGB24 byte vector backing a
-   cairo `ImageSurface`. The spiral maps log-frequency to radius and pitch class
-   to hue, so notes an octave apart line up on the same spoke. This is the
-   pipeline's most expensive stage by two orders of magnitude, and the cost is
+   writes the history into a `GraphicBuffer`, a raw RGB24 byte vector the GTK
+   side wraps in a cairo `ImageSurface` to blit. The spiral maps log-frequency
+   to radius and pitch class to hue, so notes an octave apart line up on the
+   same spoke. It writes every pixel from a map of which bin lights that pixel
+   and how brightly, rebuilt when the size, grid or config changes, then draws
+   the optional interval ring's labels over them with cairo. This is the
+   pipeline's most expensive stage by an order of magnitude, and the cost is
    pixel area rather than bin count — see
    [DEVELOPMENT.md](DEVELOPMENT.md#the-visualizer).
 6. **Display** — `gui/visualization.rs`. The `DrawingArea` blits the finished
@@ -309,7 +312,7 @@ inside the render closure, and receives the drawn `Graphic` back.
 
 `SpectrumParams` is shared as an `Arc` and compared with `Arc::ptr_eq`. A pointer
 mismatch means the parameters changed, so caches (the diffuser window, the
-spiral's precomputed edges, the graphic thread's history) rebuild themselves.
+spiral's pixel map, the graphic thread's history) rebuild themselves.
 This is how a parameter change propagates without an explicit invalidation
 message.
 
@@ -324,8 +327,10 @@ generator derives geometry from. `GraphicRenderer` owns the grid and sees every
 buffer, so it is what calls `GraphicGenerator::set_params` when the grid changes
 and `set_size` when a differently-sized buffer arrives — and both when
 `update_generator` swaps in a generator that has been told neither.
-`GraphicGenerator::generate` therefore draws and nothing else: it compares no
-state and rebuilds no cache.
+`GraphicGenerator::generate` therefore compares no state. The spiral's cache is
+the one that is dear to rebuild, a pass over every pixel, so its hooks only
+mark its pixel map stale and `generate` rebuilds it before the next frame: a
+slider drag that reconfigures it many times a frame rebuilds it once a frame.
 
 ---
 

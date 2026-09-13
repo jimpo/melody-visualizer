@@ -140,14 +140,19 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	assert_eq!(peaks[2] - peaks[1], peaks[1] - peaks[0]);
 
 	// A spectrum holds amplitude, so halving an amplitude halves a note's share.
-	// Pinned with the diffuser bypassed: it spreads amplitude linearly, which
-	// takes more of the power of a narrow treble peak than of a wide bass hump,
-	// and so moves these ratios by up to a fifth.
+	// Pinned with the power map bypassed, since it raises that share to its
+	// exponent, and with the diffuser bypassed: it spreads amplitude linearly,
+	// which takes more of the power of a narrow treble peak than of a wide bass
+	// hump, and so moves these ratios by up to a fifth.
 	let diffuser = stage_id(&config, |config| {
 		matches!(config, SpectrumTransformConfig::Diffuser(_))
 	});
+	let power_map = stage_id(&config, |config| {
+		matches!(config, SpectrumTransformConfig::PowerMap(_))
+	});
 	let mut undiffused = config.clone();
 	undiffused.set_transform_enabled(diffuser, false).unwrap();
+	undiffused.set_transform_enabled(power_map, false).unwrap();
 	let undiffused = renderer(&undiffused, sample_reader(&signal), SAMPLE_RATE)
 		.render(SpectrumBuffer::new(params.clone()));
 
@@ -251,6 +256,31 @@ fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
 		bins_from(loudest, fundamental) <= 1.0,
 		"the brightest bin is {} Hz, expected the fundamental at {fundamental} Hz",
 		params.frequencies()[loudest],
+	);
+
+	// A steeper power map dims the ghost the summation leaves at the second
+	// harmonic, while the fundamental stays at full brightness.
+	let power_map = stage_id(&config, |config| {
+		matches!(config, SpectrumTransformConfig::PowerMap(_))
+	});
+	let mut steep = config.clone();
+	match steep.spectrum_transform_mut(power_map).unwrap() {
+		SpectrumTransformConfig::PowerMap(power_map) => power_map.exponent = 4.0,
+		_ => unreachable!("found by kind"),
+	}
+	let steep = render(&steep);
+	let second_harmonic = (0..params.frequencies().len())
+		.min_by(|&a, &b| {
+			bins_from(a, 2.0 * fundamental).total_cmp(&bins_from(b, 2.0 * fundamental))
+		})
+		.expect("a spectrum has bins");
+	assert_eq!(loudest_index(&steep), loudest);
+	assert_eq!(steep.values()[loudest], 1.0);
+	assert!(
+		steep.values()[second_harmonic] < summed.values()[second_harmonic],
+		"the second harmonic's ghost is {} at exponent 4, and {} at the default",
+		steep.values()[second_harmonic],
+		summed.values()[second_harmonic],
 	);
 
 	// Without the stage the spiral lights the second harmonic instead.

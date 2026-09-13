@@ -116,7 +116,8 @@ rate's alone.
 
 The absolute numbers here and in [The visualizer](#the-visualizer) are from one
 machine; a slower box shifts them together. The ratios between rows are the part
-that should reproduce.
+that should reproduce. The power map row is scaled to that machine from its
+measured ratio to the diffuser on another.
 
 Release build, 50 ms window (2400 samples) at 48 kHz, 1196 bins. The update
 rate is 50 / sec, so the tick is 20 ms and **50 spectra/s** is what the chain has
@@ -126,10 +127,11 @@ to keep up with.
 |---|--:|--:|--:|
 | Generator (DFT + binning) | 11,758 spectra/s | 235× | 0.43% |
 | HarmonicSummation (8 harmonics) | 270,274 spectra/s | 5,405× | 0.02% |
+| PowerMap (exponent 2) | 84,000 spectra/s | 1,680× | 0.06% |
 | Diffuser (1/24 octave) | 232,155 spectra/s | 4,643× | 0.02% |
 | VolumeNormalizer | 522,999 spectra/s | 10,460× | 0.01% |
 | DecibelConverter | 118,342 spectra/s | 2,367× | 0.04% |
-| **Composed default chain** | **10,623 spectra/s** | **212×** | **0.47%** |
+| **Composed default chain** | **9,430 spectra/s** | **189×** | **0.53%** |
 
 At the one-second window (48,000 samples) the generator's capacity falls to 580
 spectra/s and the composed chain takes **8.2%** of the same tick — twelve times'
@@ -142,7 +144,7 @@ corner is the longest window at the fastest update rate, 100 / sec: 14% of a
 start to skip ticks.
 
 **There is no throughput problem at the defaults.** The default chain costs
-under half a percent of its tick. The benchmarks exist to hold that, to catch a
+about half a percent of its tick. The benchmarks exist to hold that, to catch a
 regression, and to locate the cliff below — not to justify optimizing a path
 with two orders of magnitude of headroom.
 
@@ -595,7 +597,7 @@ before being copied or extended.
 | **Spectrum** | One frame of frequency-domain data: non-negative amplitude values plus the `SpectrumParams` that give each bin its frequency |
 | **SpectrumParams** | The log-spaced frequency grid. Shared as an `Arc` and compared with `Arc::ptr_eq`; a pointer mismatch is what invalidates downstream caches |
 | **SpectrumBuffer** | A `Spectrum` with no meaningful contents — the recycled allocation that cycles back from the graphic thread |
-| **Spectrum transform** | One stage of the DSP chain (`HarmonicSummation`, `Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |
+| **Spectrum transform** | One stage of the DSP chain (`HarmonicSummation`, `PowerMap`, `Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |
 | **Generator** | The head of a pipeline. A `SpectrumGenerator` makes a spectrum from samples; a `GraphicGenerator` makes a graphic from spectra |
 | **Spectrum tick** | The spectrum thread's timer, at `generator.interval()` — one over the update rate. It is the pipeline's only timed producer |
 | **Frame timer** | The GTK thread's 40 ms timer that requests a render. Independent of the spectrum tick |

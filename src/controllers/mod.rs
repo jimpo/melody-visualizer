@@ -3,6 +3,7 @@ pub mod control_pane;
 pub mod decibel_converter;
 pub mod diffuser;
 pub mod harmonic_summation;
+pub mod power_map;
 pub mod visualization;
 pub mod volume_normalizer;
 
@@ -11,5 +12,6 @@ pub use control_pane::ControlPaneController;
 pub use decibel_converter::DecibelConverterController;
 pub use diffuser::DiffuserController;
 pub use harmonic_summation::HarmonicSummationController;
+pub use power_map::PowerMapController;
 pub use visualization::VisualizationController;
 pub use volume_normalizer::VolumeNormalizerController;

@@ -33,8 +33,8 @@ use melody_visualizer::spectrum::generators::audio::{
 };
 use melody_visualizer::spectrum::renderer::SpectrumRenderer;
 use melody_visualizer::spectrum::transforms::{
-	DecibelConverter, Diffuser, HarmonicSummation, VolumeNormalizer, decibel_converter, diffuser,
-	harmonic_summation, volume_normalizer,
+	DecibelConverter, Diffuser, HarmonicSummation, PowerMap, VolumeNormalizer, decibel_converter,
+	diffuser, harmonic_summation, power_map, volume_normalizer,
 };
 use melody_visualizer::spectrum::{
 	Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumParams, SpectrumTransform,
@@ -102,11 +102,14 @@ fn spectrum(bins: usize) -> Spectrum {
 	renderer.render(SpectrumBuffer::new(params))
 }
 
-/// Run `spectrum` through `transform` in place, recycling the buffer.
+/// Run `input` through `transform`, recycling `spectrum` as the buffer.
 ///
 /// Nothing is allocated per call, and the transform is fed as fast as it can
-/// consume — so what is measured is the stage rather than its input.
-fn apply(transform: &mut dyn SpectrumTransform, spectrum: &mut Spectrum) {
+/// consume — so what is measured is the stage rather than its input. Every call
+/// sees the same values: a stage fed its own output would drift, a power map to
+/// all zeros and a harmonic summation towards infinity.
+fn apply(transform: &mut dyn SpectrumTransform, spectrum: &mut Spectrum, input: &Spectrum) {
+	spectrum.values_mut().copy_from_slice(input.values());
 	*spectrum = transform.transform(std::mem::take(spectrum));
 }
 
@@ -120,6 +123,10 @@ fn transforms(bins: usize) -> Vec<(String, Box<dyn SpectrumTransform>)> {
 				decay: 0.8,
 				harmonics: 8,
 			})),
+		),
+		(
+			"power_map".to_string(),
+			Box::new(PowerMap::new(power_map::Config { exponent: 2.0 })),
 		),
 		(
 			"diffuser".to_string(),
@@ -190,7 +197,7 @@ fn bench_transforms(criterion: &mut Criterion) {
 		for (name, mut transform) in transforms(bins) {
 			group.bench_function(BenchmarkId::new(name, bins), |bencher| {
 				let mut spectrum = input.clone();
-				bencher.iter(|| apply(transform.as_mut(), &mut spectrum));
+				bencher.iter(|| apply(transform.as_mut(), &mut spectrum, &input));
 			});
 		}
 	}
@@ -212,7 +219,7 @@ fn bench_diffuser_width(criterion: &mut Criterion) {
 		diffuser.set_params(&grid(DEFAULT_BINS));
 		group.bench_function(name, |bencher| {
 			let mut spectrum = input.clone();
-			bencher.iter(|| apply(&mut diffuser, &mut spectrum));
+			bencher.iter(|| apply(&mut diffuser, &mut spectrum, &input));
 		});
 	}
 	group.finish();
@@ -267,11 +274,15 @@ fn print_summary(window_ms: u32) {
 	));
 
 	for (name, mut transform) in transforms(DEFAULT_BINS) {
-		let mut spectrum = spectrum(DEFAULT_BINS);
-		let seconds = seconds_per_call(WARMUP, RUNS, || apply(transform.as_mut(), &mut spectrum));
+		let input = spectrum(DEFAULT_BINS);
+		let mut spectrum = input.clone();
+		let seconds = seconds_per_call(WARMUP, RUNS, || {
+			apply(transform.as_mut(), &mut spectrum, &input)
+		});
 		stages.push((
 			match name.as_str() {
 				"harmonic_summation" => "harmonic summation",
+				"power_map" => "power map",
 				"diffuser" => "diffuser",
 				"volume_normalizer" => "volume normalizer",
 				_ => "decibel converter",

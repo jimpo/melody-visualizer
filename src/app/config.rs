@@ -19,6 +19,7 @@ use crate::spectrum::{
 		decibel_converter::DecibelConverter,
 		diffuser::{self, Diffuser},
 		harmonic_summation::{self, HarmonicSummation},
+		power_map::{self, PowerMap},
 		volume_normalizer::{self, VolumeNormalizer},
 	},
 };
@@ -200,6 +201,7 @@ define_spectrum_transform_config! {
 		DecibelConverter,
 		Diffuser,
 		HarmonicSummation,
+		PowerMap,
 		VolumeNormalizer,
 	}
 }
@@ -214,6 +216,7 @@ impl Default for Config {
 				decay: 0.8,
 				harmonics: 8,
 			}),
+			SpectrumTransformConfig::PowerMap(power_map::Config { exponent: 2.0 }),
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];

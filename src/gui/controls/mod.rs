@@ -9,6 +9,7 @@ pub mod decibel_converter;
 pub mod diffuser;
 pub mod harmonic_summation;
 pub mod key_row;
+pub mod power_map;
 pub mod range_slider;
 pub mod spectrum;
 pub mod spiral;

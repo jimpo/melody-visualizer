@@ -1,11 +1,13 @@
 pub mod decibel_converter;
 pub mod diffuser;
 pub mod harmonic_summation;
+pub mod power_map;
 pub mod volume_normalizer;
 
 pub use decibel_converter::DecibelConverter;
 pub use diffuser::Diffuser;
 pub use harmonic_summation::HarmonicSummation;
+pub use power_map::PowerMap;
 pub use volume_normalizer::VolumeNormalizer;
 
 #[cfg(test)]
@@ -37,6 +39,14 @@ mod tests {
 					decay: 0.8,
 					harmonics: 8,
 				})),
+			),
+			(
+				"power map (steepest)",
+				Box::new(PowerMap::new(power_map::Config { exponent: 4.0 })),
+			),
+			(
+				"power map (default)",
+				Box::new(PowerMap::new(power_map::Config { exponent: 2.0 })),
 			),
 			(
 				"volume normalizer (slowest)",

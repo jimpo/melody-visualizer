@@ -19,41 +19,37 @@ const RENDERS: usize = 200;
 
 /// The share of one tick the chain may take.
 ///
-/// It takes 0.13% of it in a release build and 3.4% unoptimized, and
-/// `cargo nextest run` measures the unoptimized one by default — so the gate is
-/// set per profile. Both leave more than an order of magnitude of margin, which
-/// is what keeps a shared or loaded machine from failing the build over noise.
-const BUDGET: f64 = if cfg!(debug_assertions) { 0.5 } else { 0.1 };
+/// At the longest window and the fastest rate it takes about 14% of the 10 ms
+/// tick in a release build and 17% in the dev profile, which `Cargo.toml`
+/// optimises, so one gate serves both. Three times' margin keeps a shared or
+/// loaded machine from failing the build over noise.
+const BUDGET: f64 = 0.5;
 
-/// The grids the **Pitch resolution** slider reaches, in samples per octave:
-/// its two ends and the default between them.
+/// The windows the **Window** slider reaches, in milliseconds: its shortest,
+/// the default, and its longest.
 ///
-/// The two ends pull in opposite directions. The top has twice the bins, which
-/// costs the diffuser four times as much, but its window is twice as long and
-/// so is its tick. The bottom is the short-window end, where a 128-sample
-/// window ticks every 1.3 ms and the share is what a cheap chain keeps of a
-/// tick that short.
-const GRIDS: [usize; 3] = [12, 180, 360];
+/// The window sets what one render costs and the update rate sets the tick, so
+/// each runs at the fastest rate the slider offers, and the longest window,
+/// with the most samples to transform and bin, has the least headroom.
+const WINDOWS: [u32; 3] = [audio::MIN_WINDOW_MS, 50, audio::MAX_WINDOW_MS];
 
 #[test]
-fn the_chain_stays_well_inside_its_tick_at_every_grid_the_slider_reaches() {
-	for samples_per_octave in GRIDS {
-		let mut config = Config {
-			samples_per_octave,
-			..Default::default()
-		};
+fn the_chain_stays_well_inside_its_tick_at_every_setting_the_sliders_reach() {
+	for window_ms in WINDOWS {
+		let mut config = Config::default();
 		let SpectrumGeneratorConfig::Audio(generator_config) = &mut config.spectrum_generator;
-		generator_config.dft_window_size = audio::dft_window_size(samples_per_octave);
-		check_one_grid(&config);
+		generator_config.window_ms = window_ms;
+		generator_config.update_rate = audio::MAX_UPDATE_RATE;
+		check_one_window(&config);
 	}
 }
 
-fn check_one_grid(config: &Config) {
+fn check_one_window(config: &Config) {
 	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
 	let signal = sine_wave(
 		&[(440.0, 1.0), (1760.0, 0.5), (7040.0, 0.25)],
 		SAMPLE_RATE,
-		generator_config.dft_window_size,
+		audio::window_samples(generator_config.window_ms, SAMPLE_RATE),
 	);
 
 	let mut renderer = renderer(config, sample_reader(&signal), SAMPLE_RATE);
@@ -74,9 +70,9 @@ fn check_one_grid(config: &Config) {
 	let share = per_render.as_secs_f64() / tick.as_secs_f64();
 	assert!(
 		share < BUDGET,
-		"at {} bins / octave the chain took {:.3} ms of a {:.3} ms tick \
+		"at a {} ms window the chain took {:.3} ms of a {:.3} ms tick \
 		 ({:.1}%, budget {:.0}%)",
-		config.samples_per_octave,
+		generator_config.window_ms,
 		per_render.as_secs_f64() * 1000.0,
 		tick.as_secs_f64() * 1000.0,
 		share * 100.0,

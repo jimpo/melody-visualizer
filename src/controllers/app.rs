@@ -13,10 +13,17 @@ use crate::error::Error;
 use crate::graphic::renderer::{self, GraphicRenderer};
 use crate::pubsub::{Notifier, PubSub, SubscriptionHandle};
 use crate::spectrum::TransformId;
-use crate::spectrum::generators::audio::AudioSpectrumGenerator;
+use crate::spectrum::generators::audio::{self, AudioSpectrumGenerator};
 use crate::spectrum::renderer::{self as spectrum_processor, SpectrumRenderer};
 
-const BUFFER_SIZE: usize = 128 * 1024; // 128 KiB
+/// The highest sample rate the capture ring is sized for.
+const MAX_SAMPLE_RATE: usize = 192_000;
+
+/// The capture ring, in bytes: the longest window plus the longest hop at the
+/// highest sample rate, so the audio between two ticks never overruns it.
+const BUFFER_SIZE: usize =
+	(audio::MAX_WINDOW_MS as usize + 1000 / audio::MIN_UPDATE_RATE as usize) * MAX_SAMPLE_RATE
+		/ 1000 * size_of::<f32>();
 
 pub struct AppController {
 	pub config: Config,
@@ -213,12 +220,6 @@ impl AppController {
 		self.source
 			.as_ref()
 			.and_then(|source| source.connected_input())
-	}
-
-	/// The rate the source's samples arrive at, as JACK reports it now. Nothing
-	/// is cached, so a rate the server changed is reported too.
-	pub fn sample_rate(&self) -> Option<u32> {
-		self.source.as_ref().map(|source| source.sample_rate())
 	}
 
 	/// Feed the source's input from `output_port`, or from nothing at all.

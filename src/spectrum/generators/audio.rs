@@ -10,39 +10,43 @@ use crate::audio::SampleReader;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Config {
-	pub dft_window_size: usize,
-	/// The part of each DFT window that repeats the one before it, as a
-	/// fraction of the window.
-	///
-	/// What is left is the hop: the audio the spectrum advances by per tick,
-	/// and so the tick interval itself. At 0.5 each window shares half its
-	/// samples with the last and the spectrum advances twice per window.
-	pub overlap: f64,
+	/// The audio one DFT covers, in milliseconds. The sample count follows the
+	/// sample rate, so a rate JACK changes keeps the window the same length in
+	/// time.
+	pub window_ms: u32,
+	/// The spectra produced per second, independent of the window. A window
+	/// longer than the hop repeats part of the last; a shorter one skips audio.
+	pub update_rate: u32,
 }
 
-/// The audio one tick advances by, in samples: the part of a window that does
-/// not repeat the one before it.
-pub fn hop_samples(dft_window_size: usize, overlap: f64) -> f64 {
-	dft_window_size as f64 * (1.0 - overlap)
+impl Default for Config {
+	fn default() -> Self {
+		Config {
+			window_ms: 50,
+			update_rate: 50,
+		}
+	}
 }
 
-/// The DFT window a grid of `samples_per_octave` bins needs.
-///
-/// A window of `n` samples spaces its bins `sample_rate / n` apart, evenly,
-/// while the grid's bins crowd together towards the low end. So the octave
-/// below the Nyquist frequency is where the grid is coarsest and the transform
-/// has the best chance of resolving it: the grid's step there is a
-/// `2^(1/samples_per_octave) - 1` fraction of `sample_rate / 4`, and matching it
-/// takes `4 / (2^(1/samples_per_octave) - 1)` samples. The sample rate cancels,
-/// so the answer holds at any rate. Lower octaves the transform interpolates
-/// across, which no window short enough to be worth planning would fix.
-///
-/// `rustfft` plans any size but is fastest at a power of two, so the window
-/// rounds up to one.
-pub fn dft_window_size(samples_per_octave: usize) -> usize {
-	let samples = 4.0 / (2f64.powf(1.0 / samples_per_octave as f64) - 1.0);
-	(samples.ceil() as usize).next_power_of_two()
+/// The shortest window the Window slider offers, in milliseconds.
+pub const MIN_WINDOW_MS: u32 = 10;
+
+/// The longest window the slider offers, and the capture ring holds.
+pub const MAX_WINDOW_MS: u32 = 1000;
+
+/// The slowest update rate the Update rate slider offers, in spectra per
+/// second. The capture ring holds the hop it leaves.
+pub const MIN_UPDATE_RATE: u32 = 1;
+
+/// The fastest update rate the slider offers, and so the shortest tick the
+/// chain has to fit in.
+pub const MAX_UPDATE_RATE: u32 = 100;
+
+/// The samples a window of `window_ms` holds at `sample_rate`.
+pub fn window_samples(window_ms: u32, sample_rate: u32) -> usize {
+	(window_ms as f64 * sample_rate as f64 / 1000.0).round() as usize
 }
 
 pub struct AudioSpectrumGenerator {
@@ -51,7 +55,7 @@ pub struct AudioSpectrumGenerator {
 	/// so that the spectrum thread allocates nothing per tick.
 	samples: Vec<f32>,
 	analyzer: Analyzer,
-	overlap: f64,
+	config: Config,
 	/// The overrun count as of the last tick that logged one. The counter itself
 	/// only ever grows; this is what turns it into a per-tick delta.
 	reported_overruns: u64,
@@ -61,7 +65,7 @@ impl Debug for AudioSpectrumGenerator {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.debug_struct("AudioSpectrumGenerator")
 			.field("analyzer", &self.analyzer)
-			.field("overlap", &self.overlap)
+			.field("config", &self.config)
 			.finish()
 	}
 }
@@ -72,32 +76,36 @@ impl AudioSpectrumGenerator {
 			audio_buffer,
 			samples: Vec::new(),
 			analyzer: Analyzer::new(WindowShape::Hann, sample_rate),
-			overlap: config.overlap,
+			config,
 			reported_overruns: 0,
 		};
-		generator.set_window_size(config.dft_window_size);
+		generator.plan_window();
 		generator
 	}
 
-	/// Applies `config`, keeping the DFT plan when the window size is the one
+	/// Applies `config`, keeping the DFT plan when the window holds the samples
 	/// already planned for.
 	pub fn set_config(&mut self, config: Config) {
-		if config.dft_window_size != self.analyzer.window_size() {
-			self.set_window_size(config.dft_window_size);
-		}
-		self.overlap = config.overlap;
+		self.config = config;
+		self.plan_window();
 	}
 
-	pub fn set_window_size(&mut self, dft_window_size: usize) {
-		self.analyzer.set_window_size(dft_window_size);
-		self.samples.resize(dft_window_size, 0.0);
+	/// Sizes the DFT to the configured window at the current sample rate,
+	/// re-planning only when the sample count changes.
+	fn plan_window(&mut self) {
+		let size = window_samples(self.config.window_ms, self.analyzer.sample_rate);
+		if size != self.analyzer.window_size() {
+			self.analyzer.set_window_size(size);
+			self.samples.resize(size, 0.0);
+		}
 	}
 
 	/// Log any audio the real-time thread dropped since the last tick.
 	///
-	/// The ring holds ~0.7 s of audio and this thread drains it every tick, so an
-	/// overrun means the spectrum thread stalled long enough to lose sound. That
-	/// is a starved pipeline, not a quiet one, and nothing else would show it.
+	/// The ring holds the longest window and the slowest hop at the highest
+	/// sample rate, and this thread drains it every tick, so an overrun means
+	/// the spectrum thread stalled long enough to lose sound. That is a starved
+	/// pipeline, not a quiet one, and nothing else would show it.
 	fn report_overruns(&mut self) {
 		let overruns = self.audio_buffer.overruns();
 		if overruns > self.reported_overruns {
@@ -126,14 +134,15 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 		self.analyzer.fill_bins(buffer)
 	}
 
-	/// The time the hop covers: the audio between one window and the next.
+	/// The time between two spectra: one over the update rate.
 	fn interval(&self) -> Duration {
-		let hop = hop_samples(self.analyzer.window_size(), self.overlap);
-		Duration::from_secs_f64(hop / self.analyzer.sample_rate as f64)
+		// A persisted rate of zero would ask for an infinite interval.
+		Duration::from_secs_f64(1.0 / self.config.update_rate.max(1) as f64)
 	}
 
 	fn set_sample_rate(&mut self, sample_rate: u32) {
 		self.analyzer.set_sample_rate(sample_rate);
+		self.plan_window();
 	}
 }
 
@@ -227,7 +236,7 @@ impl Analyzer {
 	///
 	/// A bin therefore holds power, not power per octave, and one DFT bin is
 	/// worth tens of output bins at 200 Hz and less than one at 20 kHz. So a
-	/// tone the analysis cannot place better than ±23 Hz is drawn as the wide,
+	/// tone the analysis cannot place better than ±20 Hz is drawn as the wide,
 	/// low hump that width deserves, and the same tone an octave up as a narrow,
 	/// tall one. Spreading it is the point — a comb of spikes with empty bins
 	/// between them claims a precision the window does not have — but it does
@@ -269,7 +278,7 @@ impl Analyzer {
 				let peak = dft_log_freq(j);
 				let right = dft_log_freq(j + 1);
 				// DC has no log frequency to anchor the first bin's lower side,
-				// so mirror its upper one. That bin sits at 23 Hz on the default
+				// so mirror its upper one. That bin sits at 20 Hz on the default
 				// window, below any grid a listener would ask for.
 				let left = if j == 1 {
 					peak - (right - peak)
@@ -356,15 +365,16 @@ mod tests {
 	use crate::test_support::{sample_reader, sine_wave, spectrum_params};
 
 	const SAMPLE_RATE: u32 = 48_000;
-	const WINDOW: usize = 2048;
-	const OVERLAP: f64 = 0.5;
+	const WINDOW_MS: u32 = 50;
+	/// The samples [`WINDOW_MS`] holds at [`SAMPLE_RATE`].
+	const WINDOW: usize = 2400;
 
 	/// A generator over `samples`, at the default window size and sample rate.
 	fn generator(samples: &[f32]) -> AudioSpectrumGenerator {
 		AudioSpectrumGenerator::new(
 			Config {
-				dft_window_size: WINDOW,
-				overlap: OVERLAP,
+				window_ms: WINDOW_MS,
+				..Config::default()
 			},
 			sample_reader(samples),
 			SAMPLE_RATE,
@@ -513,89 +523,52 @@ mod tests {
 		assert_eq!(spectrum.values(), []);
 	}
 
-	/// The seconds of audio one window covers.
-	fn window_seconds(window: usize, sample_rate: u32) -> f64 {
-		window as f64 / sample_rate as f64
-	}
-
-	/// How far apart two of these durations may be and still count as equal.
-	/// A `Duration` holds whole nanoseconds, so a tick that divides a window
-	/// unevenly does not multiply back to it exactly.
-	const TOLERANCE_SECONDS: f64 = 1e-6;
-
 	#[test]
-	fn the_overlap_says_how_many_ticks_a_window_takes() {
-		// A window advances in one tick with nothing overlapping, in two when
-		// half of it repeats, in four when three quarters do.
-		for (overlap, ticks) in [(0.0, 1.0), (0.5, 2.0), (0.75, 4.0)] {
-			for window in [512, 1024, 2048, 4096] {
+	fn the_update_rate_sets_the_tick_interval_whatever_the_window() {
+		for window_ms in [10, 50, 1000] {
+			for update_rate in [1, 25, 100] {
 				let mut generator = generator(&[]);
 				generator.set_config(Config {
-					dft_window_size: window,
-					overlap,
+					window_ms,
+					update_rate,
 				});
 
-				let ticked = generator.interval().as_secs_f64() * ticks;
-				let expected = window_seconds(window, SAMPLE_RATE);
+				let second = generator.interval().as_secs_f64() * update_rate as f64;
+				// A `Duration` holds whole nanoseconds, so an interval that
+				// divides a second unevenly does not multiply back to it exactly.
 				assert!(
-					(ticked - expected).abs() < TOLERANCE_SECONDS,
-					"a {window}-sample window at {overlap} overlap took {ticked} s \
-					 to advance, expected {expected} s",
+					(second - 1.0).abs() < 1e-6,
+					"{update_rate} ticks at a {window_ms} ms window took {second} s",
 				);
 			}
 		}
 	}
 
 	#[test]
-	fn the_window_resolves_the_grid_in_the_octave_below_nyquist() {
-		for samples_per_octave in [12, 60, 180, 360, 720] {
-			let window = dft_window_size(samples_per_octave);
-			assert!(
-				window.is_power_of_two(),
-				"{samples_per_octave} bins / octave planned a {window}-sample window",
-			);
+	fn the_window_keeps_its_milliseconds_across_sample_rates() {
+		let mut generator = generator(&[]);
+		assert_eq!(generator.analyzer.window_size(), WINDOW);
 
-			// Both steps as a fraction of the sample rate, which cancels: the
-			// DFT's is 1 / window, and the grid's at the Nyquist frequency's
-			// lower octave is that octave's bottom, a quarter of the rate,
-			// times the ratio between two grid bins.
-			let dft_step = 1.0 / window as f64;
-			let grid_step = 0.25 * (2f64.powf(1.0 / samples_per_octave as f64) - 1.0);
-			assert!(
-				dft_step <= grid_step,
-				"a {window}-sample window steps by {dft_step} of the sample rate, \
-				 past the {grid_step} between two of {samples_per_octave} bins / octave",
-			);
-			assert!(
-				dft_step * 2.0 > grid_step,
-				"a {window}-sample window is twice what \
-				 {samples_per_octave} bins / octave asks for",
+		for (sample_rate, samples) in [(44_100, 2205), (96_000, 4800), (192_000, 9600)] {
+			generator.set_sample_rate(sample_rate);
+			assert_eq!(
+				generator.analyzer.window_size(),
+				samples,
+				"{WINDOW_MS} ms at {sample_rate} Hz",
 			);
 		}
 	}
 
 	#[test]
-	fn changing_the_sample_rate_updates_the_tick_interval() {
-		let mut generator = generator(&[]);
-		generator.set_sample_rate(96_000);
-
-		let ticked = generator.interval().as_secs_f64() / (1.0 - OVERLAP);
-		let expected = window_seconds(WINDOW, 96_000);
-		assert!(
-			(ticked - expected).abs() < TOLERANCE_SECONDS,
-			"{ticked} s, expected {expected} s"
-		);
-	}
-
-	#[test]
 	fn changing_the_sample_rate_updates_frequency_binning() {
-		let signal = sine_wave(&[(440.0, 1.0)], 96_000, WINDOW);
+		let window = window_samples(WINDOW_MS, 96_000);
+		let signal = sine_wave(&[(440.0, 1.0)], 96_000, window);
 		let mut generator = generator(&signal);
 		generator.set_sample_rate(96_000);
 
 		let spectrum = generator.generate(SpectrumBuffer::new(spectrum_params(1196)));
 		let peak = spectrum.params().frequencies()[peak_index(&spectrum)];
-		let dft_bin_hz = 96_000.0 / WINDOW as f64;
+		let dft_bin_hz = 96_000.0 / window as f64;
 
 		assert!((peak - 440.0).abs() <= dft_bin_hz);
 	}

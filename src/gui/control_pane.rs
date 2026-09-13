@@ -443,11 +443,7 @@ fn refresh_summaries(app_controller: &AppController, stages: &[Stage]) {
 fn stage_summary(app_controller: &AppController, id: StageId) -> String {
 	match id {
 		StageId::Source => source_name(app_controller),
-		StageId::Spectrum => format!(
-			"{} · {}",
-			controls::spectrum::divisions_text(controls::spectrum::divisions(app_controller)),
-			controls::spectrum::rate_text(app_controller),
-		),
+		StageId::Spectrum => controls::spectrum::summary(app_controller),
 		StageId::Transform(id) => transform_summary(app_controller, id),
 		StageId::Spiral => spiral_summary(app_controller),
 	}

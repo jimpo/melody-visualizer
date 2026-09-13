@@ -107,9 +107,10 @@ $ cargo bench -- transform/diffuser # one group
 
 The stages run in sequence on the one spectrum thread, so the chain's capacity
 is the **reciprocal sum** of theirs, not the smallest of them. The summary
-computes that, and reports headroom against the tick rate the configured window
-implies rather than a fixed constant — doubling the DFT window halves the rate
-demanded of every transform while leaving its cost untouched.
+computes that, and reports headroom against the configured update rate, once at
+the default window and once at the longest the **Window** slider reaches. The
+window sets the generator's cost and nothing else's; the tick is the update
+rate's alone.
 
 ### Recorded baseline
 
@@ -117,21 +118,32 @@ The absolute numbers here and in [The visualizer](#the-visualizer) are from one
 machine; a slower box shifts them together. The ratios between rows are the part
 that should reproduce.
 
-Release build, 2048-sample window at 48 kHz, 1196 bins. The tick is 21.333 ms,
-so **46.9 spectra/s** is what the chain has to keep up with.
+Release build, 50 ms window (2400 samples) at 48 kHz, 1196 bins. The update
+rate is 50 / sec, so the tick is 20 ms and **50 spectra/s** is what the chain has
+to keep up with.
 
 | Stage | Capacity | Headroom | % of tick |
 |---|--:|--:|--:|
-| Generator (DFT + binning) | 48,232 spectra/s | 1,029× | 0.10% |
-| Diffuser (1/24 octave) | 239,295 spectra/s | 5,105× | 0.02% |
-| VolumeNormalizer | 518,970 spectra/s | 11,071× | 0.01% |
-| DecibelConverter | 165,322 spectra/s | 3,527× | 0.03% |
-| **Composed default chain** | **37,644 spectra/s** | **803×** | **0.12%** |
+| Generator (DFT + binning) | 11,758 spectra/s | 235× | 0.43% |
+| Diffuser (1/24 octave) | 232,155 spectra/s | 4,643× | 0.02% |
+| VolumeNormalizer | 522,999 spectra/s | 10,460× | 0.01% |
+| DecibelConverter | 118,342 spectra/s | 2,367× | 0.04% |
+| **Composed default chain** | **11,058 spectra/s** | **221×** | **0.45%** |
 
-**There is no throughput problem.** The chain costs a tenth of a percent of its
-budget. The benchmarks exist to hold that, to catch a regression, and to locate
-the cliff below — not to justify optimizing a path with three orders of
-magnitude of headroom.
+At the one-second window (48,000 samples) the generator's capacity falls to 580
+spectra/s and the composed chain takes **8.2%** of the same tick — twelve times'
+headroom. The generator is the whole of that cost: the transforms work on the
+grid, which the window does not change.
+
+The generator's cost grows with the samples in the window, so the tightest
+corner is the longest window at the fastest update rate, 100 / sec: 14% of a
+10 ms tick at 48 kHz, and about 73% at 192 kHz, where a loaded machine would
+start to skip ticks.
+
+**There is no throughput problem at the defaults.** The default chain costs
+under half a percent of its tick. The benchmarks exist to hold that, to catch a
+regression, and to locate the cliff below — not to justify optimizing a path
+with two orders of magnitude of headroom.
 
 ### The cliff
 
@@ -148,16 +160,13 @@ Every doubling of bins costs 4×. Width is the same story at a fixed bin count:
 1/24 octave takes 4.2 µs, one octave 97 µs, ten octaves 830 µs — the last of
 those is 4% of the tick, from a slider the GUI already offers.
 
-Bin count is `samples_per_octave`, which the **Pitch resolution** slider moves
-between 12 and 360: 1196 bins in the middle of its range, 2392 at the top. Both
-ends stay cheap, for opposite reasons. The top has twice the bins and so four
-times the diffuser, but its window doubles too and the tick that comes from it
-doubles with it. The bottom's tick is 1.3 ms, short enough to matter, over a
-chain of 80 bins that costs almost nothing.
+Bin count is `samples_per_octave`, a config value no control moves: 180 by
+default, which gives 1196 bins.
 
-`tests/dsp_budget.rs` is the gate the ordinary test run applies: the composed
-chain must stay well inside one tick, at both ends of that slider and at its
-default. Benchmarks catch nothing if nobody runs them; that test does.
+`tests/dsp_budget.rs` is the gate the ordinary test run applies: at the fastest
+update rate, the composed chain must stay inside half a tick at the shortest
+window, the default and the longest the **Window** slider reaches. Benchmarks
+catch nothing if nobody runs them; that test does.
 
 ### The visualizer
 
@@ -586,7 +595,7 @@ before being copied or extended.
 | **SpectrumBuffer** | A `Spectrum` with no meaningful contents — the recycled allocation that cycles back from the graphic thread |
 | **Spectrum transform** | One stage of the DSP chain (`Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |
 | **Generator** | The head of a pipeline. A `SpectrumGenerator` makes a spectrum from samples; a `GraphicGenerator` makes a graphic from spectra |
-| **Spectrum tick** | The spectrum thread's timer, at `generator.interval()` — half a DFT window. It is the pipeline's only timed producer |
+| **Spectrum tick** | The spectrum thread's timer, at `generator.interval()` — one over the update rate. It is the pipeline's only timed producer |
 | **Frame timer** | The GTK thread's 40 ms timer that requests a render. Independent of the spectrum tick |
 | **`AsyncProcessor<T>`** | The RPC handle. Ships a `FnOnce(&mut T)` to the thread that owns `T` and awaits the result |
 | **PubSub / `Notifier`** | The event bus. Any thread may publish; every subscriber callback runs on the GTK thread |

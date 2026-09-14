@@ -1,6 +1,6 @@
 //! The spiral stage's body: the pitch range it draws, the key it is aligned
-//! to, the ring of interval names, the exposure, and the two paddings that fix
-//! its annulus on the surface.
+//! to, the ring of interval names, the exposure, the two paddings that fix its
+//! annulus on the surface, and the width of the ribbon's glow.
 
 use gtk::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -37,6 +37,19 @@ const MAX_OUTER_PAD: f64 = 100.0;
 const MIN_EXPOSURE: f64 = 0.5;
 const MAX_EXPOSURE: f64 = 4.0;
 
+/// Cents in an octave, the unit the glow sliders show the config's octaves in.
+const CENTS: f64 = 1200.0;
+
+/// The widest glow core the slider offers, in cents.
+const MAX_CORE: f64 = 120.0;
+
+/// The widest glow sigma the slider offers, in cents. With the widest core, the
+/// glow still ends inside half an octave, so neighbouring turns never touch.
+const MAX_SIGMA: f64 = 90.0;
+// The turns are an octave apart, so a glow that reaches half an octave touches
+// the next.
+const _: () = assert!(MAX_CORE + spiral::REACH * MAX_SIGMA < CENTS / 2.0);
+
 pub fn new(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
 	let body = gtk::Box::new(gtk::Orientation::Vertical, GROUP_SPACING);
 	body.add_css_class("stage-body");
@@ -44,21 +57,41 @@ pub fn new(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
 	body.append(&build_key_row(app_controller).widget);
 	body.append(&build_interval_ring(app_controller));
 	body.append(&build_exposure(app_controller));
-	body.append(&build_pad(
+	body.append(&build_slider(
 		app_controller,
 		"Centre hole",
 		"The empty disc the lowest ring is drawn around.",
 		MAX_CENTER_PAD,
+		pixels,
 		|config| config.center_pad,
 		|config, pixels| config.center_pad = pixels,
 	));
-	body.append(&build_pad(
+	body.append(&build_slider(
 		app_controller,
 		"Outer padding",
 		"The margin between the highest ring and the nearer edge.",
 		MAX_OUTER_PAD,
+		pixels,
 		|config| config.outer_pad,
 		|config, pixels| config.outer_pad = pixels,
+	));
+	body.append(&build_slider(
+		app_controller,
+		"Glow core",
+		"The half-width of the ribbon's band at full brightness.",
+		MAX_CORE,
+		cents,
+		|config| config.core * CENTS,
+		|config, cents| config.core = cents / CENTS,
+	));
+	body.append(&build_slider(
+		app_controller,
+		"Glow falloff",
+		"The sigma of the glow past the core's edge.",
+		MAX_SIGMA,
+		cents,
+		|config| config.sigma * CENTS,
+		|config, cents| config.sigma = cents / CENTS,
 	));
 	body
 }
@@ -162,16 +195,25 @@ fn build_key_row(app_controller: &Rc<RefCell<AppController>>) -> KeyRow {
 	key_row
 }
 
-/// One of the two padding sliders, in pixels, reading its field through `get`
-/// and writing it through `set`.
+fn pixels(value: f64) -> String {
+	format!("{value:.0} px")
+}
+
+fn cents(value: f64) -> String {
+	format!("{value:.0} ¢")
+}
+
+/// A slider from zero to `max`, shown through `format`, reading its field
+/// through `get` and writing it through `set`.
 ///
-/// Both reconfigure the generator in place, so a drag reshapes the spiral
+/// Each reconfigures the generator in place, so a drag reshapes the spiral
 /// rather than rebuilding it.
-fn build_pad(
+fn build_slider(
 	app_controller: &Rc<RefCell<AppController>>,
 	label: &str,
 	caption: &str,
 	max: f64,
+	format: fn(f64) -> String,
 	get: fn(&spiral::Config) -> f64,
 	set: fn(&mut spiral::Config, f64),
 ) -> gtk::Box {
@@ -182,20 +224,18 @@ fn build_pad(
 	};
 
 	let adjustment = gtk::Adjustment::new(initial, 0.0, max, 1.0, max / 4.0, 0.0);
-	let slider = CaptionedSlider::new(label, caption, &adjustment, |pixels| {
-		format!("{pixels:.0} px")
-	});
+	let slider = CaptionedSlider::new(label, caption, &adjustment, format);
 
 	let app_controller = app_controller.clone();
 	slider.scale.connect_change_value(move |_scale, _, value| {
 		// A jump to a position outside the trough reports a value outside the
-		// range, and a negative padding turns the annulus inside out.
-		let pixels = value.clamp(0.0, max);
+		// range, and a negative padding or glow width is meaningless.
+		let value = value.clamp(0.0, max);
 		let async_update = {
 			let mut app_controller = app_controller.borrow_mut();
 			let GraphicGeneratorConfig::Spiral(config) =
 				&mut app_controller.config.graphic_generator;
-			set(config, pixels);
+			set(config, value);
 			app_controller.update_graphic_generator()
 		};
 		handle_async_err(async_update);
@@ -294,5 +334,7 @@ mod tests {
 		assert!((0.0..=MAX_CENTER_PAD).contains(&config.center_pad));
 		assert!((0.0..=MAX_OUTER_PAD).contains(&config.outer_pad));
 		assert!((MIN_EXPOSURE..=MAX_EXPOSURE).contains(&config.exposure));
+		assert!((0.0..=MAX_CORE).contains(&(config.core * CENTS)));
+		assert!((0.0..=MAX_SIGMA).contains(&(config.sigma * CENTS)));
 	}
 }

@@ -57,13 +57,35 @@ pub struct Config {
 	/// lights fully, and a bin at or over it whitens.
 	#[serde(default = "default_exposure")]
 	pub exposure: f64,
+	/// The half-width of the glow's flat core of full brightness, in octaves.
+	#[serde(default = "default_core")]
+	pub core: f64,
+	/// The sigma of the Gaussian the glow falls off in past the core's edge, in
+	/// octaves.
+	///
+	/// The turns are an octave apart, so a glow whose `core + REACH · sigma`
+	/// passes half an octave is cut off where it meets the next turn's.
+	#[serde(default = "default_sigma")]
+	pub sigma: f64,
 }
 
 /// A bin at 80% of the running peak reaches full brightness.
 pub const DEFAULT_EXPOSURE: f64 = 1.25;
+/// About a quarter of a semitone either side of the centre line.
+pub const DEFAULT_CORE: f64 = 0.02;
+/// Keeps the ribbon about as wide as a Gaussian glow alone of 0.05 octaves.
+pub const DEFAULT_SIGMA: f64 = 0.04;
 
 fn default_exposure() -> f64 {
 	DEFAULT_EXPOSURE
+}
+
+fn default_core() -> f64 {
+	DEFAULT_CORE
+}
+
+fn default_sigma() -> f64 {
+	DEFAULT_SIGMA
 }
 
 /// The interval names of the twelve spokes, clockwise from the key.
@@ -89,16 +111,10 @@ const LABEL_ALPHA: f64 = 0.55;
 /// multiplication, so `dim` multiplying two encoded bytes multiplies their light.
 /// The piecewise sRGB curve would break that, and the difference does not show.
 const GAMMA: f64 = 2.2;
-/// The sigma of the glow, a Gaussian in the distance from the centre line, in
-/// octaves.
-const SIGMA: f64 = 0.05;
-/// Where the glow ends, in sigmas from the centre line. The encoded weight is
+/// Where the glow ends, in sigmas past the core's edge. The encoded weight is
 /// `255 · exp(−s²/2γ)`, which rounds to zero past `√(2γ · ln 510)`, about 5.24,
 /// so ending it here leaves no step at its edge.
-const REACH: f64 = 5.25;
-// The turns are an octave apart, so a band that reaches half an octave touches
-// the next.
-const _: () = assert!(REACH * SIGMA < 0.5);
+pub const REACH: f64 = 5.25;
 /// A silent bin's brightness, as a fraction of full light.
 const REST: f64 = 0.02;
 
@@ -110,8 +126,8 @@ const REST: f64 = 0.02;
 struct Texel {
 	/// Index into the spectrum's values.
 	bin: u16,
-	/// Glow, sRGB-encoded: 255 on the ribbon's centre line and falling to 0 with
-	/// distance.
+	/// Glow, sRGB-encoded: 255 inside the ribbon's core and falling to 0 with
+	/// distance past its edge.
 	weight: u8,
 }
 
@@ -174,7 +190,12 @@ impl SpiralGenerator {
 			bins <= usize::from(u16::MAX) + 1,
 			"a texel holds its bin as a u16"
 		);
-		let key = self.config.key_log_freq;
+		let Config {
+			key_log_freq: key,
+			core,
+			sigma,
+			..
+		} = self.config;
 
 		self.hues.extend(log_frequencies.iter().map(|&log_freq| {
 			let turn = (log_freq - key).rem_euclid(1.0);
@@ -208,9 +229,9 @@ impl SpiralGenerator {
 			// both and stays black.
 			let pitch = ((dx * dx + dy * dy).sqrt() - r_min) / r_scale + min - key;
 			let k = (pitch - turn).round();
-			// Distance off the centre line, in sigmas. Past the glow's end is off
+			// Distance past the core's edge, in sigmas. Past the glow's end is off
 			// the ribbon, which is most of the surface, so `exp` is skipped there.
-			let sigmas = (pitch - turn - k).abs() / SIGMA;
+			let sigmas = (((pitch - turn - k).abs() - core) / sigma).max(0.0);
 
 			let bin = ((key + turn + k - min) / (max - min) * (bins - 1) as f64).round();
 			if sigmas < REACH && (0.0..bins as f64).contains(&bin) {
@@ -392,7 +413,14 @@ mod tests {
 			key_log_freq: note!(C, 4).log_frequency(),
 			interval_ring: false,
 			exposure: 1.0,
+			core: DEFAULT_CORE,
+			sigma: DEFAULT_SIGMA,
 		}
+	}
+
+	/// How far the glow reaches from the centre line, in pixels.
+	fn reach() -> f64 {
+		(config().core + REACH * config().sigma) * OCTAVE
 	}
 
 	/// A semitone grid spanning `OCTAVES` octaves upward from C3.
@@ -534,16 +562,36 @@ mod tests {
 		assert_eq!(usize::from(last.bin), BINS - 1);
 		assert!(first.weight > 200 && last.weight > 200);
 
-		// The glow is dim two and a half sigmas from the centre line, and gone
+		// The glow is dim two and a half sigmas past the core's edge, and gone
 		// past its end.
-		let dim_edge = 2.5 * SIGMA * OCTAVE;
+		let dim_edge = (config().core + 2.5 * config().sigma) * OCTAVE;
 		for radius in [CENTER_PAD - dim_edge, R_MAX + dim_edge] {
 			assert!(straight_up(radius).weight < 128);
 		}
 		// Only inside the first turn: outside the last, the glow reaches the edge
 		// of this small surface.
-		let gone = REACH * SIGMA * OCTAVE + 2.0;
+		let gone = reach() + 2.0;
 		assert_eq!(straight_up(CENTER_PAD - gone).weight, 0);
+	}
+
+	#[test]
+	fn the_core_is_at_full_brightness_up_to_its_edge() {
+		let mut generator = keyed_to_c();
+		// A core a few pixels wide, so a pixel inside its edge is off the centre
+		// line.
+		let core = 0.1;
+		generator.set_config(Config { core, ..config() });
+		refresh(&mut generator);
+		// Straight up from the middle turn's C. A pixel centre lies up to half a
+		// pixel from the sampled point.
+		let edge = radius(12) + core * OCTAVE;
+		let weight = |radius: f64| texel_at(&generator, (ORIGIN, ORIGIN - radius)).weight;
+		assert_eq!(
+			weight(edge - 1.0),
+			255,
+			"a pixel inside the core is at full brightness"
+		);
+		assert!(weight(edge + 1.0) < 255, "a pixel past its edge is dimmer");
 	}
 
 	#[test]
@@ -583,7 +631,7 @@ mod tests {
 
 		// Inside the innermost band, which reaches the glow's end below
 		// `center_pad`.
-		let clear = CENTER_PAD - REACH * SIGMA * OCTAVE - 2.0;
+		let clear = CENTER_PAD - reach() - 2.0;
 		for step in 0..16 {
 			let theta = step as f64 / 16.0 * 2.0 * PI;
 			let (x, y) = (ORIGIN + clear * theta.sin(), ORIGIN - clear * theta.cos());

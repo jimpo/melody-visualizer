@@ -232,7 +232,7 @@ and each stage changes both. What follows is the contract as the code stands.
 | `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
 | `VolumeNormalizer` | fraction of a running peak | nominally `[0, ~1]`, **not clamped** — a transient louder than the peak has caught up with exceeds 1 |
 | `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 3]` at the default `min_level` of 1e-3 (−60 dB in amplitude) |
-| `SpiralGenerator` (consumer) | — | **assumes** `[0, 1]`: `REST + (1 − REST) · spectrum[i].min(1.0)` in linear light |
+| `SpiralGenerator` (consumer) | — | **expects** `[0, ~1]` with 1 as the peak, **not clamped**: `REST + (1 − REST) · exposure · spectrum[i]` in linear light. Light past 1 overexposes: the hue's brightest channel stays full and the colour moves toward white, reaching it at 2 |
 
 Two rules follow, and a new transform has to answer both:
 
@@ -240,20 +240,21 @@ Two rules follow, and a new transform has to answer both:
    diffuser preserves; the harmonic summation, the power map, the normalizer and
    the decibel converter rescale.
 2. **The chain's last stage owns the output range**, because the consumer
-   requires `[0, 1]` and clamps only from above. A negative value would pass
-   straight into HSV; nothing emits one today and nothing forbids one either.
+   treats 1 as the peak and draws anything above it as overexposure toward
+   white. A value far enough below 0 draws black; nothing emits one today and
+   nothing forbids one either.
 
 **The stages do not currently compose.** Only `VolumeNormalizer` produces
 roughly what the consumer expects:
 
 - The generator alone emits values around 0.06, so with no transforms the spiral
   renders nearly black.
-- `DecibelConverter` emits up to 3.0. After the normalizer everything above 0.1
-  saturates to white; on its own, everything above 1.0 does. This is very likely
+- `DecibelConverter` emits up to 3.0. On its own, everything above about 1.6
+  blows out to white at the default exposure. This is very likely
   why `Config::default` has it commented out rather than deleted.
 
 The fix is one of: the decibel converter normalizes to its own output range, or
-the `[0, 1]` requirement moves onto the chain's output instead of living as the
+the `[0, ~1]` requirement moves onto the chain's output instead of living as the
 consumer's private assumption. That is a decision to take now the contract is
 written down, not a gap in the writing.
 
@@ -460,7 +461,7 @@ the stage in the running chain, and the row goes on reporting what the stage is
 set to. The switch's state lives on the config entry, so it opens on what the
 config says and a chain rebuilt from the config keeps the same stages bypassed.
 The harmonic summation, the power map and the diffuser qualify. The volume normalizer is the stage that
-rescales raw amplitude into the `[0, 1]` the spiral consumes, so bypassing it leaves
+rescales raw amplitude into the `[0, ~1]` the spiral consumes, so bypassing it leaves
 every value on the black floor — see
 [§ Value ranges along the chain](#value-ranges-along-the-chain). The decibel
 converter is withheld for its own reason: without it the spectrum is linear in
@@ -564,7 +565,7 @@ candidate for its own change.
 ### DSP chain
 
 - **The stages do not compose over their value ranges.** `DecibelConverter` emits
-  up to 6.0 into a consumer that assumes `[0, 1]`, which is why it is commented
+  up to 6.0 into a consumer that treats 1 as the peak, which is why it is commented
   out of `Config::default`. See *Value ranges along the chain* above for the two
   ways out.
 - **The transforms measure time in ticks, and the tick is adjustable.**

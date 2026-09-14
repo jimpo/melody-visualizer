@@ -20,11 +20,12 @@ pub struct SpiralGenerator {
 	/// What every pixel shows, one entry a pixel in the buffer's row-major
 	/// order. Rebuilt on a change of size, grid or config.
 	map: Vec<Texel>,
-	/// Each bin's colour at full brightness, as a `0x00RRGGBB` word. Rebuilt
-	/// with `map`.
-	hues: Vec<u32>,
-	/// Each bin's colour at the brightness of the frame being drawn. `generate`
-	/// refills it; it lives here so that a frame allocates nothing.
+	/// Each bin's colour at full brightness, as linear RGB with its brightest
+	/// channel at 1. Rebuilt with `map`.
+	hues: Vec<[f32; 3]>,
+	/// Each bin's colour at the brightness of the frame being drawn, as a
+	/// `0x00RRGGBB` word in sRGB. `generate` refills it; it lives here so that a
+	/// frame allocates nothing.
 	lit: Vec<u32>,
 	/// Whether `map` and `hues` are out of date. A rebuild is a pass over every
 	/// pixel, so the hooks only set this and the next frame rebuilds: a slider
@@ -52,6 +53,17 @@ pub struct Config {
 	/// `outer_pad`.
 	#[serde(default)]
 	pub interval_ring: bool,
+	/// The gain on a bin's value, as light. Above 1 a bin short of the peak
+	/// lights fully, and a bin at or over it whitens.
+	#[serde(default = "default_exposure")]
+	pub exposure: f64,
+}
+
+/// A bin at 80% of the running peak reaches full brightness.
+pub const DEFAULT_EXPOSURE: f64 = 1.25;
+
+fn default_exposure() -> f64 {
+	DEFAULT_EXPOSURE
 }
 
 /// The interval names of the twelve spokes, clockwise from the key.
@@ -120,8 +132,13 @@ impl Configurable for SpiralGenerator {
 	}
 
 	fn set_config(&mut self, config: Config) {
+		// `generate` reads the exposure every frame, so a change to it alone
+		// leaves the map current.
+		self.stale |= Config {
+			exposure: self.config.exposure,
+			..config.clone()
+		} != self.config;
 		self.config = config;
-		self.stale = true;
 	}
 }
 
@@ -162,8 +179,8 @@ impl SpiralGenerator {
 		self.hues.extend(log_frequencies.iter().map(|&log_freq| {
 			let turn = (log_freq - key).rem_euclid(1.0);
 			let hsv = <Hsv<Srgb, f64>>::new(RgbHue::from_radians(turn * TAU), 0.8, 1.0);
-			let rgb = Rgb::<Srgb, f64>::from_color(hsv).into_format::<u8>();
-			(u32::from(rgb.red) << 16) | (u32::from(rgb.green) << 8) | u32::from(rgb.blue)
+			let rgb = Rgb::<Srgb, f64>::from_color(hsv);
+			[rgb.red, rgb.green, rgb.blue].map(|channel| channel.powf(GAMMA) as f32)
 		}));
 
 		let r_min = self.config.center_pad;
@@ -254,6 +271,21 @@ impl SpiralGenerator {
 	}
 }
 
+/// `hue`, in linear RGB with its brightest channel at 1, lit to `light`, as a
+/// `0x00RRGGBB` word in sRGB.
+///
+/// Up to 1 the hue scales with `light`. Past 1 its brightest channel is full,
+/// and the colour moves in light toward white, reaching it at 2, the way an
+/// overexposed lamp blows out.
+fn expose(hue: [f32; 3], light: f32) -> u32 {
+	let over = (light - 1.0).clamp(0.0, 1.0);
+	let [red, green, blue] = hue.map(|channel| {
+		let linear = channel * light.min(1.0) + (1.0 - channel) * over;
+		(255.0 * linear.powf(1.0 / GAMMA as f32)).round() as u32
+	});
+	(red << 16) | (green << 8) | blue
+}
+
 /// `colour`, a `0x00RRGGBB` word, with every channel scaled by `weight / 255`.
 ///
 /// Multiplying by `weight + 1` and dividing by 256 keeps both ends exact, black
@@ -280,9 +312,9 @@ impl GraphicGenerator for SpiralGenerator {
 		self.lit.clear();
 		self.lit
 			.extend(self.hues.iter().enumerate().map(|(bin, &hue)| {
-				let value = values.map_or(0.0, |values| values[bin].min(1.0));
-				let light = REST + (1.0 - REST) * value;
-				dim(hue, (255.0 * light.powf(1.0 / GAMMA)).round() as u8)
+				let value = values.map_or(0.0, |values| values[bin]);
+				let light = REST + (1.0 - REST) * self.config.exposure * value;
+				expose(hue, light as f32)
 			}));
 
 		let pixels = buffer.data_mut();
@@ -359,6 +391,7 @@ mod tests {
 			center_pad: CENTER_PAD,
 			key_log_freq: note!(C, 4).log_frequency(),
 			interval_ring: false,
+			exposure: 1.0,
 		}
 	}
 
@@ -595,6 +628,103 @@ mod tests {
 				"bin {} is silent, so its band is dim but visible, not {}",
 				index,
 				brightest,
+			);
+		}
+	}
+
+	/// [`keyed_to_c`] at `exposure`, having drawn a frame whose every bin holds
+	/// `value`.
+	fn exposed(exposure: f64, value: f64) -> SpiralGenerator {
+		let mut generator = keyed_to_c();
+		generator.set_config(Config {
+			exposure,
+			..config()
+		});
+		render(&mut generator, value);
+		generator
+	}
+
+	/// The red, green and blue bytes of a `0x00RRGGBB` word.
+	fn channels(colour: u32) -> [u8; 3] {
+		[16, 8, 0].map(|shift| (colour >> shift) as u8)
+	}
+
+	#[test]
+	fn a_bin_at_the_peak_at_exposure_one_is_its_hue_at_full_brightness() {
+		let generator = exposed(1.0, 1.0);
+		// Bin 1 is a semitone, a twelfth of a turn round the wheel: an orange
+		// whose three channels all differ.
+		let hsv = <Hsv<Srgb, f64>>::new(RgbHue::from_radians(TAU / 12.0), 0.8, 1.0);
+		let hue = Rgb::<Srgb, f64>::from_color(hsv).into_format::<u8>();
+		let lit = channels(generator.lit[1]);
+		for (lit, hue) in iter::zip(lit, [hue.red, hue.green, hue.blue]) {
+			// The hue goes to linear light and back, which can round a byte off.
+			assert!(
+				lit.abs_diff(hue) <= 1,
+				"lit {lit:?} is the hue {hue:?} at full brightness",
+			);
+		}
+	}
+
+	#[test]
+	fn a_bin_at_the_peak_part_way_to_white_keeps_its_brightest_channel_full() {
+		let hue = channels(exposed(1.0, 1.0).lit[1]);
+		let lit = channels(exposed(1.5, 1.0).lit[1]);
+		assert_eq!(lit[0], 255, "red is the orange's brightest channel");
+		for channel in 1..3 {
+			assert!(
+				(hue[channel] + 1..255).contains(&lit[channel]),
+				"the other channels rise toward white, {hue:?} to {lit:?}",
+			);
+		}
+	}
+
+	#[test]
+	fn a_bin_at_the_peak_at_low_exposure_is_dimmer_than_its_hue() {
+		let hue = channels(exposed(1.0, 1.0).lit[1]);
+		let lit = channels(exposed(0.5, 1.0).lit[1]);
+		assert!(
+			iter::zip(lit, hue).all(|(lit, hue)| lit < hue),
+			"{lit:?} is dimmer than {hue:?}",
+		);
+	}
+
+	#[test]
+	fn an_exposure_change_alone_leaves_the_map_current() {
+		let mut generator = keyed_to_c();
+		generator.set_config(Config {
+			exposure: 2.0,
+			..config()
+		});
+		assert!(!generator.stale);
+		generator.set_config(Config {
+			center_pad: CENTER_PAD + 1.0,
+			exposure: 3.0,
+			..config()
+		});
+		assert!(generator.stale);
+	}
+
+	#[test]
+	fn a_bin_at_the_peak_at_high_exposure_blows_out_to_white() {
+		let generator = exposed(4.0, 1.0);
+		for (bin, &colour) in generator.lit.iter().enumerate() {
+			let lit = channels(colour);
+			assert!(
+				lit.iter().all(|&channel| channel > 240),
+				"bin {bin} is near white, not {lit:?}",
+			);
+		}
+	}
+
+	#[test]
+	fn a_silent_bin_rests_at_the_same_brightness_at_any_exposure() {
+		let resting = exposed(1.0, 0.0).lit;
+		for exposure in [0.5, 4.0] {
+			assert_eq!(
+				exposed(exposure, 0.0).lit,
+				resting,
+				"exposure scales the value, not the resting level",
 			);
 		}
 	}

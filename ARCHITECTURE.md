@@ -232,7 +232,7 @@ and each stage changes both. What follows is the contract as the code stands.
 | `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
 | `VolumeNormalizer` | fraction of a running peak | nominally `[0, ~1]`, **not clamped** — a transient louder than the peak has caught up with exceeds 1 |
 | `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 3]` at the default `min_level` of 1e-3 (−60 dB in amplitude) |
-| `SpiralGenerator` (consumer) | — | **assumes** `[0, 1]`: `0.2 + 0.8 * spectrum[i].min(1.0)` |
+| `SpiralGenerator` (consumer) | — | **assumes** `[0, 1]`: `REST + (1 − REST) · spectrum[i].min(1.0)` in linear light |
 
 Two rules follow, and a new transform has to answer both:
 

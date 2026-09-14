@@ -1,6 +1,6 @@
 //! The spiral stage's body: the pitch range it draws, the key it is aligned
-//! to, the ring of interval names, and the two paddings that fix its annulus
-//! on the surface.
+//! to, the ring of interval names, the exposure, and the two paddings that fix
+//! its annulus on the surface.
 
 use gtk::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -33,12 +33,17 @@ const MAX_CENTER_PAD: f64 = 200.0;
 /// The widest outer margin the slider offers, in pixels.
 const MAX_OUTER_PAD: f64 = 100.0;
 
+/// The ends of the exposure slider.
+const MIN_EXPOSURE: f64 = 0.5;
+const MAX_EXPOSURE: f64 = 4.0;
+
 pub fn new(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
 	let body = gtk::Box::new(gtk::Orientation::Vertical, GROUP_SPACING);
 	body.add_css_class("stage-body");
 	body.append(&build_pitch_range(app_controller));
 	body.append(&build_key_row(app_controller).widget);
 	body.append(&build_interval_ring(app_controller));
+	body.append(&build_exposure(app_controller));
 	body.append(&build_pad(
 		app_controller,
 		"Centre hole",
@@ -200,6 +205,39 @@ fn build_pad(
 	slider.widget
 }
 
+/// The exposure slider, the gain on each bin's light before it clips toward
+/// white.
+fn build_exposure(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
+	let initial = {
+		let app_controller = app_controller.borrow();
+		let GraphicGeneratorConfig::Spiral(config) = &app_controller.config.graphic_generator;
+		config.exposure
+	};
+
+	let adjustment = gtk::Adjustment::new(initial, MIN_EXPOSURE, MAX_EXPOSURE, 0.05, 0.25, 0.0);
+	let slider = CaptionedSlider::new(
+		"Exposure",
+		"The gain on each note's light. Above 1× the notes near the loudest light fully and the loudest whitens.",
+		&adjustment,
+		|exposure| format!("{exposure:.2}×"),
+	);
+
+	let app_controller = app_controller.clone();
+	slider.scale.connect_change_value(move |_scale, _, value| {
+		let async_update = {
+			let mut app_controller = app_controller.borrow_mut();
+			let GraphicGeneratorConfig::Spiral(config) =
+				&mut app_controller.config.graphic_generator;
+			config.exposure = value.clamp(MIN_EXPOSURE, MAX_EXPOSURE);
+			app_controller.update_graphic_generator()
+		};
+		handle_async_err(async_update);
+		glib::Propagation::Proceed
+	});
+
+	slider.widget
+}
+
 /// The switch that shows or hides the ring of interval names round the spiral.
 fn build_interval_ring(app_controller: &Rc<RefCell<AppController>>) -> gtk::Box {
 	let (row, _value) = label_row("Interval ring");
@@ -248,12 +286,13 @@ mod tests {
 	use crate::app::config::Config;
 
 	#[test]
-	fn the_default_paddings_are_within_reach_of_their_sliders() {
+	fn the_defaults_are_within_reach_of_their_sliders() {
 		let GraphicGeneratorConfig::Spiral(config) = Config::default().graphic_generator;
 		// The adjustment clamps a value outside its range, and nothing writes
 		// that back, so a default out of reach leaves the slider and the label
 		// reporting a padding the spiral is not drawn with.
 		assert!((0.0..=MAX_CENTER_PAD).contains(&config.center_pad));
 		assert!((0.0..=MAX_OUTER_PAD).contains(&config.outer_pad));
+		assert!((MIN_EXPOSURE..=MAX_EXPOSURE).contains(&config.exposure));
 	}
 }

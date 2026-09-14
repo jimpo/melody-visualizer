@@ -261,7 +261,7 @@ impl StageId {
 /// amplitude, which reads as a few spikes and nothing else, so it is not optional.
 ///
 /// The volume normalizer has none either: it is the stage that rescales raw
-/// amplitude into the `[0, 1]` the spiral consumes, so bypassing it leaves raw
+/// amplitude into the `[0, ~1]` the spiral consumes, so bypassing it leaves raw
 /// amplitude in the buffer and blanks the display. Measured on a full-scale
 /// 440 Hz sine through the default chain, the output spectrum peaks at 1.0 with
 /// the normalizer on and about 0.065 with it bypassed, which `SpiralGenerator`

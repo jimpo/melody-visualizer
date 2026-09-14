@@ -268,7 +268,7 @@ written down, not a gap in the writing.
 | `PowerMap::exponent` | `0.5..4` | 1 is the identity. The slider moves in steps of 0.1 |
 | `VolumeNormalizer::rate` | `0.01..1` | Per frame. At 0 the running peak can never move, so the transform would freeze at whatever seeded it |
 | `DecibelConverter::min_level` | `1e-10..1e10` | The slider is log₁₀, over `-10..10` |
-| `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default `max_freq` of 20 kHz is above its top, so the slider opens with its upper handle on C8 while the config keeps 20 kHz until the handle moves |
+| `Config::min_freq`, `max_freq` | A0 to C8 | The pitch range slider spans a piano, in semitones. The default range is D2 to D6 |
 | `Config::samples_per_octave` | 180 by default | The density of the display grid the DFT output is folded onto, not a resolution: no control moves it. The quadratic cost driver — see the cliff in DEVELOPMENT.md |
 | `audio::Config::window_ms` | `10..1000` | The **Window** slider in `gui/controls/spectrum.rs`. The generator sizes the DFT to the milliseconds times the live sample rate, rounded, and re-plans when JACK changes the rate. The ring is sized for `audio::MAX_WINDOW_MS` |
 | `audio::Config::update_rate` | `1..100` / sec | The **Update rate** slider in `gui/controls/spectrum.rs`. Sets the tick through `interval()`, independent of the window; a hop longer than the window skips audio. The ring is sized for the hop at `audio::MIN_UPDATE_RATE` |

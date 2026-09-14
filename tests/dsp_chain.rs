@@ -19,7 +19,7 @@ use melody_visualizer::test_support::{renderer, sample_reader, sine_wave};
 const SAMPLE_RATE: u32 = 48_000;
 
 /// A peak counts as one when it stands this far above the normalized output.
-/// The quietest note of the chord reaches about 0.27, and the leakage between
+/// The quietest note of the chord reaches about 0.21, and the leakage between
 /// the notes stays below 0.01.
 const PEAK_THRESHOLD: f64 = 0.05;
 
@@ -92,9 +92,9 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	// the leakage a frequency between two bins would produce.
 	let dft_bin = SAMPLE_RATE as f64 / window as f64;
 	let chord = [
-		(76.0 * dft_bin, 1.0),
-		(152.0 * dft_bin, 0.5),
-		(304.0 * dft_bin, 0.25),
+		(12.0 * dft_bin, 1.0),
+		(24.0 * dft_bin, 0.5),
+		(48.0 * dft_bin, 0.25),
 	];
 
 	let signal = sine_wave(&chord, SAMPLE_RATE, window);
@@ -232,7 +232,7 @@ fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
 	// A brass-like note: the second harmonic carries twice the fundamental's
 	// amplitude. Every partial sits on a DFT bin centre, as in the chord above.
 	let dft_bin = SAMPLE_RATE as f64 / window as f64;
-	let fundamental = 22.0 * dft_bin;
+	let fundamental = 11.0 * dft_bin;
 	let note = [
 		(fundamental, 0.5),
 		(2.0 * fundamental, 1.0),

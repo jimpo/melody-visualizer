@@ -46,8 +46,8 @@ const SAMPLE_RATE: u32 = 48_000;
 /// Repetitions the summary averages one stage over.
 const WARMUP: usize = 50;
 const RUNS: usize = 500;
-/// The bin count the default configuration produces.
-const DEFAULT_BINS: usize = 1196;
+/// The bin count the recorded baseline in DEVELOPMENT.md is measured at.
+const BASELINE_BINS: usize = 1196;
 /// Broadband noise, seeded so every run measures the same work.
 ///
 /// Every bin carries energy, which is what real music gives the DSP and what a
@@ -155,7 +155,7 @@ fn bench_generator(criterion: &mut Criterion) {
 	let mut group = criterion.benchmark_group("generator");
 	for window_ms in [10, 50, 200, audio::MAX_WINDOW_MS] {
 		let window = audio::window_samples(window_ms, SAMPLE_RATE);
-		let grid = grid(DEFAULT_BINS);
+		let grid = grid(BASELINE_BINS);
 
 		// The DFT converts samples, so it is measured in them.
 		group.throughput(Throughput::Elements(window as u64));
@@ -192,7 +192,7 @@ fn bench_generator(criterion: &mut Criterion) {
 fn bench_transforms(criterion: &mut Criterion) {
 	let mut group = criterion.benchmark_group("transform");
 	group.throughput(Throughput::Elements(1));
-	for bins in [DEFAULT_BINS, 2 * DEFAULT_BINS, 4 * DEFAULT_BINS] {
+	for bins in [BASELINE_BINS, 2 * BASELINE_BINS, 4 * BASELINE_BINS] {
 		let input = spectrum(bins);
 		for (name, mut transform) in transforms(bins) {
 			group.bench_function(BenchmarkId::new(name, bins), |bencher| {
@@ -207,7 +207,7 @@ fn bench_transforms(criterion: &mut Criterion) {
 fn bench_diffuser_width(criterion: &mut Criterion) {
 	let mut group = criterion.benchmark_group("diffuser_width");
 	group.throughput(Throughput::Elements(1));
-	let input = spectrum(DEFAULT_BINS);
+	let input = spectrum(BASELINE_BINS);
 	// The only superlinear parameter: the window grows with the width, and
 	// convolution costs bins × window.
 	for (name, width) in [
@@ -216,7 +216,7 @@ fn bench_diffuser_width(criterion: &mut Criterion) {
 		("10_octaves", 10.0),
 	] {
 		let mut diffuser = Diffuser::new(diffuser::Config { width });
-		diffuser.set_params(&grid(DEFAULT_BINS));
+		diffuser.set_params(&grid(BASELINE_BINS));
 		group.bench_function(name, |bencher| {
 			let mut spectrum = input.clone();
 			bencher.iter(|| apply(&mut diffuser, &mut spectrum, &input));
@@ -257,7 +257,7 @@ fn chain(window_ms: u32) -> (SpectrumRenderer, SpectrumBuffer) {
 /// cost depends on the bin count and the generator's on the window, but the
 /// rate demanded of both is `1 / interval`.
 fn print_summary(window_ms: u32) {
-	let grid = grid(DEFAULT_BINS);
+	let grid = grid(BASELINE_BINS);
 
 	let mut stages = Vec::new();
 
@@ -273,8 +273,8 @@ fn print_summary(window_ms: u32) {
 		}),
 	));
 
-	for (name, mut transform) in transforms(DEFAULT_BINS) {
-		let input = spectrum(DEFAULT_BINS);
+	for (name, mut transform) in transforms(BASELINE_BINS) {
+		let input = spectrum(BASELINE_BINS);
 		let mut spectrum = input.clone();
 		let seconds = seconds_per_call(WARMUP, RUNS, || {
 			apply(transform.as_mut(), &mut spectrum, &input)
@@ -303,7 +303,7 @@ fn print_summary(window_ms: u32) {
 	println!(
 		"DSP throughput: {} ms window, {} bins, {} Hz, {:.3} ms per tick ({:.1} spectra/s required)",
 		window_ms,
-		DEFAULT_BINS,
+		BASELINE_BINS,
 		SAMPLE_RATE,
 		tick.as_secs_f64() * 1000.0,
 		required,

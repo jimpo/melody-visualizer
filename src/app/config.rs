@@ -242,6 +242,8 @@ impl Default for Config {
 				center_pad: 50.0,
 				interval_ring: false,
 				exposure: spiral::DEFAULT_EXPOSURE,
+				core: spiral::DEFAULT_CORE,
+				sigma: spiral::DEFAULT_SIGMA,
 			}),
 		}
 	}

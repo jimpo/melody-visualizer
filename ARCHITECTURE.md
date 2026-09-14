@@ -210,11 +210,11 @@ One sample's journey:
    writes the history into a `GraphicBuffer`, a raw RGB24 byte vector the GTK
    side wraps in a cairo `ImageSurface` to blit. The spiral maps log-frequency
    to radius and pitch class to hue, so notes an octave apart line up on the
-   same spoke. It writes every pixel from a map of which bin lights that pixel
-   and how brightly, rebuilt when the size, grid or config changes, then draws
-   the optional interval ring's labels over them with cairo. This is the
-   pipeline's most expensive stage by an order of magnitude, and the cost is
-   pixel area rather than bin count — see
+   same spoke. It writes every pixel from a map of which two neighbouring bins
+   light that pixel, in what blend, and how brightly, rebuilt when the size,
+   grid or config changes, then draws the optional interval ring's labels over
+   them with cairo. This is the pipeline's most expensive stage by an order of
+   magnitude, and the cost is pixel area rather than bin count — see
    [DEVELOPMENT.md](DEVELOPMENT.md#the-visualizer).
 6. **Display** — `gui/visualization.rs`. The `DrawingArea` blits the finished
    surface. A size change resizes the buffer in place on the GTK side.

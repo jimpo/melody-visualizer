@@ -184,22 +184,24 @@ $ cargo bench --bench graphic -- --test  # the summary alone
 ```
 
 **This is the stage with the least headroom.** The whole DSP chain costs a tenth
-of a percent of its tick; one frame at 1600x1000 costs about a fiftieth of the
-40 ms frame. Fifty times' headroom against the DSP's eight hundred, so this is
+of a percent of its tick; one frame at 1600x1000 costs about a fortieth of the
+40 ms frame. Forty times' headroom against the DSP's eight hundred, so this is
 where optimisation effort belongs if it is ever needed.
 
 Cost scales **opposite to the DSP**: it is driven by pixel area, not bin count.
 
 | Surface | % of frame | Max fps |  | Bins @ 1600x1000 | % of frame |
 |---|--:|--:|---|---|--:|
-| 640x480 | 0.44% | 5,725 |  | 299 (45/octave) | 1.94% |
-| 1280x800 | 1.29% | 1,931 |  | 1196 (default) | 1.96% |
-| 1600x1000 | 1.98% | 1,261 |  | 4784 (720/octave) | 1.99% |
-| 3840x2160 | 11.2% | 224 |  | | |
+| 640x480 | 0.62% | 4,006 |  | 299 (45/octave) | 2.52% |
+| 1280x800 | 1.69% | 1,477 |  | 1196 (default) | 2.60% |
+| 1600x1000 | 2.63% | 952 |  | 4784 (720/octave) | 2.95% |
+| 3840x2160 | 15.3% | 163 |  | | |
 
-`SpiralGenerator` keeps a map with an entry per pixel: which bin lights it, and
-how brightly. A frame is one pass over that map, a lookup and a multiply a
-pixel, so its cost follows the pixel count and the bin count does not enter it.
+`SpiralGenerator` keeps a map with an entry per pixel: the two neighbouring bins
+it lies between, how far toward the upper one, and how brightly it is lit. A
+frame is one pass over that map, two lookups and a blend a pixel, so its cost
+follows the pixel count and the bin count does not enter it. The blend makes
+the ribbon a smooth gradient along its length, whatever the bin count.
 So **adding spectral resolution is free for the visualizer, while resizing the
 window is what costs** — anyone tuning `samples_per_octave` needs that
 alongside the DSP's quadratic in bins.

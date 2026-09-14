@@ -24,9 +24,10 @@ pub struct SpiralGenerator {
 	/// channel at 1. Rebuilt with `map`.
 	hues: Vec<[f32; 3]>,
 	/// Each bin's colour at the brightness of the frame being drawn, as a
-	/// `0x00RRGGBB` word in sRGB. `generate` refills it; it lives here so that a
-	/// frame allocates nothing.
-	lit: Vec<u32>,
+	/// [`LANES`] word in sRGB, then a copy of the last so that the last bin has a
+	/// neighbour above. `generate` refills it; it lives here so that a frame
+	/// allocates nothing.
+	lit: Vec<u64>,
 	/// Whether `map` and `hues` are out of date. A rebuild is a pass over every
 	/// pixel, so the hooks only set this and the next frame rebuilds: a slider
 	/// drag that reconfigures the generator many times a frame costs one
@@ -108,8 +109,10 @@ const LABEL_ALPHA: f64 = 0.55;
 
 /// The glow's brightness maths runs in linear light and is encoded to sRGB
 /// with this power law. For a power law, encoding distributes over
-/// multiplication, so `dim` multiplying two encoded bytes multiplies their light.
-/// The piecewise sRGB curve would break that, and the difference does not show.
+/// multiplication, so `shade` multiplying two encoded bytes multiplies their
+/// light. The piecewise sRGB curve would break that, and the difference does not
+/// show. `shade`'s blend of two neighbouring bins is on the encoded bytes, which
+/// is not a blend in light, but two neighbours are too alike for that to show.
 const GAMMA: f64 = 2.2;
 /// Where the glow ends, in sigmas past the core's edge. The encoded weight is
 /// `255 · exp(−s²/2γ)`, which rounds to zero past `√(2γ · ln 510)`, about 5.24,
@@ -118,14 +121,19 @@ pub const REACH: f64 = 5.25;
 /// A silent bin's brightness, as a fraction of full light.
 const REST: f64 = 0.02;
 
-/// What one pixel of the surface shows: which bin lights it and how much.
+/// What one pixel of the surface shows: where along the ribbon it lies and how
+/// much it is lit.
 ///
 /// A weight of zero is black whatever the bin, so a pixel off the ribbon needs
 /// no sentinel.
 #[derive(Clone, Copy)]
 struct Texel {
-	/// Index into the spectrum's values.
+	/// Index into the spectrum's values of the lower of the two bins the pixel
+	/// lies between.
 	bin: u16,
+	/// How far the pixel lies toward `bin + 1`, in 256ths. Zero on the last bin,
+	/// which has no neighbour above.
+	frac: u8,
 	/// Glow, sRGB-encoded: 255 inside the ribbon's core and falling to 0 with
 	/// distance past its edge.
 	weight: u8,
@@ -175,8 +183,8 @@ impl SpiralGenerator {
 	/// The spiral places a bin of pitch `L` (in log₂ Hz) at radius
 	/// `r_min + r_scale · (L − min)`, a turn per octave clockwise from straight
 	/// up, with the key at the top. This inverts that per pixel: it finds the
-	/// nearest point of the ribbon, which bin lies there, and how far off the
-	/// pixel is.
+	/// nearest point of the ribbon, which two bins it lies between, and how far
+	/// off the pixel is.
 	fn regenerate(&mut self) {
 		self.hues.clear();
 		self.map.clear();
@@ -233,16 +241,26 @@ impl SpiralGenerator {
 			// the ribbon, which is most of the surface, so `exp` is skipped there.
 			let sigmas = (((pitch - turn - k).abs() - core) / sigma).max(0.0);
 
-			let bin = ((key + turn + k - min) / (max - min) * (bins - 1) as f64).round();
-			if sigmas < REACH && (0.0..bins as f64).contains(&bin) {
+			let last = (bins - 1) as f64;
+			let position = (key + turn + k - min) / (max - min) * last;
+			// Half a bin past either end still belongs to the end bin.
+			if sigmas < REACH && (-0.5..last + 0.5).contains(&position) {
+				// The position in 256ths of a bin: the whole bins in the high bits,
+				// the fraction in the low byte.
+				let fixed = (256.0 * position.clamp(0.0, last)).round() as u32;
 				Texel {
-					bin: bin as u16,
+					bin: (fixed >> 8) as u16,
+					frac: fixed as u8,
 					// The Gaussian in light, encoded: `exp(x)^(1/γ)` is `exp(x/γ)`.
 					weight: (255.0 * (-0.5 * sigmas * sigmas / GAMMA).exp()).round() as u8,
 				}
 			} else {
 				// Off the ribbon: too far from its centre line, or beyond either end.
-				Texel { bin: 0, weight: 0 }
+				Texel {
+					bin: 0,
+					frac: 0,
+					weight: 0,
+				}
 			}
 		}));
 	}
@@ -292,29 +310,38 @@ impl SpiralGenerator {
 	}
 }
 
+/// The low byte of each 16-bit lane of a word that holds a colour's red, green
+/// and blue from the top lane down. A lane has room for a byte multiplied by up
+/// to 256, so one multiply scales all three channels with no carry between them.
+const LANES: u64 = 0x00ff_00ff_00ff;
+
 /// `hue`, in linear RGB with its brightest channel at 1, lit to `light`, as a
-/// `0x00RRGGBB` word in sRGB.
+/// [`LANES`] word in sRGB.
 ///
 /// Up to 1 the hue scales with `light`. Past 1 its brightest channel is full,
 /// and the colour moves in light toward white, reaching it at 2, the way an
 /// overexposed lamp blows out.
-fn expose(hue: [f32; 3], light: f32) -> u32 {
+fn expose(hue: [f32; 3], light: f32) -> u64 {
 	let over = (light - 1.0).clamp(0.0, 1.0);
 	let [red, green, blue] = hue.map(|channel| {
 		let linear = channel * light.min(1.0) + (1.0 - channel) * over;
-		(255.0 * linear.powf(1.0 / GAMMA as f32)).round() as u32
+		(255.0 * linear.powf(1.0 / GAMMA as f32)).round() as u64
 	});
-	(red << 16) | (green << 8) | blue
+	(red << 32) | (green << 16) | blue
 }
 
-/// `colour`, a `0x00RRGGBB` word, with every channel scaled by `weight / 255`.
+/// `low` blended `frac / 256` of the way to `high`, then scaled by
+/// `weight / 255`, per channel of two [`LANES`] words, as a `0x00RRGGBB` word.
 ///
-/// Multiplying by `weight + 1` and dividing by 256 keeps both ends exact, black
-/// at 0 and `colour` itself at 255, at the price of a multiply and a shift.
-fn dim(colour: u32, weight: u8) -> u32 {
-	let factor = u32::from(weight) + 1;
-	let channel = |shift: u32| ((((colour >> shift) & 0xff) * factor) >> 8) << shift;
-	channel(16) | channel(8) | channel(0)
+/// The weight goes in as `weight + 1` 256ths, which keeps both of its ends
+/// exact: black at 0, the blend itself at 255. The weight is split between the
+/// two colours before they are multiplied, so the parts always sum to it, and
+/// a `frac` of 0 is `low` alone.
+fn shade(low: u64, high: u64, frac: u8, weight: u8) -> u32 {
+	let weight = u64::from(weight) + 1;
+	let to_high = (u64::from(frac) * weight) >> 8;
+	let lit = ((low * (weight - to_high) + high * to_high) >> 8) & LANES;
+	((lit >> 16) & 0xff_0000 | (lit >> 8) & 0xff00 | lit & 0xff) as u32
 }
 
 impl GraphicGenerator for SpiralGenerator {
@@ -337,6 +364,9 @@ impl GraphicGenerator for SpiralGenerator {
 				let light = REST + (1.0 - REST) * self.config.exposure * value;
 				expose(hue, light as f32)
 			}));
+		if let Some(&last) = self.lit.last() {
+			self.lit.push(last);
+		}
 
 		let pixels = buffer.data_mut();
 		if self.map.is_empty() {
@@ -353,7 +383,11 @@ impl GraphicGenerator for SpiralGenerator {
 				let colour = if texel.weight == 0 {
 					0
 				} else {
-					dim(self.lit[usize::from(texel.bin)], texel.weight)
+					let bin = usize::from(texel.bin);
+					let &[low, high] = &self.lit[bin..bin + 2] else {
+						unreachable!("a range of two is two long")
+					};
+					shade(low, high, texel.frac, texel.weight)
 				};
 				*pixel = colour.to_ne_bytes();
 			}
@@ -480,6 +514,11 @@ mod tests {
 		generator.map[y as usize * generator.x_max as usize + x as usize]
 	}
 
+	/// The bin nearest to where `texel` lies along the ribbon.
+	fn nearest_bin(texel: Texel) -> usize {
+		usize::from(texel.bin) + usize::from(texel.frac >= 128)
+	}
+
 	/// The brightest channel within a pixel of `(x, y)`.
 	///
 	/// The neighbourhood absorbs the rounding between a point in floating point
@@ -503,7 +542,7 @@ mod tests {
 		for index in (0..BINS).step_by(12) {
 			let texel = texel_at(&generator, (ORIGIN, ORIGIN - radius(index)));
 			assert_eq!(
-				usize::from(texel.bin),
+				nearest_bin(texel),
 				index,
 				"straight up at this radius is a C, bin {}",
 				index,
@@ -522,7 +561,7 @@ mod tests {
 		for index in indices {
 			let texel = texel_at(&generator, (ORIGIN, ORIGIN + radius(index)));
 			assert_eq!(
-				usize::from(texel.bin),
+				nearest_bin(texel),
 				index,
 				"straight down is the tritone in every octave",
 			);
@@ -558,8 +597,8 @@ mod tests {
 
 		let first = straight_up(CENTER_PAD);
 		let last = straight_up(R_MAX);
-		assert_eq!(usize::from(first.bin), 0);
-		assert_eq!(usize::from(last.bin), BINS - 1);
+		assert_eq!(nearest_bin(first), 0);
+		assert_eq!(nearest_bin(last), BINS - 1);
 		assert!(first.weight > 200 && last.weight > 200);
 
 		// The glow is dim two and a half sigmas past the core's edge, and gone
@@ -604,7 +643,7 @@ mod tests {
 		let origin = SIZE as f64 / 4.0;
 		let outermost = texel_at(&generator, (origin, OUTER_PAD));
 		assert_eq!(
-			usize::from(outermost.bin),
+			nearest_bin(outermost),
 			BINS - 1,
 			"a smaller surface rescales the annulus to its own edge",
 		);
@@ -692,9 +731,9 @@ mod tests {
 		generator
 	}
 
-	/// The red, green and blue bytes of a `0x00RRGGBB` word.
-	fn channels(colour: u32) -> [u8; 3] {
-		[16, 8, 0].map(|shift| (colour >> shift) as u8)
+	/// The red, green and blue bytes of a [`LANES`] word.
+	fn channels(colour: u64) -> [u8; 3] {
+		[32, 16, 0].map(|shift| (colour >> shift) as u8)
 	}
 
 	#[test]
@@ -789,10 +828,59 @@ mod tests {
 		refresh(&mut generator);
 		let texel = texel_at(&generator, (ORIGIN, ORIGIN + radius(12)));
 		assert_eq!(
-			usize::from(texel.bin),
+			nearest_bin(texel),
 			12,
 			"the map is rebuilt for the new key before the frame that draws it",
 		);
+	}
+
+	/// The pixel of the first texel in [`keyed_to_c`]'s map at full glow with
+	/// `frac` toward the bin above, with that texel.
+	fn full_glow_at(generator: &SpiralGenerator, frac: u8) -> ((i32, i32), Texel) {
+		let index = generator
+			.map
+			.iter()
+			.position(|texel| {
+				texel.weight == 255 && texel.frac == frac && usize::from(texel.bin) + 1 < BINS
+			})
+			.expect("the ribbon's core crosses every fraction of a bin");
+		let pixel = (
+			(index % SIZE as usize) as i32,
+			(index / SIZE as usize) as i32,
+		);
+		(pixel, generator.map[index])
+	}
+
+	#[test]
+	fn a_pixel_on_a_bins_centre_renders_that_bins_colour() {
+		let mut generator = keyed_to_c();
+		let graphic = render(&mut generator, 1.0);
+		let ((x, y), texel) = full_glow_at(&generator, 0);
+		let [red, green, blue] = channels(generator.lit[usize::from(texel.bin)]);
+		assert_eq!(graphic.pixel(x, y), (red, green, blue));
+	}
+
+	#[test]
+	fn a_pixel_midway_between_two_bins_renders_the_mean_of_their_colours() {
+		let mut generator = keyed_to_c();
+		let graphic = render(&mut generator, 1.0);
+		let ((x, y), texel) = full_glow_at(&generator, 128);
+		let bin = usize::from(texel.bin);
+		// Neighbouring bins are a semitone apart on the colour wheel, so their
+		// colours differ.
+		let (low, high) = (
+			channels(generator.lit[bin]),
+			channels(generator.lit[bin + 1]),
+		);
+		let mean = std::array::from_fn(|channel| {
+			((u16::from(low[channel]) + u16::from(high[channel])) / 2) as u8
+		});
+		assert!(
+			mean != low && mean != high,
+			"{low:?} and {high:?} are far enough apart that their mean is neither",
+		);
+		let [red, green, blue] = mean;
+		assert_eq!(graphic.pixel(x, y), (red, green, blue));
 	}
 
 	#[test]
@@ -819,7 +907,7 @@ mod tests {
 		let graphic = render(&mut generator, 0.0);
 		let outermost = texel_at(&generator, (ORIGIN, ORIGIN - r_max));
 		assert_eq!(
-			usize::from(outermost.bin),
+			nearest_bin(outermost),
 			BINS - 1,
 			"the outermost turn moves in to make room for the ring",
 		);

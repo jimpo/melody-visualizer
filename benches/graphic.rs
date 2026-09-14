@@ -7,12 +7,13 @@
 //!
 //! This is the stage with the least headroom in the pipeline. The whole DSP
 //! chain costs a tenth of a percent of its own tick; one frame at 1600x1000
-//! costs about a fiftieth of this one.
+//! costs about a fortieth of this one.
 //!
 //! Two sweeps, and they scale opposite to the DSP:
 //!
 //! 1. **Surface area** is the whole cost. A frame is one pass over a map with
-//!    an entry per pixel, so the cost tracks the pixel count.
+//!    an entry per pixel, blending the two bins either side of each lit pixel,
+//!    so the cost tracks the pixel count.
 //! 2. **Bin count** is flat. A bin costs one colour a frame, which is nothing
 //!    beside a million pixels.
 //!

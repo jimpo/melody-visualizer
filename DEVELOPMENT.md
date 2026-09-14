@@ -204,6 +204,11 @@ So **adding spectral resolution is free for the visualizer, while resizing the
 window is what costs** — anyone tuning `samples_per_octave` needs that
 alongside the DSP's quadratic in bins.
 
+The brightness in the map is a Gaussian glow in linear light, stored already
+encoded to sRGB with a power-law gamma. Encoding distributes over multiplication
+for a power law, so the multiply of two encoded bytes stays correct in light and
+the pixel loop needs no conversion.
+
 Building the map costs far more than drawing from it. It inverts the spiral at
 every pixel, which takes about 30 ms at 1280x800, 60 ms at 1920x1080 and 230 ms
 at 3840x2160. A change of size, grid or spiral config marks the map stale and

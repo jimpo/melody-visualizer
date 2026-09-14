@@ -72,6 +72,24 @@ const LABEL_FACE: &str = "Playfair Display";
 const LABEL_SIZE: f64 = 13.0;
 const LABEL_ALPHA: f64 = 0.55;
 
+/// The glow's brightness maths runs in linear light and is encoded to sRGB
+/// with this power law. For a power law, encoding distributes over
+/// multiplication, so `dim` multiplying two encoded bytes multiplies their light.
+/// The piecewise sRGB curve would break that, and the difference does not show.
+const GAMMA: f64 = 2.2;
+/// The sigma of the glow, a Gaussian in the distance from the centre line, in
+/// octaves.
+const SIGMA: f64 = 0.05;
+/// Where the glow ends, in sigmas from the centre line. The encoded weight is
+/// `255 · exp(−s²/2γ)`, which rounds to zero past `√(2γ · ln 510)`, about 5.24,
+/// so ending it here leaves no step at its edge.
+const REACH: f64 = 5.25;
+// The turns are an octave apart, so a band that reaches half an octave touches
+// the next.
+const _: () = assert!(REACH * SIGMA < 0.5);
+/// A silent bin's brightness, as a fraction of full light.
+const REST: f64 = 0.02;
+
 /// What one pixel of the surface shows: which bin lights it and how much.
 ///
 /// A weight of zero is black whatever the bin, so a pixel off the ribbon needs
@@ -80,7 +98,8 @@ const LABEL_ALPHA: f64 = 0.55;
 struct Texel {
 	/// Index into the spectrum's values.
 	bin: u16,
-	/// Glow, 255 on the ribbon's centre line and falling to 0 with distance.
+	/// Glow, sRGB-encoded: 255 on the ribbon's centre line and falling to 0 with
+	/// distance.
 	weight: u8,
 }
 
@@ -149,10 +168,6 @@ impl SpiralGenerator {
 
 		let r_min = self.config.center_pad;
 		let r_scale = (self.r_max() - r_min) / (max - min);
-		// The glow is a Gaussian in the distance from the centre line. A sigma of
-		// 5% of an octave leaves an eighth of full brightness a tenth of an octave
-		// out, and nothing past a fifth.
-		let sigma = 0.05 * r_scale;
 		let (x_origin, y_origin) = self.origin();
 		let (width, height) = (self.x_max, self.y_max);
 
@@ -172,19 +187,20 @@ impl SpiralGenerator {
 			// `key + turn + k` for a whole number `k`, and those crossings are
 			// `r_scale` apart. `pitch` is what this radius would carry on the
 			// centre line, relative to the key, so the nearest crossing is the `k`
-			// it rounds to. A pixel midway between two turns is ten sigmas from
+			// it rounds to. A pixel midway between two turns is past the glow of
 			// both and stays black.
 			let pitch = ((dx * dx + dy * dy).sqrt() - r_min) / r_scale + min - key;
 			let k = (pitch - turn).round();
-			// Distance off the centre line, in sigmas. Past four the weight rounds
-			// to zero, which is most of the surface, so `exp` is skipped there.
-			let sigmas = r_scale * (pitch - turn - k) / sigma;
+			// Distance off the centre line, in sigmas. Past the glow's end is off
+			// the ribbon, which is most of the surface, so `exp` is skipped there.
+			let sigmas = (pitch - turn - k).abs() / SIGMA;
 
 			let bin = ((key + turn + k - min) / (max - min) * (bins - 1) as f64).round();
-			if sigmas.abs() < 4.0 && (0.0..bins as f64).contains(&bin) {
+			if sigmas < REACH && (0.0..bins as f64).contains(&bin) {
 				Texel {
 					bin: bin as u16,
-					weight: (255.0 * (-0.5 * sigmas * sigmas).exp()).round() as u8,
+					// The Gaussian in light, encoded: `exp(x)^(1/γ)` is `exp(x/γ)`.
+					weight: (255.0 * (-0.5 * sigmas * sigmas / GAMMA).exp()).round() as u8,
 				}
 			} else {
 				// Off the ribbon: too far from its centre line, or beyond either end.
@@ -265,7 +281,8 @@ impl GraphicGenerator for SpiralGenerator {
 		self.lit
 			.extend(self.hues.iter().enumerate().map(|(bin, &hue)| {
 				let value = values.map_or(0.0, |values| values[bin].min(1.0));
-				dim(hue, (255.0 * (0.2 + 0.8 * value)).round() as u8)
+				let light = REST + (1.0 - REST) * value;
+				dim(hue, (255.0 * light.powf(1.0 / GAMMA)).round() as u8)
 			}));
 
 		let pixels = buffer.data_mut();
@@ -484,14 +501,16 @@ mod tests {
 		assert_eq!(usize::from(last.bin), BINS - 1);
 		assert!(first.weight > 200 && last.weight > 200);
 
-		// The glow's visible edge is about a tenth of an octave either side of
-		// the centre line, and it is gone by a quarter.
-		for radius in [CENTER_PAD - 0.1 * OCTAVE, R_MAX + 0.1 * OCTAVE] {
+		// The glow is dim two and a half sigmas from the centre line, and gone
+		// past its end.
+		let dim_edge = 2.5 * SIGMA * OCTAVE;
+		for radius in [CENTER_PAD - dim_edge, R_MAX + dim_edge] {
 			assert!(straight_up(radius).weight < 128);
 		}
-		for radius in [CENTER_PAD - 0.25 * OCTAVE, R_MAX + 0.25 * OCTAVE] {
-			assert_eq!(straight_up(radius).weight, 0);
-		}
+		// Only inside the first turn: outside the last, the glow reaches the edge
+		// of this small surface.
+		let gone = REACH * SIGMA * OCTAVE + 2.0;
+		assert_eq!(straight_up(CENTER_PAD - gone).weight, 0);
 	}
 
 	#[test]
@@ -529,9 +548,9 @@ mod tests {
 		let mut generator = keyed_to_c();
 		let graphic = render(&mut generator, 1.0);
 
-		// Inside the innermost band, which reaches a tenth of an octave below
+		// Inside the innermost band, which reaches the glow's end below
 		// `center_pad`.
-		let clear = CENTER_PAD - (R_MAX - CENTER_PAD) / OCTAVES as f64 * 0.1 - 2.0;
+		let clear = CENTER_PAD - REACH * SIGMA * OCTAVE - 2.0;
 		for step in 0..16 {
 			let theta = step as f64 / 16.0 * 2.0 * PI;
 			let (x, y) = (ORIGIN + clear * theta.sin(), ORIGIN - clear * theta.cos());
@@ -566,8 +585,8 @@ mod tests {
 		let mut generator = keyed_to_c();
 		let graphic = render(&mut generator, 0.0);
 
-		// `generate` maps a bin to `0.2 + 0.8 * value`, so a silent spectrum
-		// still draws the spiral at a fifth of full brightness.
+		// `generate` maps a silent bin to `REST` of full light, about a sixth of
+		// full brightness once encoded, so the spiral still shows.
 		for index in (1..BINS).step_by(6) {
 			let (x, y) = centre(index);
 			let brightest = brightest_near(&graphic, x, y);

@@ -221,8 +221,8 @@ impl Default for Config {
 			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];
 		Config {
-			min_freq: 200.0,   // Low-end of human hearing
-			max_freq: 20000.0, // High-end of human hearing
+			min_freq: note!(D, 2).frequency(),
+			max_freq: note!(D, 6).frequency(),
 			// A fifteenth of a semitone. The density of the display grid, which
 			// no control moves.
 			samples_per_octave: 180,

@@ -155,17 +155,17 @@ length itself grows with bin density. At width 1/24 octave:
 
 | Bins | Time | Capacity |
 |---|--:|--:|
-| 1196 (default) | 4.22 µs | 236,700/s |
+| 1196 | 4.22 µs | 236,700/s |
 | 2392 | 15.56 µs | 64,300/s |
 | 4784 | 58.01 µs | 17,200/s |
 
 Every doubling of bins costs 4×. `HarmonicSummation` is linear in comparison:
-bins × harmonics, about 3.7 µs at the default 1196 bins and 8 harmonics. Width is the same story at a fixed bin count:
+bins × harmonics, about 3.7 µs at 1196 bins and 8 harmonics. Width is the same story at a fixed bin count:
 1/24 octave takes 4.2 µs, one octave 97 µs, ten octaves 830 µs — the last of
 those is 4% of the tick, from a slider the GUI already offers.
 
 Bin count is `samples_per_octave`, a config value no control moves: 180 by
-default, which gives 1196 bins.
+default, which gives 720 bins over the default D2 to D6 range.
 
 `tests/dsp_budget.rs` is the gate the ordinary test run applies: at the fastest
 update rate, the composed chain must stay inside half a tick at the shortest
@@ -192,9 +192,9 @@ Cost scales **opposite to the DSP**: it is driven by pixel area, not bin count.
 
 | Surface | % of frame | Max fps |  | Bins @ 1600x1000 | % of frame |
 |---|--:|--:|---|---|--:|
-| 640x480 | 0.62% | 4,006 |  | 299 (45/octave) | 2.52% |
-| 1280x800 | 1.69% | 1,477 |  | 1196 (default) | 2.60% |
-| 1600x1000 | 2.63% | 952 |  | 4784 (720/octave) | 2.95% |
+| 640x480 | 0.62% | 4,006 |  | 180 (45/octave) | 2.34% |
+| 1280x800 | 1.69% | 1,477 |  | 720 (default) | 2.40% |
+| 1600x1000 | 2.63% | 952 |  | 2880 (720/octave) | 2.61% |
 | 3840x2160 | 15.3% | 163 |  | | |
 
 `SpiralGenerator` keeps a map with an entry per pixel: the two neighbouring bins

@@ -1,5 +1,6 @@
 use nice_plug::prelude::*;
-use nice_plug_iced::{IcedEditor, IcedEditorState};
+use nice_plug_iced::{IcedEditor, IcedEditorState, iced::PollSubNotifier};
+use parking_lot::Mutex;
 use std::iter;
 use std::sync::Arc;
 
@@ -26,9 +27,14 @@ pub mod traits;
 pub struct MelodyVisualizer {
 	params: Arc<PluginParams>,
 	editor_state: Arc<IcedEditorState>,
-	/// The engine, and the writer the audio reaches it through, while the
-	/// plugin is active.
-	engine: Option<(Engine, SampleWriter)>,
+	/// Wakes the editor to draw a frame.
+	notifier: PollSubNotifier,
+	/// The engine while the plugin is active. The editor reconfigures it and
+	/// asks it for frames; the audio thread never touches it.
+	engine: Arc<Mutex<Option<Engine>>>,
+	/// Where `process` writes the audio the engine analyzes, while the plugin
+	/// is active.
+	writer: Option<SampleWriter>,
 	/// Room for one block's mono mix, so `process` allocates nothing.
 	mono: Vec<f32>,
 }
@@ -42,7 +48,9 @@ impl Default for MelodyVisualizer {
 		Self {
 			params: Arc::default(),
 			editor_state: editor::default_state(),
-			engine: None,
+			notifier: PollSubNotifier::new(),
+			engine: Arc::default(),
+			writer: None,
 			mono: Vec::new(),
 		}
 	}
@@ -77,7 +85,12 @@ impl Plugin for MelodyVisualizer {
 	}
 
 	fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
-		editor::create(self.editor_state.clone())
+		editor::create(
+			self.editor_state.clone(),
+			self.params.clone(),
+			self.engine.clone(),
+			self.notifier.clone(),
+		)
 	}
 
 	fn activate(
@@ -88,10 +101,13 @@ impl Plugin for MelodyVisualizer {
 	) -> bool {
 		// The host may activate again without deactivating first, for instance
 		// to restore state, so stop the old engine before starting the new one.
-		self.engine = None;
+		self.deactivate();
 		let sample_rate = buffer_config.sample_rate.round() as u32;
 		match Engine::start(&self.params.config(), sample_rate) {
-			Ok(engine) => self.engine = Some(engine),
+			Ok((engine, writer)) => {
+				*self.engine.lock() = Some(engine);
+				self.writer = Some(writer);
+			}
 			Err(err) => {
 				log::error!("failed to start the engine: {err}");
 				return false;
@@ -102,7 +118,8 @@ impl Plugin for MelodyVisualizer {
 	}
 
 	fn deactivate(&mut self) {
-		self.engine = None;
+		*self.engine.lock() = None;
+		self.writer = None;
 	}
 
 	fn process(
@@ -111,7 +128,12 @@ impl Plugin for MelodyVisualizer {
 		_aux: &mut AuxiliaryBuffers,
 		_context: &mut impl ProcessContext<Self>,
 	) -> ProcessStatus {
-		let Some((_, writer)) = &mut self.engine else {
+		// The editor draws a frame each time it is woken, so new audio is what
+		// paces the frames.
+		if self.editor_state.is_open() {
+			self.notifier.notify();
+		}
+		let Some(writer) = &mut self.writer else {
 			return ProcessStatus::Normal;
 		};
 		let samples = buffer.samples().min(self.mono.len());

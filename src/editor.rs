@@ -7,7 +7,7 @@ use nice_plug_iced::{
 	create_iced_editor,
 	iced::{
 		self, Color, ContentFit, Element, Font, Length, Point, PollSubNotifier, Rectangle,
-		Renderer, Subscription, Theme, alignment, font, mouse,
+		Renderer, Subscription, Task, Theme, alignment, font, mouse,
 		widget::{Canvas, canvas, center, image, stack, text},
 	},
 };
@@ -69,18 +69,23 @@ pub fn create(
 	)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Message {
 	/// Woken to draw a frame.
 	Frame,
+	/// The frame last drawn is on the GPU, ready to show.
+	Uploaded(Result<image::Allocation, image::Error>),
 	WindowResized,
 }
 
 struct Gui {
 	shared: PersistentState<Shared>,
 	ctx: IcedNiceContext,
-	/// The last frame the engine drew, or none while it is not running.
-	frame: Option<image::Handle>,
+	/// The frame on show, or none while the engine is not running. Holding its
+	/// allocation is what keeps it on the GPU.
+	frame: Option<image::Allocation>,
+	/// Whether a frame the engine drew is still on its way to the GPU.
+	uploading: bool,
 	/// The labels to draw over the frame, when the ring is on.
 	ring: Option<IntervalRing>,
 }
@@ -91,6 +96,7 @@ impl Gui {
 			shared,
 			ctx,
 			frame: None,
+			uploading: false,
 			ring: None,
 		}
 	}
@@ -102,43 +108,43 @@ impl Gui {
 		])
 	}
 
-	fn update(&mut self, message: Message) {
+	fn update(&mut self, message: Message) -> Task<Message> {
 		match message {
 			Message::Frame => self.draw(),
+			Message::Uploaded(result) => {
+				self.uploading = false;
+				match result {
+					Ok(frame) => self.frame = Some(frame),
+					Err(err) => log::error!("failed to upload a frame: {err}"),
+				}
+				Task::none()
+			}
 			Message::WindowResized => {
 				// Keeps the editor's size current so it reopens at the size the
 				// host last gave it.
 				self.ctx.sync_window_size();
-				self.draw();
+				self.draw()
 			}
 		}
 	}
 
-	/// Applies the parameters to the engine and has it draw a frame the size of
-	/// the window.
-	fn draw(&mut self) {
+	/// Applies the parameters to the engine, has it draw a frame the size of the
+	/// window, and sends the frame to the GPU.
+	///
+	/// The frame on show stays until the new one has landed: iced uploads a frame
+	/// this large off the GPU's thread, and draws nothing for it until then. No
+	/// new frame is drawn while one is uploading, so frames never queue up.
+	fn draw(&mut self) -> Task<Message> {
+		if self.uploading {
+			return Task::none();
+		}
 		let config = self.shared.params.config();
 		let size = self.ctx.window_size().physical;
 		let mut engine = self.shared.engine.lock();
 		let Some(engine) = engine.as_mut() else {
 			self.frame = None;
-			return;
+			return Task::none();
 		};
-		match engine
-			.apply(&config)
-			.and_then(|()| engine.render(size.width, size.height))
-		{
-			Ok(graphic) => {
-				let (width, height, pixels) = graphic.into_rgba();
-				self.frame = Some(image::Handle::from_rgba(width, height, pixels));
-			}
-			Err(err) => {
-				// Logged once, not once a frame, until a frame succeeds again.
-				if self.frame.take().is_some() {
-					log::error!("failed to draw a frame: {err}");
-				}
-			}
-		}
 
 		let GraphicGeneratorConfig::Spiral(spiral) = &config.graphic_generator;
 		self.ring = spiral.interval_ring.then(|| IntervalRing {
@@ -146,6 +152,25 @@ impl Gui {
 				+ LABEL_OFFSET) as f32,
 			width: size.width as f32,
 		});
+
+		match engine
+			.apply(&config)
+			.and_then(|()| engine.render(size.width, size.height))
+		{
+			Ok(graphic) => {
+				let (width, height, pixels) = graphic.into_rgba();
+				self.uploading = true;
+				image::allocate(image::Handle::from_rgba(width, height, pixels))
+					.map(Message::Uploaded)
+			}
+			Err(err) => {
+				// Logged once, not once a frame, until a frame succeeds again.
+				if self.frame.take().is_some() {
+					log::error!("failed to draw a frame: {err}");
+				}
+				Task::none()
+			}
+		}
 	}
 
 	fn view(&self) -> Element<'_, Message> {
@@ -157,7 +182,7 @@ impl Gui {
 		};
 		// The frame is drawn at the window's size in physical pixels, so it fills
 		// the window one to one.
-		let frame = image(frame.clone())
+		let frame = image(frame.handle().clone())
 			.width(Length::Fill)
 			.height(Length::Fill)
 			.content_fit(ContentFit::Fill)

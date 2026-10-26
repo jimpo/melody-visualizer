@@ -232,15 +232,21 @@ impl Default for PluginParams {
 }
 
 impl PluginParams {
+	/// The pitch range's ends, lowest first. A range whose ends have crossed
+	/// is the same range read upwards.
+	pub fn pitch_range(&self) -> (Note, Note) {
+		let (low, high) = (self.lowest_note.value(), self.highest_note.value());
+		let note = |semitones: i32| LOWEST_NOTE + semitones as isize;
+		(note(low.min(high)), note(low.max(high)))
+	}
+
 	/// The engine configuration the parameters describe right now.
 	pub fn config(&self) -> Config {
 		let mut config = Config::default();
 
-		// A pitch range whose ends have crossed is the same range read upwards.
-		let (low, high) = (self.lowest_note.value(), self.highest_note.value());
-		let note = |semitones: i32| LOWEST_NOTE + semitones as isize;
-		config.min_freq = note(low.min(high)).frequency();
-		config.max_freq = note(low.max(high)).frequency();
+		let (lowest, highest) = self.pitch_range();
+		config.min_freq = lowest.frequency();
+		config.max_freq = highest.frequency();
 
 		config.spectrum_generator = SpectrumGeneratorConfig::Audio(audio::Config {
 			window_ms: self.window_ms.value() as u32,

@@ -14,6 +14,8 @@ use nice_plug_iced::iced::{
 };
 
 use super::Message;
+use super::range_slider::range_slider;
+use crate::note::Note;
 use crate::params::{KEYS, PluginParams};
 
 /// The pane's width, in logical pixels.
@@ -243,16 +245,7 @@ fn body<'a>(params: &'a PluginParams, stage: Stage) -> Element<'a, Message> {
 			"How fast the running peak follows the loudest partial.",
 		)],
 		Stage::Spiral => vec![
-			param_slider(
-				&params.lowest_note,
-				"Lowest note",
-				"The pitch the innermost turn starts at.",
-			),
-			param_slider(
-				&params.highest_note,
-				"Highest note",
-				"The pitch the outermost turn ends at.",
-			),
+			pitch_range(params),
 			key_row(&params.key),
 			param_switch(
 				&params.interval_ring,
@@ -315,6 +308,20 @@ pub fn param_slider<'a, P: Param>(
 		.into(),
 		caption_text,
 	)
+}
+
+/// The pitch range: the range in notes beside its label, the two-handle
+/// slider, and the range's ends in hertz under it.
+fn pitch_range(params: &PluginParams) -> Element<'_, Message> {
+	let (lowest, highest) = params.pitch_range();
+	let hz = |note: Note| caption(format!("{:.0} Hz", note.frequency()));
+	column![
+		label_row("Pitch range", format!("{lowest} – {highest}")),
+		range_slider(&params.lowest_note, &params.highest_note),
+		row![hz(lowest), space::horizontal(), hz(highest)],
+	]
+	.spacing(CONTROL_SPACING)
+	.into()
 }
 
 /// The key row: twelve keys, one per pitch class, with the key the spiral is

@@ -22,6 +22,7 @@ use crate::params::PluginParams;
 use pane::Stage;
 
 mod pane;
+mod range_slider;
 
 const DEFAULT_SIZE: LogicalSize<f32> = LogicalSize::new(1200.0, 760.0);
 /// Room for the pane and a spiral beside it.

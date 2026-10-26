@@ -212,14 +212,20 @@ impl Analyzer {
 	/// Tapers `samples` to the window shape and runs the forward DFT over them,
 	/// leaving the result in the analyzer.
 	///
-	/// Samples beyond the window size are ignored; a short iterator leaves the
-	/// tail of the previous window in place.
+	/// Samples beyond the window size are ignored, and a short iterator is
+	/// padded with silence. The DFT runs in place, so the tail a short iterator
+	/// does not reach holds the last transform's output, which must not be read
+	/// back as audio. A short read is what every tick gets after the window
+	/// grows, until the ring holds the longer window.
 	pub fn run_dft(&mut self, samples: impl Iterator<Item = f64>) {
 		let windowed_samples = samples.zip(self.windowing.iter()).map(|(a, &b)| a * b);
 
+		let mut written = 0;
 		for (sample, dst) in windowed_samples.zip(self.dft_window.iter_mut()) {
 			*dst = Complex64::new(sample, 0.0);
+			written += 1;
 		}
+		self.dft_window[written..].fill(Complex64::new(0.0, 0.0));
 
 		self.dft.process(&mut self.dft_window);
 	}
@@ -413,6 +419,30 @@ mod tests {
 
 	/// The width of a DFT bin: the finest frequency the analysis resolves.
 	const DFT_BIN_HZ: f64 = SAMPLE_RATE as f64 / WINDOW as f64;
+
+	#[test]
+	fn a_window_the_ring_cannot_fill_yet_leaves_nothing_of_the_last_transform() {
+		// A window grown past the audio the ring holds, as just after the
+		// window slider moves up: every tick reads short until the ring
+		// catches up. Two ticks over the same audio must agree, and nothing of
+		// the transform before can leak into either.
+		let signal = sine_wave(&[(440.0, 0.5)], SAMPLE_RATE, WINDOW);
+		let mut generator = generator(&signal);
+		generator.set_config(Config {
+			window_ms: 4 * WINDOW_MS,
+			..Config::default()
+		});
+		let params = spectrum_params(256);
+
+		let first = generator.generate(SpectrumBuffer::new(params.clone()));
+		let second = generator.generate(SpectrumBuffer::new(params));
+
+		assert_eq!(first.values(), second.values());
+		assert!(
+			first.values().iter().all(|&value| value < 1.0),
+			"a half-scale sine stays well under full scale",
+		);
+	}
 
 	#[test]
 	fn a_sine_lands_in_the_bin_for_its_frequency() {

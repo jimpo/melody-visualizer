@@ -27,7 +27,7 @@ futures-timer = "3.0.2"
 log = "0.4.8"
 # `assert_process_allocs` panics in debug builds if `process()` allocates.
 nice-plug = { version = "0.4.2", features = ["assert_process_allocs", "standalone"] }
-nice-plug-iced = { version = "0.5.0", features = ["image"] }
+nice-plug-iced = { version = "0.5.0", features = ["image", "canvas"] }
 palette = "0.7"
 parking_lot = "0.12"
 rtrb = "0.4"

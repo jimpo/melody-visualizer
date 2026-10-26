@@ -91,9 +91,7 @@ fn default_sigma() -> f64 {
 
 /// The pixels the interval ring takes from the spiral's radius. The labels
 /// reach about 8 px further, into `outer_pad`, so a padding under that clips
-/// them.
-// ponytail: the labels themselves are not drawn until the editor overlays them
-// (phase 3 of the nice-plug port); until then the ring is empty room.
+/// them. The generator only leaves the room; the editor draws the labels in it.
 pub const RING_ROOM: f64 = 23.0;
 /// The glow's brightness maths runs in linear light and is encoded to sRGB
 /// with this power law. For a power law, encoding distributes over
@@ -253,20 +251,20 @@ impl SpiralGenerator {
 		}));
 	}
 
-	/// The radius of the outermost turn's centre line.
 	fn r_max(&self) -> f64 {
-		let ring = if self.config.interval_ring {
-			RING_ROOM
-		} else {
-			0.0
-		};
-		(cmp::min(self.x_max, self.y_max) as f64 / 2.0 - self.config.outer_pad - ring)
-			.max(self.config.center_pad)
+		outer_radius(&self.config, self.x_max, self.y_max)
 	}
 
 	fn origin(&self) -> (f64, f64) {
 		(self.x_max as f64 / 2.0, self.y_max as f64 / 2.0)
 	}
+}
+
+/// The radius of the outermost turn's centre line, in pixels from the centre of
+/// a `width` by `height` surface.
+pub fn outer_radius(config: &Config, width: i32, height: i32) -> f64 {
+	let ring = if config.interval_ring { RING_ROOM } else { 0.0 };
+	(cmp::min(width, height) as f64 / 2.0 - config.outer_pad - ring).max(config.center_pad)
 }
 
 /// The low byte of each 16-bit lane of a word that holds a colour's red, green

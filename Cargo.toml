@@ -17,3 +17,4 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 # `assert_process_allocs` panics in debug builds if `process()` allocates.
 nice-plug = { version = "0.4.2", features = ["assert_process_allocs", "standalone"] }
+nice-plug-iced = "0.5.0"

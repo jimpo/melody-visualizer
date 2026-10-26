@@ -31,6 +31,10 @@ Each `cargo xtask bundle` overwrites the bundle in place, so the link keeps
 pointing at the latest build; the host only has to rescan or reload it. Set `NICE_LOG=/path/to/file` in the host's environment
 to capture the plugin's log.
 
+The plugin's window is drawn with [iced](https://iced.rs/) through
+[baseview](https://github.com/RustAudio/baseview), which supports only X11 on
+Linux, so the host has to run under X11 or XWayland.
+
 Run the standalone app under a JACK server, connecting its input with
 `--connect-jack-inputs` or any patchbay:
 

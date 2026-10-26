@@ -1,10 +1,22 @@
 use nice_plug::prelude::*;
+use nice_plug_iced::{IcedEditor, IcedEditorState};
 use std::sync::Arc;
 
+mod editor;
+
 /// The plugin. For now it passes its input through untouched.
-#[derive(Default)]
 pub struct MelodyVisualizer {
 	params: Arc<MelodyVisualizerParams>,
+	editor_state: Arc<IcedEditorState>,
+}
+
+impl Default for MelodyVisualizer {
+	fn default() -> Self {
+		Self {
+			params: Arc::default(),
+			editor_state: editor::default_state(),
+		}
+	}
 }
 
 #[derive(Params, Default)]
@@ -30,12 +42,16 @@ impl Plugin for MelodyVisualizer {
 		},
 	];
 
-	type Editor = ();
+	type Editor = IcedEditor;
 	type SysExMessage = ();
 	type BackgroundTask = ();
 
 	fn params(&self) -> Arc<dyn Params> {
 		self.params.clone()
+	}
+
+	fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
+		editor::create(self.editor_state.clone())
 	}
 
 	fn process(

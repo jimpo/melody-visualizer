@@ -32,6 +32,7 @@ palette = "0.7"
 rtrb = "0.4"
 rustfft = "6"
 serde = { version = "1", features = ["derive"] }
+tracing-log = { version = "0.2", default-features = false, features = ["log-tracer"] }
 
 [dev-dependencies]
 melody-visualizer = { path = ".", features = ["testing"] }

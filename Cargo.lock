@@ -1913,6 +1913,7 @@ dependencies = [
  "rtrb",
  "rustfft",
  "serde",
+ "tracing-log",
 ]
 
 [[package]]

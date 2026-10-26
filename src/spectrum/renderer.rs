@@ -9,7 +9,11 @@ use std::{
 
 use crate::async_processor::{AsyncProcessor, ExecCommand, ExecReceiver};
 use crate::error::Error;
+use crate::note::Note;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, TransformChain};
+
+/// How often the spectrum thread logs the loudest note it hears.
+const REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum SpectrumProcessingError {
@@ -97,6 +101,7 @@ struct SpectrumProcessor {
 	spectrum_input: mpsc::Receiver<SpectrumBuffer>,
 	spectrum_output: mpsc::Sender<Spectrum>,
 	next_tick_time: Instant,
+	last_report: Instant,
 }
 
 impl SpectrumProcessor {
@@ -112,6 +117,7 @@ impl SpectrumProcessor {
 			spectrum_input,
 			spectrum_output,
 			next_tick_time: Instant::now(),
+			last_report: Instant::now(),
 		}
 	}
 
@@ -173,6 +179,10 @@ impl SpectrumProcessor {
 
 		if let Some(buffer) = self.current_buffer.take() {
 			let spectrum = self.renderer.render(buffer);
+			if self.last_report.elapsed() >= REPORT_INTERVAL {
+				self.last_report = Instant::now();
+				report(&spectrum);
+			}
 			if let Err(err) = self.spectrum_output.send(spectrum).await {
 				return if err.is_disconnected() {
 					debug!("spectrum output channel disconnected, stopping spectrum processing");
@@ -185,6 +195,26 @@ impl SpectrumProcessor {
 		} else {
 			Err(SpectrumProcessingError::NoBuffer)
 		}
+	}
+}
+
+/// Logs the note of the loudest bin, which is what shows in a log whether
+/// audio is reaching the engine.
+fn report(spectrum: &Spectrum) {
+	if !log::log_enabled!(log::Level::Debug) {
+		return;
+	}
+	let loudest = spectrum
+		.values()
+		.iter()
+		.enumerate()
+		.max_by(|(_, a), (_, b)| a.total_cmp(b));
+	match loudest {
+		Some((bin, &value)) if value > 0.0 => {
+			let note = Note::nearest(spectrum.params().log_frequencies()[bin]);
+			debug!("loudest note: {note} at {value:.3}");
+		}
+		_ => debug!("loudest note: none, the spectrum is silent"),
 	}
 }
 

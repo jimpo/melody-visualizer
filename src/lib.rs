@@ -1,13 +1,17 @@
 use nice_plug::prelude::*;
 use nice_plug_iced::{IcedEditor, IcedEditorState};
+use std::iter;
 use std::sync::Arc;
 
+use audio::ring::SampleWriter;
+use engine::Engine;
 use params::PluginParams;
 
 pub mod app;
 pub mod async_processor;
 pub mod audio;
 mod editor;
+pub mod engine;
 pub mod error;
 pub mod graphic;
 pub mod note;
@@ -17,17 +21,29 @@ pub mod spectrum;
 pub mod test_support;
 pub mod traits;
 
-/// The plugin. For now it passes its input through untouched.
+/// The plugin. It passes its input through untouched and analyzes a mono mix
+/// of it.
 pub struct MelodyVisualizer {
 	params: Arc<PluginParams>,
 	editor_state: Arc<IcedEditorState>,
+	/// The engine, and the writer the audio reaches it through, while the
+	/// plugin is active.
+	engine: Option<(Engine, SampleWriter)>,
+	/// Room for one block's mono mix, so `process` allocates nothing.
+	mono: Vec<f32>,
 }
 
 impl Default for MelodyVisualizer {
 	fn default() -> Self {
+		// nice-plug logs through `tracing`, and the engine through `log`. This
+		// sends the engine's records to the same place; it fails harmlessly
+		// once another instance has installed it.
+		let _ = tracing_log::LogTracer::init();
 		Self {
 			params: Arc::default(),
 			editor_state: editor::default_state(),
+			engine: None,
+			mono: Vec::new(),
 		}
 	}
 }
@@ -64,12 +80,55 @@ impl Plugin for MelodyVisualizer {
 		editor::create(self.editor_state.clone())
 	}
 
+	fn activate(
+		&mut self,
+		_audio_io_layout: &AudioIOLayout,
+		buffer_config: &BufferConfig,
+		_context: &mut impl ActivateContext<Self>,
+	) -> bool {
+		// The host may activate again without deactivating first, for instance
+		// to restore state, so stop the old engine before starting the new one.
+		self.engine = None;
+		let sample_rate = buffer_config.sample_rate.round() as u32;
+		match Engine::start(&self.params.config(), sample_rate) {
+			Ok(engine) => self.engine = Some(engine),
+			Err(err) => {
+				log::error!("failed to start the engine: {err}");
+				return false;
+			}
+		}
+		self.mono = vec![0.0; buffer_config.max_buffer_size as usize];
+		true
+	}
+
+	fn deactivate(&mut self) {
+		self.engine = None;
+	}
+
 	fn process(
 		&mut self,
-		_buffer: &mut Buffer,
+		buffer: &mut Buffer,
 		_aux: &mut AuxiliaryBuffers,
 		_context: &mut impl ProcessContext<Self>,
 	) -> ProcessStatus {
+		let Some((_, writer)) = &mut self.engine else {
+			return ProcessStatus::Normal;
+		};
+		let samples = buffer.samples().min(self.mono.len());
+		match buffer.as_slice_immutable() {
+			[channel] => writer.write_samples(channel),
+			channels => {
+				let mono = &mut self.mono[..samples];
+				mono.fill(0.0);
+				let gain = 1.0 / channels.len() as f32;
+				for channel in channels {
+					for (mixed, sample) in iter::zip(mono.iter_mut(), channel.iter()) {
+						*mixed += sample * gain;
+					}
+				}
+				writer.write_samples(mono);
+			}
+		}
 		ProcessStatus::Normal
 	}
 }

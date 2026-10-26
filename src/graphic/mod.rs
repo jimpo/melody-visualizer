@@ -24,6 +24,16 @@ impl Graphic {
 		self.buffer.height()
 	}
 
+	/// The frame's width, height and RGBA pixels, row-major.
+	pub fn into_rgba(self) -> (u32, u32, Vec<u8>) {
+		let GraphicBuffer {
+			width,
+			height,
+			data,
+		} = self.buffer;
+		(width as u32, height as u32, data)
+	}
+
 	/// The pixel at `(x, y)` as `(red, green, blue)`.
 	///
 	/// # Preconditions

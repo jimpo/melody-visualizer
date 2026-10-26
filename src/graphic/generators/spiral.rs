@@ -2,7 +2,7 @@ use palette::{FromColor, Hsv, RgbHue, encoding::Srgb, rgb::Rgb};
 use std::any::Any;
 use std::cmp;
 use std::collections::VecDeque;
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::TAU;
 use std::fmt;
 use std::iter;
 use std::sync::Arc;
@@ -89,24 +89,12 @@ fn default_sigma() -> f64 {
 	DEFAULT_SIGMA
 }
 
-/// The interval names of the twelve spokes, clockwise from the key.
-const INTERVALS: [&str; 12] = [
-	"P1", "m2", "M2", "m3", "M3", "P4", "TT", "P5", "m6", "M6", "m7", "M7",
-];
 /// The pixels the interval ring takes from the spiral's radius. The labels
 /// reach about 8 px further, into `outer_pad`, so a padding under that clips
 /// them.
+// ponytail: the labels themselves are not drawn until the editor overlays them
+// (phase 3 of the nice-plug port); until then the ring is empty room.
 pub const RING_ROOM: f64 = 23.0;
-/// Where a label's centre sits, in pixels outside the outermost turn.
-const LABEL_OFFSET: f64 = 20.0;
-/// Cairo matches the face through fontconfig, which falls back to its default
-/// face (DejaVu Sans on a stock Ubuntu) when it is not installed.
-// ponytail: cairo's toy text API offers only normal and bold, not the design's
-// weight 500; move to pangocairo if the weight matters.
-const LABEL_FACE: &str = "Playfair Display";
-const LABEL_SIZE: f64 = 13.0;
-const LABEL_ALPHA: f64 = 0.55;
-
 /// The glow's brightness maths runs in linear light and is encoded to sRGB
 /// with this power law. For a power law, encoding distributes over
 /// multiplication, so `shade` multiplying two encoded bytes multiplies their
@@ -279,41 +267,15 @@ impl SpiralGenerator {
 	fn origin(&self) -> (f64, f64) {
 		(self.x_max as f64 / 2.0, self.y_max as f64 / 2.0)
 	}
-
-	/// Names each spoke by its interval from the key, in upright labels outside
-	/// the outermost turn.
-	fn draw_interval_ring(&self, ctx: &cairo::Context) -> Result<(), cairo::Error> {
-		let r = self.r_max() + LABEL_OFFSET;
-		let (x_origin, y_origin) = self.origin();
-
-		ctx.set_source_rgba(1.0, 1.0, 1.0, LABEL_ALPHA);
-		ctx.select_font_face(
-			LABEL_FACE,
-			cairo::FontSlant::Normal,
-			cairo::FontWeight::Normal,
-		);
-		ctx.set_font_size(LABEL_SIZE);
-		let font = ctx.font_extents()?;
-		for (step, name) in INTERVALS.iter().enumerate() {
-			let (sin, cos) = (step as f64 / 12.0 * 2.0 * PI).sin_cos();
-			let (x, y) = (x_origin + sin * r, y_origin - cos * r);
-			let advance = ctx.text_extents(name)?.x_advance();
-			// Centred on the advance and the em box rather than on the ink, so
-			// the old-style figures that drop below the baseline keep their drop.
-			ctx.move_to(
-				x - advance / 2.0,
-				y + (font.ascent() - font.descent()) / 2.0,
-			);
-			ctx.show_text(name)?;
-		}
-		Ok(())
-	}
 }
 
 /// The low byte of each 16-bit lane of a word that holds a colour's red, green
 /// and blue from the top lane down. A lane has room for a byte multiplied by up
 /// to 256, so one multiply scales all three channels with no carry between them.
 const LANES: u64 = 0x00ff_00ff_00ff;
+
+const OPAQUE: u8 = 0xff;
+const BLACK: [u8; 4] = [0, 0, 0, OPAQUE];
 
 /// `hue`, in linear RGB with its brightest channel at 1, lit to `light`, as a
 /// [`LANES`] word in sRGB.
@@ -331,17 +293,18 @@ fn expose(hue: [f32; 3], light: f32) -> u64 {
 }
 
 /// `low` blended `frac / 256` of the way to `high`, then scaled by
-/// `weight / 255`, per channel of two [`LANES`] words, as a `0x00RRGGBB` word.
+/// `weight / 255`, per channel of two [`LANES`] words, as an opaque RGBA pixel.
 ///
 /// The weight goes in as `weight + 1` 256ths, which keeps both of its ends
 /// exact: black at 0, the blend itself at 255. The weight is split between the
 /// two colours before they are multiplied, so the parts always sum to it, and
 /// a `frac` of 0 is `low` alone.
-fn shade(low: u64, high: u64, frac: u8, weight: u8) -> u32 {
+fn shade(low: u64, high: u64, frac: u8, weight: u8) -> [u8; 4] {
 	let weight = u64::from(weight) + 1;
 	let to_high = (u64::from(frac) * weight) >> 8;
 	let lit = ((low * (weight - to_high) + high * to_high) >> 8) & LANES;
-	((lit >> 16) & 0xff_0000 | (lit >> 8) & 0xff00 | lit & 0xff) as u32
+	let rgba = (lit >> 32) & 0xff | (lit >> 8) & 0xff00 | (lit & 0xff) << 16 | 0xff00_0000;
+	(rgba as u32).to_le_bytes()
 }
 
 impl GraphicGenerator for SpiralGenerator {
@@ -371,7 +334,7 @@ impl GraphicGenerator for SpiralGenerator {
 		let pixels = buffer.data_mut();
 		if self.map.is_empty() {
 			// No grid yet, so nothing lights the surface.
-			pixels.fill(0);
+			pixels.as_chunks_mut::<4>().0.fill(BLACK);
 		} else {
 			assert_eq!(
 				pixels.len(),
@@ -380,8 +343,8 @@ impl GraphicGenerator for SpiralGenerator {
 			);
 			for (pixel, texel) in iter::zip(pixels.as_chunks_mut::<4>().0, &self.map) {
 				// Most of the surface is off the ribbon, and black needs no lookup.
-				let colour = if texel.weight == 0 {
-					0
+				*pixel = if texel.weight == 0 {
+					BLACK
 				} else {
 					let bin = usize::from(texel.bin);
 					let &[low, high] = &self.lit[bin..bin + 2] else {
@@ -389,15 +352,10 @@ impl GraphicGenerator for SpiralGenerator {
 					};
 					shade(low, high, texel.frac, texel.weight)
 				};
-				*pixel = colour.to_ne_bytes();
 			}
 		}
 
-		if self.config.interval_ring {
-			buffer.draw(|ctx| Ok(self.draw_interval_ring(ctx)?))
-		} else {
-			Ok(Graphic { buffer })
-		}
+		Ok(buffer.into_graphic())
 	}
 
 	fn set_params(&mut self, params: &Arc<SpectrumParams>) {
@@ -426,6 +384,7 @@ mod tests {
 
 	use crate::note;
 	use crate::spectrum::SpectrumBuffer;
+	use std::f64::consts::PI;
 
 	const SIZE: i32 = 300;
 	const OUTER_PAD: f64 = 10.0;
@@ -895,7 +854,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_interval_ring_makes_room_and_labels_every_spoke() {
+	fn the_interval_ring_makes_room_outside_the_outermost_turn() {
 		let mut generator = SpiralGenerator::new(Config {
 			interval_ring: true,
 			..config()
@@ -904,7 +863,7 @@ mod tests {
 		generator.set_params(&semitone_grid());
 
 		let r_max = R_MAX - RING_ROOM;
-		let graphic = render(&mut generator, 0.0);
+		render(&mut generator, 0.0);
 		let outermost = texel_at(&generator, (ORIGIN, ORIGIN - r_max));
 		assert_eq!(
 			nearest_bin(outermost),
@@ -912,20 +871,5 @@ mod tests {
 			"the outermost turn moves in to make room for the ring",
 		);
 		assert!(outermost.weight > 200);
-
-		for step in 0..12 {
-			let theta = step as f64 / 12.0 * 2.0 * PI;
-			let r = r_max + LABEL_OFFSET;
-			let x = (ORIGIN + r * theta.sin()).round() as i32;
-			let y = (ORIGIN - r * theta.cos()).round() as i32;
-			// The box a 13 px label fills, which lies clear of the outermost band.
-			let lit = (y - 6..=y + 6)
-				.flat_map(|y| (x - 8..=x + 8).map(move |x| (x, y)))
-				.any(|(x, y)| {
-					let (red, green, blue) = graphic.pixel(x, y);
-					red.max(green).max(blue) > 50
-				});
-			assert!(lit, "spoke {} has a label outside the outermost turn", step);
-		}
 	}
 }

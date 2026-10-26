@@ -28,11 +28,6 @@ use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
 //
 // RPC: async fn call<R>(&mut self, cmd: C) -> Result<R, Error>
 // async fn stop(&mut self) -> Result<(), Error>
-//
-// glib::Sender<Box<dyn Any>>
-//
-//
-//
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 enum GraphicProcessingError {
@@ -46,18 +41,13 @@ pub struct DefaultGraphicGenerator;
 impl GraphicGenerator for DefaultGraphicGenerator {
 	fn generate(
 		&mut self,
-		buffer: GraphicBuffer,
+		mut buffer: GraphicBuffer,
 		_spectrum_history: &VecDeque<Spectrum>,
 	) -> Result<Graphic, Error> {
-		let x_max = buffer.width();
-		let y_max = buffer.height();
-
-		buffer.draw(|ctx| {
-			ctx.set_source_rgb(0.0, 0.0, 0.0);
-			ctx.rectangle(0.0, 0.0, x_max as f64, y_max as f64);
-			ctx.fill()?;
-			Ok(())
-		})
+		for pixel in buffer.data_mut().as_chunks_mut::<4>().0 {
+			*pixel = [0, 0, 0, 0xff];
+		}
+		Ok(buffer.into_graphic())
 	}
 
 	fn history_len(&self) -> usize {
@@ -320,7 +310,7 @@ mod tests {
 			_spectrum_history: &VecDeque<Spectrum>,
 		) -> Result<Graphic, Error> {
 			self.log.lock().unwrap().push(Call::Generate);
-			buffer.draw(|_ctx| Ok(()))
+			Ok(buffer.into_graphic())
 		}
 
 		fn set_params(&mut self, _params: &Arc<SpectrumParams>) {

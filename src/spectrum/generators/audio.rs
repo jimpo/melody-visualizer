@@ -13,7 +13,7 @@ use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 #[serde(default)]
 pub struct Config {
 	/// The audio one DFT covers, in milliseconds. The sample count follows the
-	/// sample rate, so a rate JACK changes keeps the window the same length in
+	/// sample rate, so a rate the host changes keeps the window the same length in
 	/// time.
 	pub window_ms: u32,
 	/// The spectra produced per second, independent of the window. A window
@@ -546,7 +546,7 @@ mod tests {
 
 		let spectrum = generator(&signal).generate(SpectrumBuffer::default());
 
-		assert_eq!(spectrum.values(), []);
+		assert!(spectrum.values().is_empty());
 	}
 
 	#[test]

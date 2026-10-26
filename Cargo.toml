@@ -14,7 +14,24 @@ exclude = ["legacy"]
 # `cdylib` is the CLAP plugin; `lib` lets `main.rs` build the standalone app.
 crate-type = ["cdylib", "lib"]
 
+[features]
+# Exposes `test_support` to dependents. The self dev-dependency below turns it
+# on for this crate's own test and bench targets, so `tests/` can use the
+# fixtures without any extra flag on the command line.
+testing = []
+
 [dependencies]
+derive_more = { version = "2", features = ["display", "from", "error"] }
+futures = "0.3.5"
+futures-timer = "3.0.2"
+log = "0.4.8"
 # `assert_process_allocs` panics in debug builds if `process()` allocates.
 nice-plug = { version = "0.4.2", features = ["assert_process_allocs", "standalone"] }
 nice-plug-iced = "0.5.0"
+palette = "0.7"
+rtrb = "0.4"
+rustfft = "6"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+rand = "0.10"

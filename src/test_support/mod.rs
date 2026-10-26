@@ -3,10 +3,6 @@
 //! Compiled for the crate's own tests, and for dependents that enable the
 //! `testing` feature.
 
-pub mod jackd;
-
-use futures::{channel::mpsc, prelude::*};
-use glib::MainLoop;
 use std::{f64::consts::TAU, sync::Arc, time::Instant};
 
 use crate::app::config::{Config, SpectrumGeneratorConfig};
@@ -50,18 +46,13 @@ pub fn sine_wave(components: &[(f64, f64)], sample_rate: u32, samples: usize) ->
 		.collect()
 }
 
-/// A [`SampleReader`] holding `samples`, with no JACK server behind it.
+/// A [`SampleReader`] holding `samples`, with no host behind it.
 ///
-/// Allocating a ring buffer is a plain userspace operation, so this is the seam
-/// the generator is fed deterministic audio through. The reader peeks rather
+/// This is the seam the generator is fed deterministic audio through. The reader peeks rather
 /// than consumes, so the same samples serve every call to
 /// [`generate`](crate::spectrum::SpectrumGenerator::generate).
 pub fn sample_reader(samples: &[f32]) -> SampleReader {
-	// The ring rounds its size up to a power of two and keeps one byte free, so
-	// ask for more than the samples strictly need.
-	let size = (samples.len() + 1) * size_of::<f32>() * 2;
-	let (mut writer, reader) =
-		sample_ring(size).expect("allocating a ring buffer needs no JACK server");
+	let (mut writer, reader) = sample_ring(samples.len());
 	writer.write_samples(samples);
 	assert_eq!(
 		reader.overruns(),
@@ -71,58 +62,10 @@ pub fn sample_reader(samples: &[f32]) -> SampleReader {
 	reader
 }
 
-/// Run async test code inside a glib main loop.
-///
-/// Several components (the `PubSub` event bus, the JACK notification handler)
-/// only deliver their effects when a glib main loop is pumping. This driver runs
-/// such a loop and hands the test an async context that can *yield* control back
-/// to it: awaiting `yield_rx.next()` resumes the test once every task higher than
-/// `Priority::LOW` (e.g. a pending notification dispatch) has run. The loop quits
-/// when the test future completes.
-///
-/// Each call runs on a fresh `MainContext`, pushed as the thread default for the
-/// duration, so components that resolve `MainContext::ref_thread_default()`
-/// (e.g. `PubSub::new(None, …)`) bind to it. Tests on concurrent threads share
-/// no context.
-pub fn run_in_glib_main_loop<F, U>(f: F)
-where
-	F: FnOnce(mpsc::Receiver<()>) -> U + 'static,
-	U: Future<Output = ()>,
-{
-	let main_context = glib::MainContext::new();
-	let main_loop = MainLoop::new(Some(&main_context), false);
-
-	main_context
-		.with_thread_default(|| {
-			// The idea is to have an asynchronous test case that can yield control back
-			// to the main loop. We do that with a separate low-priority task that, every
-			// time it is polled, wakes up the test code. In effect, every time the test
-			// code yields, it is resumed when no tasks higher than PRIORITY_LOW are ready.
-			let (mut yield_tx, yield_rx) = mpsc::channel(0);
-
-			main_context.spawn_local_with_priority(glib::Priority::LOW, async move {
-				loop {
-					yield_tx.send(()).await.unwrap();
-				}
-			});
-
-			let main_loop_clone = main_loop.clone();
-			main_context.spawn_local(async move {
-				// Quit main loop after test code completes.
-				f(yield_rx).await;
-				main_loop_clone.quit();
-			});
-
-			main_loop.run();
-		})
-		.expect("a fresh MainContext is not owned by another thread");
-}
-
 /// The DSP chain `config` describes, reading its audio from `reader`.
 ///
-/// The same wiring `AppController` performs when it starts the spectrum thread,
-/// with no thread and no JACK client: the generator `config` names, then its
-/// transforms in configured order.
+/// The wiring the spectrum thread is started with, with no thread and no host:
+/// the generator `config` names, then its transforms in configured order.
 pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> SpectrumRenderer {
 	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
 
@@ -138,9 +81,9 @@ pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> Spec
 
 /// The graphic stage `config` describes, holding one frame of `values`.
 ///
-/// The same wiring `AppController` performs when it starts the graphic thread,
-/// with no thread and no GTK: the generator `config` names, on the frequency
-/// grid `config` implies. The renderer learns its surface size from the first
+/// The wiring the graphic thread is started with, with no thread and no
+/// window: the generator `config` names, on the frequency grid `config`
+/// implies. The renderer learns its surface size from the first
 /// buffer [`render`](GraphicRenderer::render) is handed.
 ///
 /// The spectrum is built on the renderer's own grid, so it lands in the history

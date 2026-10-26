@@ -5,7 +5,7 @@
 //! correct stages are wired together wrongly, or when a change to the
 //! value-range contract quietly breaks the chain's output range.
 //!
-//! Everything here is arithmetic over a synthesized signal: no JACK, no thread,
+//! Everything here is arithmetic over a synthesized signal: no host, no thread,
 //! no clock, and the same result on every run.
 
 use std::sync::Arc;

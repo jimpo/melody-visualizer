@@ -9,7 +9,7 @@ use melody_visualizer::app::Config;
 use melody_visualizer::graphic::GraphicBuffer;
 use melody_visualizer::test_support::{graphic_renderer, seconds_per_call};
 
-/// The frame timer `VisualizationController` runs on: 25 fps.
+/// The frame rate the GTK app drew at: 25 fps.
 const FRAME_SECONDS: f64 = 0.040;
 /// A window-sized surface, the middle of the range the benchmark sweeps.
 const SURFACE: (i32, i32) = (1280, 800);

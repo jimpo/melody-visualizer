@@ -2,8 +2,9 @@
 //!
 //! The stage converts spectra into frames, so it reports **frames/s**, measured
 //! saturated — the history is already populated, so what is measured is the
-//! draw rather than the DSP feeding it. The rate required is 25 fps, the 40 ms
-//! `glib::timeout_add_local` in `VisualizationController`.
+//! draw rather than the DSP feeding it. The rate required is 25 fps, the frame
+//! rate the GTK app drew at; the editor's will be set in phase 3 of the
+//! nice-plug port.
 //!
 //! This is the stage with the least headroom in the pipeline. The whole DSP
 //! chain costs a tenth of a percent of its own tick; one frame at 1600x1000
@@ -34,7 +35,7 @@ use melody_visualizer::graphic::renderer::GraphicRenderer;
 use melody_visualizer::graphic::{Graphic, GraphicBuffer};
 use melody_visualizer::test_support::{graphic_renderer, seconds_per_call};
 
-/// The frame timer `VisualizationController` runs on: 25 fps.
+/// The frame rate the GTK app drew at: 25 fps.
 const FRAME_BUDGET: Duration = Duration::from_millis(40);
 /// The surface the regression gate in `tests/render_budget.rs` watches.
 const GATE_SURFACE: (i32, i32) = (1280, 800);
@@ -78,7 +79,7 @@ fn seconds_per_frame(renderer: &mut GraphicRenderer, width: i32, height: i32) ->
 	})
 }
 
-/// One frame, recycling `buffer` the way the GTK thread does.
+/// One frame, recycling `buffer` the way the editor will.
 fn render(renderer: &mut GraphicRenderer, buffer: GraphicBuffer) -> Graphic {
 	renderer
 		.render(buffer)

@@ -34,4 +34,24 @@ rustfft = "6"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+melody-visualizer = { path = ".", features = ["testing"] }
+# Only the harness. The plotting and HTML report features pull a large tree and
+# the benchmarks report their numbers in the terminal.
+criterion = { version = "0.8", default-features = false, features = [
+	"cargo_bench_support",
+] }
 rand = "0.10"
+
+# The spiral's pixel loop is plain Rust, which runs an order of magnitude slower
+# unoptimised, and `tests/render_budget.rs` times it in the profile the tests
+# build in. The `test` profile inherits this one.
+[profile.dev]
+opt-level = 1
+
+[[bench]]
+name = "dsp"
+harness = false
+
+[[bench]]
+name = "graphic"
+harness = false

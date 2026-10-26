@@ -41,3 +41,8 @@ Run the standalone app under a JACK server, connecting its input with
 ```bash
 cargo run --release -- --help
 ```
+
+To see the window without a display, `scripts/screenshot.sh [out.png]` runs
+the standalone app under Xvfb on a private dummy JACK server with a sine tone
+playing into it, and saves a screenshot of its window. It needs `jackd2`,
+`xvfb` and `imagemagick`.

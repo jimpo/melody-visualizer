@@ -1,0 +1,5 @@
+[alias]
+# Bundles the plugin: `cargo xtask bundle melody-visualizer --release`. The
+# xtask builds in release so it shares serde with a release build of the plugin
+# instead of compiling it twice.
+xtask = "run --package xtask --release --"

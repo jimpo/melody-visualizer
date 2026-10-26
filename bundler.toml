@@ -1,0 +1,3 @@
+# Names for nice-plug's bundler, `cargo xtask bundle`.
+[melody-visualizer]
+name = "Melody Visualizer"

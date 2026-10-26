@@ -8,3 +8,32 @@ The app is being rebuilt as a CLAP plugin on
 build from the same code. The GTK 4 app it replaces lives in
 [legacy/](legacy/README.md) as a reference until the port is done; it still
 builds and runs on its own from that directory.
+
+## Building
+
+You need a stable Rust toolchain that supports edition 2024, and the ALSA
+development headers for the standalone build's ALSA backend. The standalone
+loads JACK at run time, so it needs no JACK headers to build:
+
+```bash
+sudo apt install build-essential pkg-config libasound2-dev
+```
+
+Bundle the CLAP plugin and install it where hosts look for plugins:
+
+```bash
+cargo xtask bundle melody-visualizer --release
+mkdir -p ~/.clap
+ln -sf "$PWD/target/bundled/Melody Visualizer.clap" ~/.clap/
+```
+
+Each `cargo xtask bundle` overwrites the bundle in place, so the link keeps
+pointing at the latest build; the host only has to rescan or reload it. Set `NICE_LOG=/path/to/file` in the host's environment
+to capture the plugin's log.
+
+Run the standalone app under a JACK server, connecting its input with
+`--connect-jack-inputs` or any patchbay:
+
+```bash
+cargo run --release -- --help
+```

@@ -1,0 +1,19 @@
+[package]
+name = "melody-visualizer"
+version = "0.1.0"
+authors = ["Jim Posen <jim.posen@gmail.com>"]
+edition = "2024"
+
+[workspace]
+members = ["xtask"]
+# The GTK app, kept as a reference while it is ported. It is a crate of its
+# own with its own lockfile, so building here never pulls in GTK.
+exclude = ["legacy"]
+
+[lib]
+# `cdylib` is the CLAP plugin; `lib` lets `main.rs` build the standalone app.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+# `assert_process_allocs` panics in debug builds if `process()` allocates.
+nice-plug = { version = "0.4.2", features = ["assert_process_allocs", "standalone"] }

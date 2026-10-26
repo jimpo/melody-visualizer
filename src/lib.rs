@@ -2,6 +2,8 @@ use nice_plug::prelude::*;
 use nice_plug_iced::{IcedEditor, IcedEditorState};
 use std::sync::Arc;
 
+use params::PluginParams;
+
 pub mod app;
 pub mod async_processor;
 pub mod audio;
@@ -9,6 +11,7 @@ mod editor;
 pub mod error;
 pub mod graphic;
 pub mod note;
+pub mod params;
 pub mod spectrum;
 #[cfg(any(test, feature = "testing"))]
 pub mod test_support;
@@ -16,7 +19,7 @@ pub mod traits;
 
 /// The plugin. For now it passes its input through untouched.
 pub struct MelodyVisualizer {
-	params: Arc<MelodyVisualizerParams>,
+	params: Arc<PluginParams>,
 	editor_state: Arc<IcedEditorState>,
 }
 
@@ -28,9 +31,6 @@ impl Default for MelodyVisualizer {
 		}
 	}
 }
-
-#[derive(Params, Default)]
-struct MelodyVisualizerParams {}
 
 impl Plugin for MelodyVisualizer {
 	const NAME: &'static str = "Melody Visualizer";

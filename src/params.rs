@@ -53,8 +53,9 @@ pub struct PluginParams {
 	#[id = "diffuser_width"]
 	pub diffuser_width: FloatParam,
 
-	#[id = "volume_normalizer"]
-	pub volume_normalizer: BoolParam,
+	// The volume normalizer has no switch: it is the stage that scales the
+	// spectrum into the range the spiral draws, and the spiral goes dark without
+	// it.
 	#[id = "normalizer_rate"]
 	pub normalizer_rate: FloatParam,
 
@@ -89,7 +90,7 @@ impl Default for PluginParams {
 		let mut harmonic_summation = None;
 		let mut power_map = None;
 		let mut diffuser = None;
-		let mut volume_normalizer = None;
+		let mut normalizer = None;
 		for entry in &config.spectrum_transforms {
 			match &entry.config {
 				SpectrumTransformConfig::HarmonicSummation(c) => {
@@ -99,9 +100,7 @@ impl Default for PluginParams {
 					power_map = Some((entry.enabled, c.clone()))
 				}
 				SpectrumTransformConfig::Diffuser(c) => diffuser = Some((entry.enabled, c.clone())),
-				SpectrumTransformConfig::VolumeNormalizer(c) => {
-					volume_normalizer = Some((entry.enabled, c.clone()))
-				}
+				SpectrumTransformConfig::VolumeNormalizer(c) => normalizer = Some(c.clone()),
 				SpectrumTransformConfig::DecibelConverter(_) => {}
 			}
 		}
@@ -109,7 +108,7 @@ impl Default for PluginParams {
 		let harmonic_summation = harmonic_summation.expect(missing);
 		let power_map = power_map.expect(missing);
 		let diffuser = diffuser.expect(missing);
-		let volume_normalizer = volume_normalizer.expect(missing);
+		let normalizer = normalizer.expect(missing);
 
 		let notes = (HIGHEST_NOTE - LOWEST_NOTE) as i32;
 		let key = Note::nearest(spiral.key_log_freq) - note!(C, KEY_OCTAVE);
@@ -126,20 +125,22 @@ impl Default for PluginParams {
 				analysis.update_rate as i32,
 				linear(audio::MIN_UPDATE_RATE as i32, audio::MAX_UPDATE_RATE as i32),
 			)
-			.with_unit(" /s"),
+			.with_unit(" / sec"),
 
 			harmonic_summation: BoolParam::new("Harmonic summation", harmonic_summation.0),
 			harmonics: IntParam::new(
 				"Harmonics",
 				harmonic_summation.1.harmonics as i32,
 				linear(1, 16),
-			),
+			)
+			.with_unit(" harmonics"),
 			harmonic_decay: FloatParam::new(
 				"Harmonic decay",
 				harmonic_summation.1.decay as f32,
 				FloatRange::Linear { min: 0.0, max: 1.0 },
 			)
-			.with_step_size(0.01),
+			.with_step_size(0.01)
+			.with_value_to_string(formatters::v2s_f32_rounded(2)),
 
 			power_map: BoolParam::new("Power map", power_map.0),
 			exponent: FloatParam::new(
@@ -147,7 +148,8 @@ impl Default for PluginParams {
 				power_map.1.exponent as f32,
 				FloatRange::Linear { min: 0.5, max: 4.0 },
 			)
-			.with_step_size(0.1),
+			.with_step_size(0.1)
+			.with_value_to_string(formatters::v2s_f32_rounded(1)),
 
 			diffuser: BoolParam::new("Diffuser", diffuser.0),
 			diffuser_width: FloatParam::new(
@@ -159,18 +161,19 @@ impl Default for PluginParams {
 				},
 			)
 			.with_step_size(0.1)
-			.with_unit(" st"),
+			.with_value_to_string(formatters::v2s_f32_rounded(1))
+			.with_unit(" semitones"),
 
-			volume_normalizer: BoolParam::new("Volume normalizer", volume_normalizer.0),
 			normalizer_rate: FloatParam::new(
 				"Normalizer rate",
-				volume_normalizer.1.rate as f32,
+				normalizer.rate as f32,
 				FloatRange::Linear {
 					min: 0.01,
 					max: 1.0,
 				},
 			)
-			.with_step_size(0.01),
+			.with_step_size(0.01)
+			.with_value_to_string(formatters::v2s_f32_rounded(2)),
 
 			lowest_note: IntParam::new(
 				"Lowest note",
@@ -195,7 +198,9 @@ impl Default for PluginParams {
 				spiral.exposure as f32,
 				FloatRange::Linear { min: 0.5, max: 4.0 },
 			)
-			.with_step_size(0.05),
+			.with_step_size(0.05)
+			.with_value_to_string(formatters::v2s_f32_rounded(2))
+			.with_unit("×"),
 			center_pad: IntParam::new("Centre hole", spiral.center_pad as i32, linear(0, 200))
 				.with_unit(" px"),
 			outer_pad: IntParam::new("Outer padding", spiral.outer_pad as i32, linear(0, 100))
@@ -209,7 +214,8 @@ impl Default for PluginParams {
 				},
 			)
 			.with_step_size(1.0)
-			.with_unit(" ct"),
+			.with_value_to_string(formatters::v2s_f32_rounded(0))
+			.with_unit(" ¢"),
 			glow_falloff: FloatParam::new(
 				"Glow falloff",
 				(spiral.sigma * CENTS_PER_OCTAVE) as f32,
@@ -219,7 +225,8 @@ impl Default for PluginParams {
 				},
 			)
 			.with_step_size(1.0)
-			.with_unit(" ct"),
+			.with_value_to_string(formatters::v2s_f32_rounded(0))
+			.with_unit(" ¢"),
 		}
 	}
 }
@@ -256,7 +263,6 @@ impl PluginParams {
 					c.width = plain(self.diffuser_width.value()) / SEMITONES_PER_OCTAVE;
 				}
 				SpectrumTransformConfig::VolumeNormalizer(c) => {
-					entry.enabled = self.volume_normalizer.value();
 					c.rate = plain(self.normalizer_rate.value());
 				}
 				SpectrumTransformConfig::DecibelConverter(_) => {}
@@ -281,11 +287,25 @@ fn note_name(semitones: i32) -> String {
 	(LOWEST_NOTE + semitones as isize).to_string()
 }
 
+/// Each key's name, by its semitones above C, and whether it is a black key.
+pub const KEYS: [(&str, bool); 12] = [
+	("C", false),
+	("C♯", true),
+	("D", false),
+	("E♭", true),
+	("E", false),
+	("F", false),
+	("F♯", true),
+	("G", false),
+	("A♭", true),
+	("A", false),
+	("B♭", true),
+	("B", false),
+];
+
 /// A key, by its semitones above C.
 fn key_name(semitones: i32) -> String {
-	(note!(C, KEY_OCTAVE) + semitones as isize)
-		.pitch_class
-		.to_string()
+	KEYS[semitones.rem_euclid(12) as usize].0.to_string()
 }
 
 /// The inverse of `name` over `0..=max`: the value whose name a host hands

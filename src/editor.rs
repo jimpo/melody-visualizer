@@ -1,5 +1,5 @@
 //! The plugin's window: the spiral the engine draws, with the interval ring's
-//! labels over it.
+//! labels over it, and the control pane beside it.
 
 use nice_plug::{editor::dpi::LogicalSize, prelude::*};
 use nice_plug_iced::{
@@ -8,7 +8,7 @@ use nice_plug_iced::{
 	iced::{
 		self, Color, ContentFit, Element, Font, Length, Point, PollSubNotifier, Rectangle,
 		Renderer, Subscription, Task, Theme, alignment, font, mouse,
-		widget::{Canvas, canvas, center, image, stack, text},
+		widget::{Canvas, canvas, center, image, row, stack, text},
 	},
 };
 use parking_lot::Mutex;
@@ -19,9 +19,13 @@ use crate::app::config::GraphicGeneratorConfig;
 use crate::engine::Engine;
 use crate::graphic::generators::spiral;
 use crate::params::PluginParams;
+use pane::Stage;
 
-const DEFAULT_SIZE: LogicalSize<f32> = LogicalSize::new(1000.0, 700.0);
-const MIN_SIZE: LogicalSize<f32> = LogicalSize::new(400.0, 300.0);
+mod pane;
+
+const DEFAULT_SIZE: LogicalSize<f32> = LogicalSize::new(1200.0, 760.0);
+/// Room for the pane and a spiral beside it.
+const MIN_SIZE: LogicalSize<f32> = LogicalSize::new(pane::WIDTH + 400.0, 400.0);
 
 /// The interval names of the twelve spokes, clockwise from the key.
 const INTERVALS: [&str; 12] = [
@@ -62,7 +66,7 @@ pub fn create(
 			.with_resize_hint(ResizeHint::resizable().with_min_logical_size(MIN_SIZE)),
 		|shared, ctx| {
 			Ok(application(shared, ctx, Gui::new, Gui::update, Gui::view)
-				.theme(|_: &Gui| Some(Theme::Dark))
+				.theme(|_: &Gui| Some(pane::theme()))
 				.subscription(Gui::subscription)
 				.run())
 		},
@@ -70,12 +74,20 @@ pub fn create(
 }
 
 #[derive(Debug, Clone)]
-enum Message {
+pub enum Message {
 	/// Woken to draw a frame.
 	Frame,
 	/// The frame last drawn is on the GPU, ready to show.
 	Uploaded(Result<image::Allocation, image::Error>),
 	WindowResized,
+	/// A stage's row was clicked: open the stage, or close it if it is open.
+	Open(Stage),
+	/// A slider moved the parameter to a normalized value.
+	Drag(ParamPtr, f32),
+	/// The slider being dragged was let go.
+	Release,
+	/// A switch or a button set the parameter to a normalized value at once.
+	Click(ParamPtr, f32),
 }
 
 struct Gui {
@@ -88,6 +100,11 @@ struct Gui {
 	uploading: bool,
 	/// The labels to draw over the frame, when the ring is on.
 	ring: Option<IntervalRing>,
+	/// The stage whose controls show in the pane.
+	open: Option<Stage>,
+	/// The parameter a slider is dragging, between the host being told the
+	/// gesture began and that it ended.
+	dragging: Option<ParamPtr>,
 }
 
 impl Gui {
@@ -98,6 +115,8 @@ impl Gui {
 			frame: None,
 			uploading: false,
 			ring: None,
+			open: None,
+			dragging: None,
 		}
 	}
 
@@ -110,26 +129,63 @@ impl Gui {
 
 	fn update(&mut self, message: Message) -> Task<Message> {
 		match message {
-			Message::Frame => self.draw(),
+			Message::Frame => return self.draw(),
 			Message::Uploaded(result) => {
 				self.uploading = false;
 				match result {
 					Ok(frame) => self.frame = Some(frame),
 					Err(err) => log::error!("failed to upload a frame: {err}"),
 				}
-				Task::none()
 			}
 			Message::WindowResized => {
 				// Keeps the editor's size current so it reopens at the size the
 				// host last gave it.
 				self.ctx.sync_window_size();
-				self.draw()
+				return self.draw();
 			}
+			Message::Open(stage) => {
+				self.open = (self.open != Some(stage)).then_some(stage);
+			}
+			Message::Drag(param, normalized) => {
+				if self.dragging != Some(param) {
+					self.end_drag();
+					self.dragging = Some(param);
+					// SAFETY: every `ParamPtr` comes from `self.shared.params`, which
+					// the editor keeps alive.
+					unsafe { self.ctx.nice_context.raw_begin_set_parameter(param) };
+				}
+				// SAFETY: as above.
+				unsafe {
+					self.ctx
+						.nice_context
+						.raw_set_parameter_normalized(param, normalized)
+				};
+			}
+			Message::Release => self.end_drag(),
+			Message::Click(param, normalized) => {
+				// SAFETY: as for `Drag`.
+				unsafe {
+					let context = &self.ctx.nice_context;
+					context.raw_begin_set_parameter(param);
+					context.raw_set_parameter_normalized(param, normalized);
+					context.raw_end_set_parameter(param);
+				}
+			}
+		}
+		Task::none()
+	}
+
+	/// Tells the host the drag under way, if any, has ended.
+	fn end_drag(&mut self) {
+		if let Some(param) = self.dragging.take() {
+			// SAFETY: as for `Drag`.
+			unsafe { self.ctx.nice_context.raw_end_set_parameter(param) };
 		}
 	}
 
 	/// Applies the parameters to the engine, has it draw a frame the size of the
-	/// window, and sends the frame to the GPU.
+	/// window's room beside the pane, in physical pixels, and sends the frame to
+	/// the GPU.
 	///
 	/// The frame on show stays until the new one has landed: iced uploads a frame
 	/// this large off the GPU's thread, and draws nothing for it until then. No
@@ -139,7 +195,12 @@ impl Gui {
 			return Task::none();
 		}
 		let config = self.shared.params.config();
-		let size = self.ctx.window_size().physical;
+		let window = self.ctx.window_size();
+		let scale = window.physical.width as f64 / window.logical.width;
+		let mut size = window.physical;
+		size.width = size
+			.width
+			.saturating_sub((f64::from(pane::WIDTH) * scale).round() as u32);
 		let mut engine = self.shared.engine.lock();
 		let Some(engine) = engine.as_mut() else {
 			self.frame = None;
@@ -174,14 +235,22 @@ impl Gui {
 	}
 
 	fn view(&self) -> Element<'_, Message> {
+		row![
+			self.visualization(),
+			pane::view(&self.shared.params, self.open)
+		]
+		.into()
+	}
+
+	fn visualization(&self) -> Element<'_, Message> {
 		let Some(frame) = &self.frame else {
 			return center(text("Melody Visualizer").size(24))
 				.width(Length::Fill)
 				.height(Length::Fill)
 				.into();
 		};
-		// The frame is drawn at the window's size in physical pixels, so it fills
-		// the window one to one.
+		// The frame is drawn at its area's size in physical pixels, so it fills
+		// the area one to one.
 		let frame = image(frame.handle().clone())
 			.width(Length::Fill)
 			.height(Length::Fill)

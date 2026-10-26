@@ -34,7 +34,7 @@ xvfb-run -a -s '-screen 0 1280x800x24' bash -c '
 		--backend jack --connect-jack-inputs tone:output1 &
 	APP=$!
 	sleep "$2"
-	import -window root -crop 1000x700+0+0 +repage "$3"
+	import -window root -crop 1200x760+0+0 +repage "$3"
 	kill "$APP"
 ' _ "$LOG" "$SECONDS_TO_RUN" "$OUT"
 

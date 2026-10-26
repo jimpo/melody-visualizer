@@ -9,12 +9,12 @@ use nice_plug::prelude::*;
 use nice_plug_iced::iced::{
 	Alignment, Background, Color, Element, Length, Theme, border,
 	widget::{
-		Column, button, column, container, row, rule, scrollable, slider, space, text, toggler,
+		Column, Row, button, column, container, row, rule, scrollable, slider, space, text, toggler,
 	},
 };
 
 use super::Message;
-use crate::params::PluginParams;
+use crate::params::{KEYS, PluginParams};
 
 /// The pane's width, in logical pixels.
 pub const WIDTH: f32 = 420.0;
@@ -26,6 +26,8 @@ const ROW_HOVER: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.03);
 /// An open row is brighter than a hovered one because the design carries no
 /// disclosure arrow: the row's background is all that tells them apart.
 const ROW_OPEN: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.10);
+
+const WHITE_KEY: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.08);
 
 /// A stage's type shows only in the colour of its row's dot.
 const ANALYSIS: Color = Color::from_rgb8(0xc0, 0x61, 0xcb);
@@ -251,6 +253,7 @@ fn body<'a>(params: &'a PluginParams, stage: Stage) -> Element<'a, Message> {
 				"Highest note",
 				"The pitch the outermost turn ends at.",
 			),
+			key_row(&params.key),
 			param_switch(
 				&params.interval_ring,
 				"Interval ring",
@@ -312,6 +315,60 @@ pub fn param_slider<'a, P: Param>(
 		.into(),
 		caption_text,
 	)
+}
+
+/// The key row: twelve keys, one per pitch class, with the key the spiral is
+/// set to down. The black keys are darker, as on a keyboard.
+fn key_row(param: &IntParam) -> Element<'_, Message> {
+	let down = param.value();
+	let keys = KEYS.iter().enumerate().map(|(semitones, &(name, black))| {
+		let semitones = semitones as i32;
+		let is_down = semitones == down;
+		let corners = border::Radius {
+			top_left: if semitones == 0 { 6.0 } else { 0.0 },
+			bottom_left: if semitones == 0 { 6.0 } else { 0.0 },
+			top_right: if semitones == 11 { 6.0 } else { 0.0 },
+			bottom_right: if semitones == 11 { 6.0 } else { 0.0 },
+		};
+		button(text(name).size(12).center().width(Length::Fill))
+			.on_press(Message::Click(
+				param.as_ptr(),
+				param.preview_normalized(semitones),
+			))
+			.width(Length::Fill)
+			.height(34)
+			.padding(0)
+			.style(move |theme: &Theme, status| {
+				let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+				let background = if is_down {
+					theme.palette().primary
+				} else if hovered {
+					Color::from_rgba(1.0, 1.0, 1.0, 0.14)
+				} else if black {
+					Color::from_rgba(0.0, 0.0, 0.0, 0.32)
+				} else {
+					WHITE_KEY
+				};
+				button::Style {
+					background: Some(Background::Color(background)),
+					text_color: if black && !is_down {
+						Color::from_rgba(1.0, 1.0, 1.0, 0.7)
+					} else {
+						Color::WHITE
+					},
+					border: border::rounded(corners),
+					..button::Style::default()
+				}
+			})
+			.into()
+	});
+	column![
+		text("Key").size(14),
+		Row::with_children(keys).spacing(2),
+		caption("Sits at the top of the wheel and anchors the hue.".to_string()),
+	]
+	.spacing(CONTROL_SPACING)
+	.into()
 }
 
 /// A switch over `param`, at the end of its label's row, over a caption.

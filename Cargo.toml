@@ -6,9 +6,6 @@ edition = "2024"
 
 [workspace]
 members = ["xtask"]
-# The GTK app, kept as a reference while it is ported. It is a crate of its
-# own with its own lockfile, so building here never pulls in GTK.
-exclude = ["legacy"]
 
 [lib]
 # `cdylib` is the CLAP plugin; `lib` lets `main.rs` build the standalone app.

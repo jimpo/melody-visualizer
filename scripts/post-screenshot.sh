@@ -14,7 +14,7 @@
 # left alone.
 #
 # Usage:
-#   scripts/run-headless.sh                          # -> /tmp/melody-shot.png
+#   scripts/screenshot.sh                            # -> /tmp/melody-shot.png
 #   scripts/post-screenshot.sh /tmp/melody-shot.png  # from the branch under review
 #
 # One markdown image line is printed per file. Paste them into the description.

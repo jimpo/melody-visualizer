@@ -2,13 +2,12 @@
 //!
 //! The stage converts spectra into frames, so it reports **frames/s**, measured
 //! saturated — the history is already populated, so what is measured is the
-//! draw rather than the DSP feeding it. The rate required is 25 fps, the frame
-//! rate the GTK app drew at; the editor's will be set in phase 3 of the
-//! nice-plug port.
+//! draw rather than the DSP feeding it. The rate required is 64 fps, the fastest
+//! the editor draws: nice-plug-iced polls for a frame 64 times a second.
 //!
 //! This is the stage with the least headroom in the pipeline. The whole DSP
 //! chain costs a tenth of a percent of its own tick; one frame at 1600x1000
-//! costs about a fortieth of this one.
+//! costs about a twentieth of this one.
 //!
 //! Two sweeps, and they scale opposite to the DSP:
 //!
@@ -35,8 +34,8 @@ use melody_visualizer::graphic::renderer::GraphicRenderer;
 use melody_visualizer::graphic::{Graphic, GraphicBuffer};
 use melody_visualizer::test_support::{graphic_renderer, seconds_per_call};
 
-/// The frame rate the GTK app drew at: 25 fps.
-const FRAME_BUDGET: Duration = Duration::from_millis(40);
+/// The editor's fastest frame rate, 64 fps.
+const FRAME_BUDGET: Duration = Duration::from_micros(15_625);
 /// The surface the regression gate in `tests/render_budget.rs` watches.
 const GATE_SURFACE: (i32, i32) = (1280, 800);
 

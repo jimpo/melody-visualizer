@@ -1,5 +1,5 @@
-//! The plugin's parameters: every control the GTK app's control pane had, as a
-//! parameter the host can show, automate and save.
+//! The plugin's parameters: every control in the editor's pane, as a parameter
+//! the host can show, automate and save.
 //!
 //! [`PluginParams::config`] is the one place they are turned into the engine's
 //! [`Config`]. The defaults are read back out of `Config::default()`, so the

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use melody_visualizer::app::Config;
-use melody_visualizer::app::config::SpectrumGeneratorConfig;
 use melody_visualizer::spectrum::SpectrumBuffer;
 use melody_visualizer::spectrum::generators::audio;
 use melody_visualizer::test_support::{renderer, sample_reader, sine_wave};
@@ -37,7 +36,7 @@ const WINDOWS: [u32; 3] = [audio::MIN_WINDOW_MS, 50, audio::MAX_WINDOW_MS];
 fn the_chain_stays_well_inside_its_tick_at_every_setting_the_sliders_reach() {
 	for window_ms in WINDOWS {
 		let mut config = Config::default();
-		let SpectrumGeneratorConfig::Audio(generator_config) = &mut config.spectrum_generator;
+		let generator_config = &mut config.spectrum_generator.audio;
 		generator_config.window_ms = window_ms;
 		generator_config.update_rate = audio::MAX_UPDATE_RATE;
 		check_one_window(&config);
@@ -45,7 +44,7 @@ fn the_chain_stays_well_inside_its_tick_at_every_setting_the_sliders_reach() {
 }
 
 fn check_one_window(config: &Config) {
-	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let generator_config = &config.spectrum_generator.audio;
 	let signal = sine_wave(
 		&[(440.0, 1.0), (1760.0, 0.5), (7040.0, 0.25)],
 		SAMPLE_RATE,

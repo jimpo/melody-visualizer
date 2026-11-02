@@ -103,6 +103,9 @@ struct Gui {
 	ring: Option<IntervalRing>,
 	/// The stage whose controls show in the pane.
 	open: Option<Stage>,
+	/// Whether the engine draws MIDI notes rather than audio, as of the last
+	/// frame.
+	midi: bool,
 	/// The parameter a slider is dragging, between the host being told the
 	/// gesture began and that it ended.
 	dragging: Option<ParamPtr>,
@@ -117,6 +120,7 @@ impl Gui {
 			uploading: false,
 			ring: None,
 			open: None,
+			midi: false,
 			dragging: None,
 		}
 	}
@@ -195,7 +199,7 @@ impl Gui {
 		if self.uploading {
 			return Task::none();
 		}
-		let config = self.shared.params.config();
+		let mut config = self.shared.params.config();
 		let window = self.ctx.window_size();
 		let scale = window.physical.width as f64 / window.logical.width;
 		let mut size = window.physical;
@@ -207,6 +211,10 @@ impl Gui {
 			self.frame = None;
 			return Task::none();
 		};
+		self.midi = engine.hears_midi();
+		if self.midi {
+			config.for_midi();
+		}
 
 		let GraphicGeneratorConfig::Spiral(spiral) = &config.graphic_generator;
 		self.ring = spiral.interval_ring.then(|| IntervalRing {
@@ -238,7 +246,7 @@ impl Gui {
 	fn view(&self) -> Element<'_, Message> {
 		row![
 			self.visualization(),
-			pane::view(&self.shared.params, self.open)
+			pane::view(&self.shared.params, self.open, self.midi)
 		]
 		.into()
 	}

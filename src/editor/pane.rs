@@ -46,6 +46,7 @@ const CONTROL_SPACING: f32 = 8.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
 	Spectrum,
+	Envelope,
 	HarmonicSummation,
 	PowerMap,
 	Diffuser,
@@ -53,9 +54,12 @@ pub enum Stage {
 	Spiral,
 }
 
-pub fn view<'a>(params: &'a PluginParams, open: Option<Stage>) -> Element<'a, Message> {
+/// `midi` says whether the engine draws MIDI notes rather than audio. The
+/// stages that do nothing for the source it is not drawing dim.
+pub fn view<'a>(params: &'a PluginParams, open: Option<Stage>, midi: bool) -> Element<'a, Message> {
 	let stages = [
 		Stage::Spectrum,
+		Stage::Envelope,
 		Stage::HarmonicSummation,
 		Stage::PowerMap,
 		Stage::Diffuser,
@@ -65,9 +69,9 @@ pub fn view<'a>(params: &'a PluginParams, open: Option<Stage>) -> Element<'a, Me
 	let mut pane = Column::new();
 	for stage in stages {
 		let is_open = open == Some(stage);
-		pane = pane.push(stage_row(params, stage, is_open));
+		pane = pane.push(stage_row(params, stage, is_open, midi));
 		if is_open {
-			pane = pane.push(container(body(params, stage)).padding([14.0, 16.0]));
+			pane = pane.push(container(body(params, stage, midi)).padding([14.0, 16.0]));
 		}
 		pane = pane.push(rule::horizontal(1).style(|_| rule::Style {
 			color: HAIRLINE,
@@ -86,14 +90,34 @@ pub fn view<'a>(params: &'a PluginParams, open: Option<Stage>) -> Element<'a, Me
 /// A stage's row: its dot, its name and what it is set to, and the switch at
 /// the end for a stage that can be switched off. The row is the whole toggle
 /// that opens the stage, apart from the switch.
-fn stage_row<'a>(params: &'a PluginParams, stage: Stage, open: bool) -> Element<'a, Message> {
+fn stage_row<'a>(
+	params: &'a PluginParams,
+	stage: Stage,
+	open: bool,
+	midi: bool,
+) -> Element<'a, Message> {
 	let switch = switch_param(params, stage);
-	let enabled = switch.is_none_or(|param| param.value());
+	let enabled = switch.is_none_or(|param| param.value())
+		&& match stage {
+			Stage::Envelope => midi,
+			Stage::HarmonicSummation => !midi,
+			_ => true,
+		};
 	let (name, colour, summary) = match stage {
+		Stage::Spectrum if midi => (
+			"Spectrum",
+			ANALYSIS,
+			format!("MIDI · {}", params.update_rate),
+		),
 		Stage::Spectrum => (
 			"Spectrum",
 			ANALYSIS,
 			format!("{} · {}", params.window_ms, params.update_rate),
+		),
+		Stage::Envelope => (
+			"Envelope",
+			ANALYSIS,
+			format!("{} · {}", params.attack, params.release),
 		),
 		Stage::HarmonicSummation => (
 			"Harmonic Summation",
@@ -203,8 +227,14 @@ fn switch_param(params: &PluginParams, stage: Stage) -> Option<&BoolParam> {
 	}
 }
 
-fn body<'a>(params: &'a PluginParams, stage: Stage) -> Element<'a, Message> {
+fn body<'a>(params: &'a PluginParams, stage: Stage, midi: bool) -> Element<'a, Message> {
 	let groups: Vec<Element<'a, Message>> = match stage {
+		// Notes need no analysis window: only the tick still applies.
+		Stage::Spectrum if midi => vec![param_slider(
+			&params.update_rate,
+			"Update rate",
+			"How often a new spectrum is produced.",
+		)],
 		Stage::Spectrum => vec![
 			param_slider(
 				&params.window_ms,
@@ -215,6 +245,28 @@ fn body<'a>(params: &'a PluginParams, stage: Stage) -> Element<'a, Message> {
 				&params.update_rate,
 				"Update rate",
 				"How often a new spectrum is produced, whatever the window.",
+			),
+		],
+		Stage::Envelope => vec![
+			param_slider(
+				&params.attack,
+				"Attack",
+				"How long a MIDI note takes to light fully.",
+			),
+			param_slider(
+				&params.decay,
+				"Decay",
+				"How long it then takes to fall to the sustain level.",
+			),
+			param_slider(
+				&params.sustain,
+				"Sustain",
+				"The level a held note settles at, as a fraction of its peak.",
+			),
+			param_slider(
+				&params.release,
+				"Release",
+				"How long a note takes to fade once its key is let go.",
 			),
 		],
 		Stage::HarmonicSummation => vec![

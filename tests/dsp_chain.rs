@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use melody_visualizer::app::Config;
-use melody_visualizer::app::config::{SpectrumGeneratorConfig, SpectrumTransformConfig};
+use melody_visualizer::app::config::SpectrumTransformConfig;
 use melody_visualizer::spectrum::generators::audio;
 use melody_visualizer::spectrum::{Spectrum, SpectrumBuffer, TransformId};
 use melody_visualizer::test_support::{renderer, sample_reader, sine_wave};
@@ -84,7 +84,7 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	config
 		.set_transform_enabled(harmonic_summation, false)
 		.unwrap();
-	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let generator_config = &config.spectrum_generator.audio;
 	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
 
 	// Three notes an octave apart, each at half the amplitude of the one below.
@@ -195,7 +195,7 @@ fn a_silent_input_produces_a_silent_spectrum() {
 #[test]
 fn a_switched_off_stage_is_the_same_as_no_stage_at_all() {
 	let config = Config::default();
-	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let generator_config = &config.spectrum_generator.audio;
 	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
 	let signal = sine_wave(&[(440.0, 1.0)], SAMPLE_RATE, window);
 	let params = Arc::new(config.spectrum_params());
@@ -226,7 +226,7 @@ fn a_switched_off_stage_is_the_same_as_no_stage_at_all() {
 #[test]
 fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
 	let config = Config::default();
-	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let generator_config = &config.spectrum_generator.audio;
 	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
 
 	// A brass-like note: the second harmonic carries twice the fundamental's

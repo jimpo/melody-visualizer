@@ -67,6 +67,11 @@ It passes its audio through untouched and analyzes a mono mix of it. Open the
 plugin's window to see the spiral. The spiral moves only while the host is
 processing audio through the plugin.
 
+Route a MIDI track's notes into the plugin and it draws the notes instead of
+the audio, from the first note until the plugin is reactivated. Each note
+lights at its pitch, as bright as its velocity, and fades by the Envelope
+stage's attack, decay, sustain and release.
+
 Set `NICE_LOG=/path/to/file` in the host's environment to capture the plugin's
 log.
 

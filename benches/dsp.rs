@@ -27,7 +27,6 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use melody_visualizer::app::Config;
-use melody_visualizer::app::config::SpectrumGeneratorConfig;
 use melody_visualizer::spectrum::generators::audio::{
 	self, Analyzer, AudioSpectrumGenerator, WindowShape,
 };
@@ -241,7 +240,7 @@ fn bench_chain(criterion: &mut Criterion) {
 /// through it.
 fn chain(window_ms: u32) -> (SpectrumRenderer, SpectrumBuffer) {
 	let mut config = Config::default();
-	let SpectrumGeneratorConfig::Audio(generator_config) = &mut config.spectrum_generator;
+	let generator_config = &mut config.spectrum_generator.audio;
 	generator_config.window_ms = window_ms;
 	let signal = signal(audio::window_samples(window_ms, SAMPLE_RATE));
 	let renderer = renderer(&config, sample_reader(&signal), SAMPLE_RATE);

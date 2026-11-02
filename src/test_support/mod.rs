@@ -5,7 +5,7 @@
 
 use std::{f64::consts::TAU, sync::Arc, time::Instant};
 
-use crate::app::config::{Config, SpectrumGeneratorConfig};
+use crate::app::config::Config;
 use crate::audio::SampleReader;
 use crate::audio::ring::sample_ring;
 use crate::graphic::renderer::GraphicRenderer;
@@ -64,10 +64,12 @@ pub fn sample_reader(samples: &[f32]) -> SampleReader {
 
 /// The DSP chain `config` describes, reading its audio from `reader`.
 ///
-/// The wiring the spectrum thread is started with, with no thread and no host:
-/// the generator `config` names, then its transforms in configured order.
+/// The wiring the spectrum thread is started with, with no thread and no host,
+/// on the audio path: the audio generator `config` describes, then its
+/// transforms in configured order. The engine's `SourceGenerator` draws the
+/// same until a note is played.
 pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> SpectrumRenderer {
-	let SpectrumGeneratorConfig::Audio(generator_config) = &config.spectrum_generator;
+	let generator_config = &config.spectrum_generator.audio;
 
 	let mut renderer = SpectrumRenderer::new();
 	renderer.set_generator(Box::new(AudioSpectrumGenerator::new(

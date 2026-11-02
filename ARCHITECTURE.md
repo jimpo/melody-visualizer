@@ -17,9 +17,10 @@ Read this before changing a component boundary, a thread, or a channel.
 ## In one paragraph
 
 The host calls the plugin's `process` on its audio thread, which mixes the
-input to mono and writes it into a lock-free ring. A dedicated spectrum thread
-FFTs those samples into a log-frequency `Spectrum` and applies a transform
-chain; a dedicated graphic thread turns spectra into pixel buffers. Those two
+input to mono and writes it into a lock-free ring, and passes the host's note
+events on through a second. A dedicated spectrum thread FFTs those samples
+into a log-frequency `Spectrum` — or, once a note has arrived, draws the
+sounding notes instead — and applies a transform chain; a dedicated graphic thread turns spectra into pixel buffers. Those two
 threads pass buffers back and forth over a pair of mpsc channels, recycling
 them to avoid per-frame allocation. Together they are the `Engine`, which runs
 while the host has the plugin active. The editor runs on the plugin window's
@@ -48,8 +49,9 @@ The DSP chain and the visualizer together are the **engine**
 
 Each boundary carries exactly one kind of value. Keep it that way.
 
-- **Plugin → DSP**: mono `f32` samples through a lock-free ring buffer, and
-  nothing else. `process` never computes anything beyond the mono mix.
+- **Plugin → DSP**: mono `f32` samples through one lock-free ring buffer,
+  and the host's note events, as nice-plug hands them over, through another.
+  `process` never computes anything beyond the mono mix.
 - **DSP → Visualizer**: a `Spectrum` — a vector of non-negative amplitude
   values plus the `SpectrumParams` that give each bin its frequency. The DSP
   never knows about pixels; the visualizer never knows about audio.
@@ -175,7 +177,7 @@ One sample's journey:
    channels to mono, averaging them, and `SampleWriter::write_samples` pushes
    the result into an [rtrb](https://crates.io/crates/rtrb) ring sized for the
    longest window plus the slowest hop at the active sample rate. Nothing else
-   happens on the audio thread.
+   happens on the audio thread. Note events go into a second ring unchanged.
 2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
    `AudioSpectrumGenerator` peeks the newest window, applies a Hann window,
    runs an `rustfft` forward DFT, and **bins the output into log-spaced
@@ -197,6 +199,20 @@ One sample's journey:
    width is widest — so a bass note is drawn dimmer than a treble note of the
    same energy. Giving the bass real resolution rather than a wide hump is what
    a longer window buys, not a change to the binning.
+   **Or draw the notes** — `spectrum/generators/midi.rs`. The engine runs a
+   `SourceGenerator`, which drains the note ring every tick and draws the
+   audio until the first note-on arrives, then the notes for as long as
+   the plugin stays active. Each sounding voice, one per channel and key, is
+   an impulse at its pitch, its power split linearly between the two nearest
+   bins, and voices on one bin add in power. A voice's amplitude is its
+   velocity squared, the DLS and General MIDI 2 default curve of
+   40·log₁₀(v) dB, times a linear ADSR envelope. Events are timed by the
+   tick they arrive in: a note-on from the start of the tick's interval and
+   a note-off from its end, so a note shorter than a tick still shows for
+   one. A wildcard channel or key, a host's "all notes off", addresses every
+   voice it covers. Drawing notes, the editor switches the harmonic summation
+   off (`Config::for_midi`): a note has no overtones, so the summation would
+   only add one note to another an octave or a fifth below it.
 3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through a
    `TransformChain`: `HarmonicSummation` (pitch salience), `PowerMap`
    (contrast), `Diffuser` (spatial smoothing), `VolumeNormalizer` (auto-gain).
@@ -245,6 +261,7 @@ stands.
 | Stage | Output units | Range |
 |---|---|---|
 | `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
+| `SourceGenerator`, drawing notes | amplitude: velocity² × envelope, summed in power per bin | `[0, ~1]` for one note; a few notes on one bin add in power |
 | `HarmonicSummation` | amplitude, weighted sum | rescales: `[0, max · Σ decay^(h−1)]`, up to about 4.2× the input's peak at the defaults. A partial whose harmonics fall off the top of the grid keeps only its own value |
 | `PowerMap` | amplitude raised to `exponent` | rescales: `[0, max^exponent]`, saturating at `f64::MAX` rather than overflowing |
 | `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
@@ -273,6 +290,8 @@ Each parameter is declared in `params.rs`; its default is read out of
 |---|---|---|
 | Window | `10..1000` ms | The generator sizes the DFT to the milliseconds times the sample rate. The ring is sized for `audio::MAX_WINDOW_MS` |
 | Update rate | `1..100` / sec | Sets the tick through `interval()`, independent of the window; a hop longer than the window skips audio. The ring is sized for the hop at `audio::MIN_UPDATE_RATE` |
+| Attack, Decay, Release | `0..2000`, `0..5000`, `0..5000` ms | Skewed toward short times. Stored in seconds |
+| Sustain | `0..1` | A fraction of the note's peak |
 | Harmonics | `1..16` | The fundamental counts as one, so 1 is the identity. Cost is O(bins × harmonics) |
 | Harmonic decay | `0..1` | The weight of each harmonic against the one below it. 0 is the identity |
 | Exponent | `0.5..4`, step 0.1 | The power map's. 1 is the identity |
@@ -383,6 +402,8 @@ the parameters as they are.
 | Mechanism | Direction | Carries | Purpose |
 |---|---|---|---|
 | rtrb ring (`audio/ring.rs`) | Audio thread → spectrum thread | `f32` samples | Hot audio capture |
+| rtrb ring (`generators/midi.rs`) | Audio thread → spectrum thread | `NoteEvent`s | Note capture |
+| `AtomicBool` | Spectrum thread → editor thread | whether notes are drawn | The editor switches the summation off and dims the pane to match |
 | `mpsc` buffer ring | Spectrum thread ↔ graphic thread | `Spectrum` / `SpectrumBuffer` | DSP → render data path |
 | `AsyncProcessor` RPC | Editor thread → a background thread, with reply | `Box<dyn FnOnce(&mut T) + Send>` | Configure a renderer, or render a frame |
 | `PollSubNotifier` | Audio thread → editor thread | a flag | Wake the editor to draw |
@@ -419,7 +440,10 @@ summation, the power map and the diffuser qualify.
 The spectrum stage exposes two sliders, both in units a listener can read
 without the sample rate: the **Window** in milliseconds, which is the audio
 each spectrum analyses and so both its frequency resolution and its latency,
-and the **Update rate** in spectra per second.
+and the **Update rate** in spectra per second. Below it, the **Envelope** stage
+holds the attack, decay, sustain and release a MIDI note is drawn with. The
+pane dims the stages that do nothing for the source being drawn: the envelope
+while it draws audio, the harmonic summation while it draws notes.
 
 Each control reads its parameter on every redraw, so host automation moves the
 controls. A slider drag is one gesture to the host: `raw_begin_set_parameter`
@@ -435,7 +459,8 @@ each other.
   sample rate, and allocates `process`'s mono buffer at the host's maximum
   block size.
 - **`deactivate`** drops the engine, which closes both threads' channels and
-  lets them wind down. The ring's writer goes with it.
+  lets them wind down. The rings' writers go with it, and a new engine starts
+  on audio again.
 - **The editor** opens and closes independently of activation. While the
   plugin is inactive it shows the plugin's name instead of a spiral.
 
@@ -457,6 +482,7 @@ each other.
 | `note.rs` | Musical note and pitch-class math; the `note!` macro. |
 | `app/config.rs` | `Config` plus the config-enum macros. |
 | `spectrum/` | `Spectrum` types, spectrum thread, generators, transforms. |
+| `spectrum/generators/midi.rs` | The note ring, the voices and their ADSR envelope. |
 | `graphic/` | `Graphic`/`GraphicBuffer`, graphic thread, generators. |
 | `traits.rs` | `Configurable` — build or update a component from its config. |
 | `error.rs` | Crate-wide `Error`. |
@@ -470,7 +496,7 @@ each other.
 Rules that keep the design intact. Breaking one needs a note in this document.
 
 1. **`process` does not block, allocate, or lock.** It mixes, writes to the
-   ring, sets a flag, and returns.
+   rings, sets a flag, and returns.
 2. **Each pipeline stage has exactly one owner thread.** State crosses a
    thread boundary by moving through a channel, never by being shared.
 3. **The parameters are the only source of truth.** A background thread's live
@@ -492,9 +518,12 @@ next step is planned. Each item is a candidate for its own change.
 
 ### Audio and the host
 
-- **MIDI is not an input yet.** The planned MIDI visualization is a second
-  `SpectrumGenerator` fed by the host's note events instead of audio, feeding
-  the same transforms and spiral.
+- **MIDI notes ignore the sustain pedal, pitch bend and MPE.** CC64 needs
+  `MidiConfig::MidiCCs`; pitch bend would move a voice between bins, which the
+  linear split already supports.
+- **A full note ring drops events unannounced**, and a dropped note-off leaves
+  its note on. The ring holds a thousand events a tick.
+- **The switch to MIDI is one way** until the plugin is reactivated.
 - **The DFT is complex.** Audio is real, so `realfft` would halve the
   generator's cost (JIM-296).
 - **The standalone forgets its settings** between runs. The plugin does not:

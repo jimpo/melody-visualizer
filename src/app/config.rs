@@ -8,7 +8,7 @@ use crate::graphic::{
 use crate::note;
 use crate::spectrum::{
 	Hz, SpectrumGenerator, SpectrumParams, SpectrumTransform, TransformChain, TransformId,
-	generators::audio::{self, AudioSpectrumGenerator},
+	generators::{SourceGenerator, audio, midi},
 	transforms::{
 		decibel_converter::DecibelConverter,
 		diffuser::{self, Diffuser},
@@ -57,31 +57,28 @@ impl FromIterator<TransformEntry> for TransformChain {
 	}
 }
 
+/// The generator's settings: the audio analysis it runs until the host plays a
+/// note, and the envelope it gives notes from then on.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum SpectrumGeneratorConfig {
-	Audio(audio::Config),
+pub struct SpectrumGeneratorConfig {
+	pub audio: audio::Config,
+	pub envelope: midi::Envelope,
 }
 
 impl SpectrumGeneratorConfig {
 	/// Reconfigures `generator` in place.
 	///
-	/// The generator holds the audio input it reads from, so it is
-	/// reconfigured rather than rebuilt: rebuilding one would mean opening the
-	/// source again.
+	/// The generator holds the inputs it reads from, so it is reconfigured
+	/// rather than rebuilt: rebuilding one would mean opening them again.
 	pub fn update(self, generator: &mut dyn SpectrumGenerator) -> Result<(), Error> {
-		match self {
-			Self::Audio(config) => {
-				match (generator as &mut dyn Any).downcast_mut::<AudioSpectrumGenerator>() {
-					Some(generator) => {
-						generator.set_config(config);
-						Ok(())
-					}
-					None => Err(Error::UnexpectedConfigEntry(
-						"config names an audio generator, but the chain holds another kind"
-							.to_string(),
-					)),
-				}
+		match (generator as &mut dyn Any).downcast_mut::<SourceGenerator>() {
+			Some(generator) => {
+				generator.set_config(self);
+				Ok(())
 			}
+			None => Err(Error::UnexpectedConfigEntry(
+				"config names the source generator, but the chain holds another kind".to_string(),
+			)),
 		}
 	}
 }
@@ -210,7 +207,10 @@ impl Default for Config {
 			// A fifteenth of a semitone. The density of the display grid, which
 			// no control moves.
 			samples_per_octave: 180,
-			spectrum_generator: SpectrumGeneratorConfig::Audio(audio::Config::default()),
+			spectrum_generator: SpectrumGeneratorConfig {
+				audio: audio::Config::default(),
+				envelope: midi::Envelope::default(),
+			},
 			spectrum_transforms: transforms
 				.into_iter()
 				.enumerate()
@@ -240,6 +240,18 @@ impl Config {
 		// there must be at least two samples, one at min_freq and one at max_freq
 		let samples = samples.max(2);
 		SpectrumParams::exp_spaced(samples, self.min_freq, self.max_freq)
+	}
+
+	/// Switches off the stages that make no sense for notes from MIDI.
+	///
+	/// A MIDI note is drawn without overtones, so harmonic summation would only
+	/// add one note to another an octave or a fifth below it.
+	pub fn for_midi(&mut self) {
+		for entry in &mut self.spectrum_transforms {
+			if let SpectrumTransformConfig::HarmonicSummation(_) = entry.config {
+				entry.enabled = false;
+			}
+		}
 	}
 
 	pub fn spectrum_transform(&self, id: TransformId) -> Result<&SpectrumTransformConfig, Error> {
@@ -285,19 +297,28 @@ impl Config {
 mod tests {
 	use super::*;
 	use crate::note::Note;
-	use crate::spectrum::generators::audio::AudioSpectrumGenerator;
 	use crate::test_support::sample_reader;
 
 	#[test]
 	fn a_config_update_reaches_a_running_generator() {
-		let config = audio::Config::default();
-		let mut generator = AudioSpectrumGenerator::new(config.clone(), sample_reader(&[]), 48_000);
+		let config = Config::default().spectrum_generator;
+		let (_notes, reader) = rtrb::RingBuffer::new(1);
+		let mut generator = SourceGenerator::new(
+			config.clone(),
+			sample_reader(&[]),
+			reader,
+			48_000,
+			Default::default(),
+		);
 		let before = generator.interval();
 
-		SpectrumGeneratorConfig::Audio(audio::Config {
-			update_rate: config.update_rate * 2,
+		SpectrumGeneratorConfig {
+			audio: audio::Config {
+				update_rate: config.audio.update_rate * 2,
+				..config.audio
+			},
 			..config
-		})
+		}
 		.update(&mut generator)
 		.expect("the generator is of the kind the config names");
 

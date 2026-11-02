@@ -7,6 +7,7 @@ use std::sync::Arc;
 use audio::ring::SampleWriter;
 use engine::Engine;
 use params::PluginParams;
+use spectrum::generators::midi::NoteWriter;
 
 pub mod app;
 pub mod async_processor;
@@ -23,7 +24,7 @@ pub mod test_support;
 pub mod traits;
 
 /// The plugin. It passes its input through untouched and analyzes a mono mix
-/// of it.
+/// of it, or, once the host plays it a note, draws the notes instead.
 pub struct MelodyVisualizer {
 	params: Arc<PluginParams>,
 	editor_state: Arc<IcedEditorState>,
@@ -35,6 +36,9 @@ pub struct MelodyVisualizer {
 	/// Where `process` writes the audio the engine analyzes, while the plugin
 	/// is active.
 	writer: Option<SampleWriter>,
+	/// Where `process` writes the host's note events, while the plugin is
+	/// active.
+	notes: Option<NoteWriter>,
 	/// Room for one block's mono mix, so `process` allocates nothing.
 	mono: Vec<f32>,
 }
@@ -51,6 +55,7 @@ impl Default for MelodyVisualizer {
 			notifier: PollSubNotifier::new(),
 			engine: Arc::default(),
 			writer: None,
+			notes: None,
 			mono: Vec::new(),
 		}
 	}
@@ -75,6 +80,8 @@ impl Plugin for MelodyVisualizer {
 			..AudioIOLayout::const_default()
 		},
 	];
+
+	const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
 	type Editor = IcedEditor;
 	type SysExMessage = ();
@@ -104,9 +111,10 @@ impl Plugin for MelodyVisualizer {
 		self.deactivate();
 		let sample_rate = buffer_config.sample_rate.round() as u32;
 		match Engine::start(&self.params.config(), sample_rate) {
-			Ok((engine, writer)) => {
+			Ok((engine, writer, notes)) => {
 				*self.engine.lock() = Some(engine);
 				self.writer = Some(writer);
+				self.notes = Some(notes);
 			}
 			Err(err) => {
 				log::error!("failed to start the engine: {err}");
@@ -120,14 +128,24 @@ impl Plugin for MelodyVisualizer {
 	fn deactivate(&mut self) {
 		*self.engine.lock() = None;
 		self.writer = None;
+		self.notes = None;
 	}
 
 	fn process(
 		&mut self,
 		buffer: &mut Buffer,
 		_aux: &mut AuxiliaryBuffers,
-		_context: &mut impl ProcessContext<Self>,
+		context: &mut impl ProcessContext<Self>,
 	) -> ProcessStatus {
+		while let Some(event) = context.next_event() {
+			if let Some(notes) = &mut self.notes {
+				// ponytail: an event that finds the ring full is dropped
+				// unannounced, and a dropped note-off leaves its note on. The
+				// ring holds a thousand events a tick; count drops as the
+				// sample ring does if that is ever reached.
+				let _ = notes.push(event);
+			}
+		}
 		// The editor draws a frame each time it is woken, so new audio is what
 		// paces the frames.
 		if self.editor_state.is_open() {

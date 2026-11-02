@@ -3,15 +3,21 @@
 
 use futures::{channel::mpsc, executor::block_on};
 use std::iter;
+use std::sync::{
+	Arc,
+	atomic::{AtomicBool, Ordering},
+};
 
 use crate::app::Config;
-use crate::app::config::SpectrumGeneratorConfig;
 use crate::async_processor::AsyncProcessor;
 use crate::audio::ring::{SampleWriter, sample_ring};
 use crate::error::Error;
 use crate::graphic::renderer::{self as graphic_renderer, GraphicRenderer};
 use crate::graphic::{Graphic, GraphicBuffer};
-use crate::spectrum::generators::audio::{self, AudioSpectrumGenerator};
+use crate::spectrum::generators::{
+	SourceGenerator, audio,
+	midi::{self, NoteWriter},
+};
 use crate::spectrum::renderer::{self as spectrum_renderer, SpectrumRenderer};
 
 /// The running engine. Dropping it stops both threads.
@@ -24,13 +30,18 @@ pub struct Engine {
 	graphic: AsyncProcessor<GraphicRenderer>,
 	/// The configuration the threads run, as last applied.
 	applied: Config,
+	/// Whether the generator has switched to drawing MIDI notes.
+	midi: Arc<AtomicBool>,
 }
 
 impl Engine {
 	/// Starts both threads configured as `config` describes, analyzing audio at
-	/// `sample_rate`, and returns the engine with the writer the audio goes in
-	/// through.
-	pub fn start(config: &Config, sample_rate: u32) -> Result<(Self, SampleWriter), Error> {
+	/// `sample_rate`, and returns the engine with the writers the audio and the
+	/// note events go in through.
+	pub fn start(
+		config: &Config,
+		sample_rate: u32,
+	) -> Result<(Self, SampleWriter, NoteWriter), Error> {
 		// Spectra flow from the spectrum thread to the graphic thread, and their
 		// emptied buffers flow back.
 		let (spectrum_graphic_tx, spectrum_graphic_rx) = mpsc::channel(0);
@@ -39,14 +50,18 @@ impl Engine {
 		let mut spectrum = spectrum_renderer::start(graphic_spectrum_rx, spectrum_graphic_tx)?;
 
 		let (writer, reader) = sample_ring(ring_capacity(sample_rate));
-		let SpectrumGeneratorConfig::Audio(generator_config) = config.spectrum_generator.clone();
+		let (note_writer, note_reader) = rtrb::RingBuffer::new(midi::RING_CAPACITY);
+		let midi = Arc::new(AtomicBool::new(false));
+		let generator = SourceGenerator::new(
+			config.spectrum_generator.clone(),
+			reader,
+			note_reader,
+			sample_rate,
+			midi.clone(),
+		);
 		let transforms = config.spectrum_transforms.clone();
 		block_on(spectrum.exec(move |renderer| {
-			renderer.set_generator(Box::new(AudioSpectrumGenerator::new(
-				generator_config,
-				reader,
-				sample_rate,
-			)));
+			renderer.set_generator(Box::new(generator));
 			*renderer.transforms_mut() = transforms.into_iter().collect();
 		}))?;
 
@@ -61,8 +76,15 @@ impl Engine {
 			spectrum,
 			graphic,
 			applied: config.clone(),
+			midi,
 		};
-		Ok((engine, writer))
+		Ok((engine, writer, note_writer))
+	}
+
+	/// Whether the engine draws the notes the host plays rather than its audio.
+	/// It starts on audio and switches for good once a note is played.
+	pub fn hears_midi(&self) -> bool {
+		self.midi.load(Ordering::Relaxed)
 	}
 
 	/// Reconfigures the running threads to `config`, touching only what changed
@@ -154,7 +176,7 @@ mod tests {
 	#[test]
 	fn an_applied_change_reaches_the_frames_the_engine_draws() {
 		let config = Config::default();
-		let (mut engine, _writer) = Engine::start(&config, 48_000).unwrap();
+		let (mut engine, _writer, _notes) = Engine::start(&config, 48_000).unwrap();
 		let before = engine.render(400, 300).unwrap().into_rgba();
 		assert_eq!((before.0, before.1), (400, 300));
 
@@ -166,5 +188,29 @@ mod tests {
 
 		let after = engine.render(400, 300).unwrap().into_rgba();
 		assert!(after != before, "the frame drawn after the change differs");
+	}
+
+	#[test]
+	fn a_note_event_switches_the_engine_to_midi() {
+		use nice_plug::midi::{Channel, Key, NoteEvent, VoiceID};
+		use std::time::{Duration, Instant};
+
+		let (engine, _writer, mut notes) = Engine::start(&Config::default(), 48_000).unwrap();
+		assert!(!engine.hears_midi(), "it starts on audio");
+
+		notes
+			.push(NoteEvent::NoteOn {
+				timing: 0,
+				voice_id: VoiceID::Wildcard,
+				channel: Channel::Number(0),
+				key: Key::Number(69),
+				velocity: 1.0,
+			})
+			.unwrap();
+		let deadline = Instant::now() + Duration::from_secs(2);
+		while !engine.hears_midi() {
+			assert!(Instant::now() < deadline, "the next tick switches it");
+			std::thread::sleep(Duration::from_millis(5));
+		}
 	}
 }

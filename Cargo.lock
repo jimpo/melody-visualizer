@@ -2304,8 +2304,8 @@ dependencies = [
  "palette",
  "parking_lot",
  "rand 0.10.3",
+ "realfft",
  "rtrb",
- "rustfft",
  "serde",
  "tracing-log",
 ]
@@ -3461,6 +3461,15 @@ dependencies = [
  "bytemuck",
  "font-types 0.12.7",
  "once_cell",
+]
+
+[[package]]
+name = "realfft"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "538895ccf2006b473aafbe8d72770e21038961ab67aae34f3c577485fc703a7d"
+dependencies = [
+ "rustfft",
 ]
 
 [[package]]

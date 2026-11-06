@@ -180,7 +180,7 @@ One sample's journey:
    happens on the audio thread. Note events go into a second ring unchanged.
 2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
    `AudioSpectrumGenerator` peeks the newest window, applies a Hann window,
-   runs an `rustfft` forward DFT, and **bins the output into log-spaced
+   runs a `realfft` real-to-complex DFT, and **bins the output into log-spaced
    frequency buckets** so that every octave gets equal screen space. A read
    shorter than the window, which happens while the ring refills after the
    window grows, is padded with silence. It bins power (amplitude²), which

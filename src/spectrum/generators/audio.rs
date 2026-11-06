@@ -1,4 +1,4 @@
-use rustfft::{Fft, FftPlanner, num_complex::Complex64};
+use realfft::{RealFftPlanner, RealToComplex, num_complex::Complex64};
 use std::{
 	f64::consts::PI,
 	fmt::{self, Debug},
@@ -170,13 +170,16 @@ impl WindowShape {
 /// output into log-spaced amplitude bins.
 ///
 /// The two steps are separate because only one of them is ours — the transform
-/// is `rustfft`'s — and they convert different things: samples to complex bins,
+/// is `realfft`'s — and they convert different things: samples to complex bins,
 /// then complex bins to log-spaced ones.
 pub struct Analyzer {
 	window_shape: WindowShape,
 	sample_rate: u32,
-	dft: Arc<dyn Fft<f64>>,
-	dft_window: Vec<Complex64>,
+	dft: Arc<dyn RealToComplex<f64>>,
+	dft_window: Vec<f64>,
+	/// The `n / 2 + 1` bins up to Nyquist; the rest mirror them.
+	dft_out: Vec<Complex64>,
+	dft_scratch: Vec<Complex64>,
 	windowing: Vec<f64>,
 }
 
@@ -187,8 +190,10 @@ impl Analyzer {
 		Analyzer {
 			window_shape,
 			sample_rate,
-			dft: FftPlanner::new().plan_fft_forward(1),
+			dft: RealFftPlanner::new().plan_fft_forward(1),
 			dft_window: Vec::new(),
+			dft_out: Vec::new(),
+			dft_scratch: Vec::new(),
 			windowing: Vec::new(),
 		}
 	}
@@ -199,8 +204,10 @@ impl Analyzer {
 	}
 
 	pub fn set_window_size(&mut self, dft_window_size: usize) {
-		self.dft = FftPlanner::new().plan_fft_forward(dft_window_size);
-		self.dft_window = vec![Complex64::new(0.0, 0.0); dft_window_size];
+		self.dft = RealFftPlanner::new().plan_fft_forward(dft_window_size);
+		self.dft_window = self.dft.make_input_vec();
+		self.dft_out = self.dft.make_output_vec();
+		self.dft_scratch = self.dft.make_scratch_vec();
 		self.windowing = vec![0.0; dft_window_size];
 		self.window_shape.generate(&mut self.windowing);
 	}
@@ -213,21 +220,31 @@ impl Analyzer {
 	/// leaving the result in the analyzer.
 	///
 	/// Samples beyond the window size are ignored, and a short iterator is
-	/// padded with silence. The DFT runs in place, so the tail a short iterator
-	/// does not reach holds the last transform's output, which must not be read
-	/// back as audio. A short read is what every tick gets after the window
-	/// grows, until the ring holds the longer window.
+	/// padded with silence. The transform scrambles its input, so every sample
+	/// is rewritten each call. A short read is what every tick gets after the
+	/// window grows, until the ring holds the longer window.
 	pub fn run_dft(&mut self, samples: impl Iterator<Item = f64>) {
+		// Unsized (a zero sample rate gives a zero window): the placeholder plan
+		// would reject the empty buffers.
+		if self.dft_window.is_empty() {
+			return;
+		}
 		let windowed_samples = samples.zip(self.windowing.iter()).map(|(a, &b)| a * b);
 
 		let mut written = 0;
 		for (sample, dst) in windowed_samples.zip(self.dft_window.iter_mut()) {
-			*dst = Complex64::new(sample, 0.0);
+			*dst = sample;
 			written += 1;
 		}
-		self.dft_window[written..].fill(Complex64::new(0.0, 0.0));
+		self.dft_window[written..].fill(0.0);
 
-		self.dft.process(&mut self.dft_window);
+		self.dft
+			.process_with_scratch(
+				&mut self.dft_window,
+				&mut self.dft_out,
+				&mut self.dft_scratch,
+			)
+			.expect("buffers are sized by set_window_size");
 	}
 
 	/// Folds the DFT output into `buffer`'s log-spaced bins, as amplitude.
@@ -296,7 +313,7 @@ impl Analyzer {
 				} else {
 					dft_log_freq(j - 1)
 				};
-				let power = dft_out_to_val(&self.dft_window[j], n);
+				let power = dft_out_to_val(&self.dft_out[j], n);
 
 				// Outside [left, right] the moment is a straight line, so a bin
 				// clear of the triangle takes nothing however far the ends
@@ -640,15 +657,26 @@ mod tests {
 			*x = rng.random::<u32>() as f64;
 		}
 
-		let dft = FftPlanner::new().plan_fft_forward(n);
-		let mut dft_buffer = input
-			.iter()
-			.map(|&val| Complex64::new(val, 0.0))
-			.collect::<Vec<_>>();
-		dft.process(&mut dft_buffer);
+		let dft = RealFftPlanner::new().plan_fft_forward(n);
+		let mut dft_buffer = dft.make_output_vec();
+		dft.process(&mut input.clone(), &mut dft_buffer).unwrap();
 
 		let input_power = input.iter().map(|x| x * x).sum::<f64>() / n as f64;
-		let output_power = dft_buffer.iter().map(|x| dft_out_to_val(x, n)).sum::<f64>();
+		// The bins above Nyquist mirror those below, except DC and Nyquist itself.
+		let half = dft_buffer.iter().map(|x| dft_out_to_val(x, n)).sum::<f64>();
+		let output_power =
+			2.0 * half - dft_out_to_val(&dft_buffer[0], n) - dft_out_to_val(&dft_buffer[n / 2], n);
 		assert!(input_power / output_power > 0.99999 && input_power / output_power < 1.00001);
+	}
+}
+
+#[cfg(test)]
+mod unsized_analyzer_tests {
+	use super::*;
+
+	#[test]
+	fn running_an_analyzer_that_was_never_sized_does_not_panic() {
+		let mut analyzer = Analyzer::new(WindowShape::Hann, 0);
+		analyzer.run_dft(std::iter::empty());
 	}
 }

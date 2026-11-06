@@ -33,6 +33,16 @@ cargo xtask bundle melody-visualizer --release  # The CLAP bundle, in target/bun
 spiral's pixel loop is an order of magnitude slower, which makes the debug
 standalone stutter and the render gate measure the wrong thing.
 
+## Formatting and linting
+
+[prek](https://github.com/j178/prek) runs the checks in `prek.toml`:
+`cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`.
+
+```bash
+prek run --all-files   # Run both checks now
+prek install           # Run them on every git commit
+```
+
 ## Testing
 
 ```bash

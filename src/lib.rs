@@ -47,8 +47,12 @@ impl Default for MelodyVisualizer {
 	fn default() -> Self {
 		// nice-plug logs through `tracing`, and the engine through `log`. This
 		// sends the engine's records to the same place; it fails harmlessly
-		// once another instance has installed it.
-		let _ = tracing_log::LogTracer::init();
+		// once another instance has installed it. wgpu-hal is dropped: it warns
+		// "Suboptimal present" on every frame when the compositor's surface size
+		// differs from the swapchain's, which is harmless and drowns the log.
+		let _ = tracing_log::LogTracer::builder()
+			.ignore_crate("wgpu_hal")
+			.init();
 		Self {
 			params: Arc::default(),
 			editor_state: editor::default_state(),

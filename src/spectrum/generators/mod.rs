@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod cqt;
 pub mod midi;
 
 use std::{
@@ -13,7 +14,7 @@ use std::{
 use crate::app::config::SpectrumGeneratorConfig;
 use crate::audio::SampleReader;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
-use audio::AudioSpectrumGenerator;
+use cqt::CqtSpectrumGenerator;
 use midi::{NoteReader, Voices};
 
 /// The generator the engine runs: the audio, until the host plays a note, and
@@ -22,7 +23,7 @@ use midi::{NoteReader, Voices};
 /// The switch is one way. The notes are drained every tick whichever source is
 /// drawn, so the ring never fills with stale events.
 pub struct SourceGenerator {
-	audio: AudioSpectrumGenerator,
+	audio: CqtSpectrumGenerator,
 	voices: Voices,
 	/// Raised the tick the first note is played, for the editor to read.
 	midi: Arc<AtomicBool>,
@@ -46,7 +47,7 @@ impl SourceGenerator {
 		midi: Arc<AtomicBool>,
 	) -> Self {
 		SourceGenerator {
-			audio: AudioSpectrumGenerator::new(config.audio, samples, sample_rate),
+			audio: CqtSpectrumGenerator::new(config.audio, samples, sample_rate),
 			voices: Voices::new(config.envelope, notes),
 			midi,
 		}

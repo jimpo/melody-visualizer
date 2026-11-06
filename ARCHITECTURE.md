@@ -161,7 +161,7 @@ Nothing in the pipeline queues unbounded work.
 - The **editor** draws no new frame while the last one is still uploading to
   the GPU, so a frame poll that arrives meanwhile is dropped, not queued.
 - The **capture ring** is the one place that can overrun: if the spectrum
-  thread falls behind, `AudioSpectrumGenerator` skips forward to the newest
+  thread falls behind, `CqtSpectrumGenerator` skips forward to the newest
   window rather than draining stale audio. Latency is bounded; old samples are
   dropped. Should the ring fill anyway, `process` drops what does not fit and
   adds it to an atomic counter, which the spectrum thread reads each tick and
@@ -178,27 +178,22 @@ One sample's journey:
    the result into an [rtrb](https://crates.io/crates/rtrb) ring sized for the
    longest window plus the slowest hop at the active sample rate. Nothing else
    happens on the audio thread. Note events go into a second ring unchanged.
-2. **Analyze** — `spectrum/generators/audio.rs`. Each tick,
-   `AudioSpectrumGenerator` peeks the newest window, applies a Hann window,
-   runs a `realfft` real-to-complex DFT, and **bins the output into log-spaced
-   frequency buckets** so that every octave gets equal screen space. A read
-   shorter than the window, which happens while the ring refills after the
-   window grows, is padded with silence. It bins power (amplitude²), which
-   Parseval's theorem preserves and which adds across incoherent components,
-   and interpolates power — not amplitude. Each DFT bin spreads its power as a
-   triangle in log frequency, peaking at that bin and reaching zero at its two
-   neighbours, so the grid stays filled at the low end, where it is tens of
-   bins to a DFT bin, and the triangle collapses to a linear split between the
-   two nearest bins at the top, where the grid is the coarser of the two. **A
-   bin sums power, not power per octave.** The square root comes last, once
-   per bin, so the generator emits amplitude and every transform after it
-   works in that unit: a partial at half the amplitude of another is drawn at
-   half its value, not a quarter.
-   Spreading a tone over the ±1 DFT bin the window resolves keeps the total but
-   lowers the peak, and it lowers it most at the bottom of the range where that
-   width is widest — so a bass note is drawn dimmer than a treble note of the
-   same energy. Giving the bass real resolution rather than a wide hump is what
-   a longer window buys, not a change to the binning.
+2. **Analyze** — `spectrum/generators/cqt.rs`. Each tick,
+   `CqtSpectrumGenerator` peeks the newest window and takes a **constant-Q
+   transform** on the display grid itself, so nothing is re-binned. A bin is a
+   Hann window of `Q = 24` periods of its own frequency, so a bass note is as
+   sharp in semitones as a treble one. It is computed as Brown and Puckette
+   did: one `realfft` of the newest samples, then per bin a sparse dot product
+   of the FFT output with a precomputed spectral kernel. Kernels are the
+   closed-form transform of the windowed exponential, right-aligned to the
+   newest sample, and rebuilt when the grid (`Arc::ptr_eq`), sample rate or
+   window changes. The window setting caps the longest kernel: a bin too low
+   for `Q` periods to fit keeps a window of that length and a lower `Q`. A
+   read shorter than the window is padded with silence before the audio. The
+   output is amplitude, scaled so a sine of amplitude A reads A at its bin —
+   a bin samples a smooth curve rather than summing power, so a tone peaks as
+   high in the bass as in the treble. The older FFT-and-fold generator,
+   `AudioSpectrumGenerator` in `audio.rs`, is kept but unused.
    **Or draw the notes** — `spectrum/generators/midi.rs`. The engine runs a
    `SourceGenerator`, which drains the note ring every tick and draws the
    audio until the first note-on arrives, then the notes for as long as
@@ -260,7 +255,7 @@ stands.
 
 | Stage | Output units | Range |
 |---|---|---|
-| `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
+| `CqtSpectrumGenerator` | amplitude: a sine of amplitude A reads A at its bin | `[0, ∞)`, unnormalized — about 1 for a full-scale sine, far smaller for real music |
 | `SourceGenerator`, drawing notes | amplitude: velocity² × envelope, summed in power per bin | `[0, ~1]` for one note; a few notes on one bin add in power |
 | `HarmonicSummation` | amplitude, weighted sum | rescales: `[0, max · Σ decay^(h−1)]`, up to about 4.2× the input's peak at the defaults. A partial whose harmonics fall off the top of the grid keeps only its own value |
 | `PowerMap` | amplitude raised to `exponent` | rescales: `[0, max^exponent]`, saturating at `f64::MAX` rather than overflowing |
@@ -288,7 +283,7 @@ Each parameter is declared in `params.rs`; its default is read out of
 
 | Parameter | Bound | Note |
 |---|---|---|
-| Window | `10..1000` ms | The generator sizes the DFT to the milliseconds times the sample rate. The ring is sized for `audio::MAX_WINDOW_MS` |
+| Window | `10..1000` ms | The longest kernel, the lowest bins' window, in milliseconds times the sample rate; the FFT is that rounded up to a power of two. The default, 300 ms, fits `Q = 24` down to about 80 Hz. The ring is sized for `audio::MAX_WINDOW_MS` |
 | Update rate | `1..100` / sec | Sets the tick through `interval()`, independent of the window; a hop longer than the window skips audio. The ring is sized for the hop at `audio::MIN_UPDATE_RATE` |
 | Attack, Decay, Release | `0..2000`, `0..5000`, `0..5000` ms | Skewed toward short times. Stored in seconds |
 | Sustain | `0..1` | A fraction of the note's peak |

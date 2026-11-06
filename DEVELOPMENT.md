@@ -125,13 +125,15 @@ one machine, and vary by tens of percent between runs on it; a slower box
 shifts them together. The ratios between rows are the part that should
 reproduce.
 
+The app's generator is the CQT (`generator/cqt` in `cargo bench --bench dsp`; about 0.7 ms per spectrum at a 50 ms window in a dev-profile run, with `tests/dsp_budget.rs` holding it under half a tick at every window). The rows below were measured before it, with the FFT generator.
+
 Release build, 50 ms window (2400 samples) at 48 kHz, 1196 bins. The update
 rate is 50 / sec, so the tick is 20 ms and **50 spectra/s** is what the chain
 has to keep up with.
 
 | Stage | Capacity | Headroom | % of tick |
 |---|--:|--:|--:|
-| Generator (DFT + binning) | 11,901 spectra/s | 238× | 0.42% |
+| Generator (DFT + binning, the unused FFT generator) | 11,901 spectra/s | 238× | 0.42% |
 | HarmonicSummation (8 harmonics) | 251,655 spectra/s | 5,033× | 0.02% |
 | PowerMap (exponent 2) | 75,561 spectra/s | 1,511× | 0.07% |
 | Diffuser (1/24 octave) | 239,262 spectra/s | 4,785× | 0.02% |

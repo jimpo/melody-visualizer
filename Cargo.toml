@@ -27,8 +27,8 @@ nice-plug = { version = "0.4.2", features = ["assert_process_allocs", "standalon
 nice-plug-iced = { version = "0.5.0", features = ["image", "canvas"] }
 palette = "0.7"
 parking_lot = "0.12"
+realfft = "3"
 rtrb = "0.4"
-rustfft = "6"
 serde = { version = "1", features = ["derive"] }
 tracing-log = { version = "0.2", default-features = false, features = ["log-tracer"] }
 

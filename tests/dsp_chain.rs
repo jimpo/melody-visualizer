@@ -88,14 +88,7 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
 
 	// Three notes an octave apart, each at half the amplitude of the one below.
-	// They sit on exact DFT bin centres, so the analysis resolves them without
-	// the leakage a frequency between two bins would produce.
-	let dft_bin = SAMPLE_RATE as f64 / window as f64;
-	let chord = [
-		(12.0 * dft_bin, 1.0),
-		(24.0 * dft_bin, 0.5),
-		(48.0 * dft_bin, 0.25),
-	];
+	let chord = [(110.0, 1.0), (220.0, 0.5), (440.0, 0.25)];
 
 	let signal = sine_wave(&chord, SAMPLE_RATE, window);
 	let params = Arc::new(config.spectrum_params());
@@ -132,12 +125,13 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 
 	// Equal spacing per octave is the property the whole log-frequency design
 	// exists to provide, and a fault in the binning maths shows here first.
-	assert_eq!(
-		peaks[1] - peaks[0],
-		config.samples_per_octave,
-		"notes an octave apart sit one octave of bins apart",
-	);
-	assert_eq!(peaks[2] - peaks[1], peaks[1] - peaks[0]);
+	// The notes are off the grid, so each peak lands within a bin of its note.
+	for pair in peaks.windows(2) {
+		assert!(
+			(pair[1] - pair[0]).abs_diff(config.samples_per_octave) <= 1,
+			"notes an octave apart sit one octave of bins apart",
+		);
+	}
 
 	// A spectrum holds amplitude, so halving an amplitude halves a note's share.
 	// Pinned with the power map bypassed, since it raises that share to its
@@ -230,9 +224,8 @@ fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
 	let window = audio::window_samples(generator_config.window_ms, SAMPLE_RATE);
 
 	// A brass-like note: the second harmonic carries twice the fundamental's
-	// amplitude. Every partial sits on a DFT bin centre, as in the chord above.
-	let dft_bin = SAMPLE_RATE as f64 / window as f64;
-	let fundamental = 11.0 * dft_bin;
+	// amplitude.
+	let fundamental = 110.0;
 	let note = [
 		(fundamental, 0.5),
 		(2.0 * fundamental, 1.0),

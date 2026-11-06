@@ -9,7 +9,7 @@ use crate::app::config::Config;
 use crate::audio::SampleReader;
 use crate::audio::ring::sample_ring;
 use crate::graphic::renderer::GraphicRenderer;
-use crate::spectrum::generators::audio::AudioSpectrumGenerator;
+use crate::spectrum::generators::cqt::CqtSpectrumGenerator;
 use crate::spectrum::renderer::SpectrumRenderer;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumParams};
 
@@ -72,7 +72,7 @@ pub fn renderer(config: &Config, reader: SampleReader, sample_rate: u32) -> Spec
 	let generator_config = &config.spectrum_generator.audio;
 
 	let mut renderer = SpectrumRenderer::new();
-	renderer.set_generator(Box::new(AudioSpectrumGenerator::new(
+	renderer.set_generator(Box::new(CqtSpectrumGenerator::new(
 		generator_config.clone(),
 		reader,
 		sample_rate,

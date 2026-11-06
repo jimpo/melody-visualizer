@@ -30,6 +30,7 @@ use melody_visualizer::app::Config;
 use melody_visualizer::spectrum::generators::audio::{
 	self, Analyzer, AudioSpectrumGenerator, WindowShape,
 };
+use melody_visualizer::spectrum::generators::cqt::CqtSpectrumGenerator;
 use melody_visualizer::spectrum::renderer::SpectrumRenderer;
 use melody_visualizer::spectrum::transforms::{
 	DecibelConverter, Diffuser, HarmonicSummation, PowerMap, VolumeNormalizer, decibel_converter,
@@ -172,6 +173,22 @@ fn bench_generator(criterion: &mut Criterion) {
 			bencher.iter(|| {
 				buffer = analyzer
 					.fill_bins(std::mem::take(&mut buffer))
+					.into_buffer();
+			});
+		});
+		group.bench_function(BenchmarkId::new("cqt", window), |bencher| {
+			let mut generator = CqtSpectrumGenerator::new(
+				audio::Config {
+					window_ms,
+					..audio::Config::default()
+				},
+				sample_reader(&signal(window)),
+				SAMPLE_RATE,
+			);
+			let mut buffer = SpectrumBuffer::new(grid.clone());
+			bencher.iter(|| {
+				buffer = generator
+					.generate(std::mem::take(&mut buffer))
 					.into_buffer();
 			});
 		});

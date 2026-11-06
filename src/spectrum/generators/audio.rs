@@ -12,7 +12,8 @@ use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Config {
-	/// The audio one DFT covers, in milliseconds. The sample count follows the
+	/// The longest audio one analysis covers, in milliseconds (the DFT's length
+	/// for the FFT generator, the lowest bin's window for the CQT one). The sample count follows the
 	/// sample rate, so a rate the host changes keeps the window the same length in
 	/// time.
 	pub window_ms: u32,
@@ -24,7 +25,7 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Self {
 		Config {
-			window_ms: 50,
+			window_ms: 300,
 			update_rate: 50,
 		}
 	}

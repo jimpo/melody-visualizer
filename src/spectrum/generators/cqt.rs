@@ -26,6 +26,10 @@ use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumParam
 /// is about a semitone either side, so neighbouring semitones resolve.
 const Q: f64 = 24.0;
 
+/// The fewest cycles of its own frequency a bin's window may hold and still be
+/// read; fewer and the negative-frequency image overlaps the kernel.
+const MIN_CYCLES: f64 = 4.0;
+
 /// How far a kernel reaches from its centre, in main-lobe half-widths (`N / L`
 /// FFT bins each). A Hann sidelobe is below -60 dB by about four.
 const KERNEL_REACH: f64 = 4.0;
@@ -52,9 +56,12 @@ impl Kernels {
 	/// bins too low for `Q` periods to fit keep a window of `window` and a lower
 	/// `Q`.
 	///
-	/// shortcut: the mirror image at negative frequency is ignored, so a kernel
-	/// near DC (short window, low bin) is slightly off; upgrade by adding the
-	/// image's weights if windows that short are ever offered with bass bins.
+	/// A bin whose window holds fewer than [`MIN_CYCLES`] cycles, or that sits at
+	/// or above Nyquist, reads zero: the mirror image at negative frequency
+	/// overlaps its kernel there and the amplitude would swing with phase.
+	///
+	/// shortcut: such bins are blanked rather than modelled; upgrade by solving
+	/// for both images if a short window with bass bins ever matters.
 	fn build(params: &Arc<SpectrumParams>, sample_rate: u32, window: usize) -> Self {
 		let fft_size = window.next_power_of_two();
 		let fs = sample_rate as f64;
@@ -77,8 +84,10 @@ impl Kernels {
 			let first = (centre - reach).floor().max(0.0) as usize;
 			let last = ((centre + reach).ceil() as usize).min(nyquist_bin);
 
-			kernels.start.push(first);
-			if first <= last && frequency < fs / 2.0 {
+			// An empty kernel still needs a start inside the FFT output to slice at.
+			kernels.start.push(first.min(nyquist_bin));
+			let readable = frequency < fs / 2.0 && frequency * length as f64 / fs >= MIN_CYCLES;
+			if first <= last && readable {
 				let theta = TAU * frequency / fs;
 				// The kernel is right-aligned: it covers the last `length`
 				// samples of the FFT frame, which is a linear phase here.
@@ -334,6 +343,32 @@ mod tests {
 			value_at(440.0),
 			value_at(high),
 		);
+	}
+
+	#[test]
+	fn bins_the_window_cannot_see_read_zero_instead_of_panicking() {
+		// 22.05 kHz puts the top of the grid above Nyquist; a 10 ms window holds
+		// under four cycles of the grid's bass.
+		let rate = 22_050;
+		let signal = sine_wave(&[(440.0, 1.0)], rate, window_samples(10, rate));
+		let mut generator = CqtSpectrumGenerator::new(
+			Config {
+				window_ms: 10,
+				..Config::default()
+			},
+			sample_reader(&signal),
+			rate,
+		);
+		let params = Arc::new(SpectrumParams::exp_spaced(1196, 20.0, 20000.0));
+
+		let spectrum = generator.generate(SpectrumBuffer::new(params.clone()));
+
+		let frequencies = params.frequencies();
+		for (&frequency, &value) in frequencies.iter().zip(spectrum.values()) {
+			if frequency < 390.0 || frequency >= f64::from(rate) / 2.0 {
+				assert_eq!(value, 0.0, "{frequency} Hz should read zero");
+			}
+		}
 	}
 
 	#[test]

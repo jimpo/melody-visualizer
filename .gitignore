@@ -1,4 +1,7 @@
 target/
-.idea
-CLAUDE.local.md
-.claude
+.idea/
+.claude/
+*.local.md
+FOREGENT.md
+.worktreeinclude
+

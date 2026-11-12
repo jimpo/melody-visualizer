@@ -32,8 +32,8 @@ use melody_visualizer::spectrum::generators::audio::{
 };
 use melody_visualizer::spectrum::renderer::SpectrumRenderer;
 use melody_visualizer::spectrum::transforms::{
-	DecibelConverter, Diffuser, HarmonicSummation, PowerMap, VolumeNormalizer, decibel_converter,
-	diffuser, harmonic_summation, power_map, volume_normalizer,
+	DecibelConverter, Diffuser, HarmonicSummation, PowerMap, decibel_converter, diffuser,
+	harmonic_summation, power_map,
 };
 use melody_visualizer::spectrum::{
 	Spectrum, SpectrumBuffer, SpectrumGenerator, SpectrumParams, SpectrumTransform,
@@ -88,7 +88,7 @@ fn analyzer(window: usize) -> Analyzer {
 }
 
 /// A spectrum of `bins` bins as a transform in the chain would receive it:
-/// analyzed, smoothed and normalized.
+/// analyzed, and smoothed.
 ///
 /// The values matter as well as their number. The decibel converter skips a bin
 /// below its floor, so a raw generator spectrum — most of whose bins are far
@@ -130,12 +130,6 @@ fn transforms(bins: usize) -> Vec<(String, Box<dyn SpectrumTransform>)> {
 		(
 			"diffuser".to_string(),
 			Box::new(Diffuser::new(diffuser::Config { width: 1.0 / 24.0 })),
-		),
-		(
-			"volume_normalizer".to_string(),
-			Box::new(VolumeNormalizer::new(volume_normalizer::Config {
-				rate: 0.1,
-			})),
 		),
 		(
 			"decibel_converter".to_string(),
@@ -283,7 +277,6 @@ fn print_summary(window_ms: u32) {
 				"harmonic_summation" => "harmonic summation",
 				"power_map" => "power map",
 				"diffuser" => "diffuser",
-				"volume_normalizer" => "volume normalizer",
 				_ => "decibel converter",
 			},
 			seconds,

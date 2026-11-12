@@ -135,7 +135,6 @@ has to keep up with.
 | HarmonicSummation (8 harmonics) | 251,655 spectra/s | 5,033× | 0.02% |
 | PowerMap (exponent 2) | 75,561 spectra/s | 1,511× | 0.07% |
 | Diffuser (1/24 octave) | 239,262 spectra/s | 4,785× | 0.02% |
-| VolumeNormalizer | 635,405 spectra/s | 12,708× | 0.01% |
 | **Composed default chain** | **9,347 spectra/s** | **187×** | **0.53%** |
 
 At the one-second window (48,000 samples) the generator's capacity falls to
@@ -526,7 +525,7 @@ that property. The principles below are all consequences of it.
 | **Spectrum** | One frame of frequency-domain data: non-negative amplitude values plus the `SpectrumParams` that give each bin its frequency |
 | **SpectrumParams** | The log-spaced frequency grid. Shared as an `Arc` and compared with `Arc::ptr_eq`; a pointer mismatch is what invalidates downstream caches |
 | **SpectrumBuffer** | A `Spectrum` with no meaningful contents — the recycled allocation that cycles back from the graphic thread |
-| **Spectrum transform** | One stage of the DSP chain (`HarmonicSummation`, `PowerMap`, `Diffuser`, `VolumeNormalizer`, `DecibelConverter`), applied in a configured order |
+| **Spectrum transform** | One stage of the DSP chain (`HarmonicSummation`, `PowerMap`, `Diffuser`, `DecibelConverter`), applied in a configured order |
 | **Generator** | The head of a pipeline. A `SpectrumGenerator` makes a spectrum from samples; a `GraphicGenerator` makes a graphic from spectra |
 | **Spectrum tick** | The spectrum thread's timer, at `generator.interval()` — one over the update rate. It is the pipeline's only timed producer |
 | **Frame poll** | nice-plug-iced's `poll_events`, up to 64 times a second after `process` notifies. Each one draws a frame |

@@ -91,8 +91,7 @@ impl Engine {
 	/// since the last call.
 	///
 	/// A transform is reconfigured in place rather than rebuilt, so a stage that
-	/// keeps state across frames, like the volume normalizer's running peak,
-	/// keeps it while one of its settings moves.
+	/// keeps state across frames keeps it while one of its settings moves.
 	///
 	/// # Preconditions
 	/// - `config` holds the same transforms, in the same order, as the config

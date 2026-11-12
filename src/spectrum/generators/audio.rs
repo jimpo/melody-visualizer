@@ -19,6 +19,10 @@ pub struct Config {
 	/// The spectra produced per second, independent of the window. A window
 	/// longer than the hop repeats part of the last; a shorter one skips audio.
 	pub update_rate: u32,
+	/// The gain applied to the audio before the DFT, in decibels. The spectrum
+	/// is in absolute amplitude, so this sets how loud a sound has to be to
+	/// draw bright.
+	pub input_gain_db: f64,
 }
 
 impl Default for Config {
@@ -26,9 +30,17 @@ impl Default for Config {
 		Config {
 			window_ms: 50,
 			update_rate: 50,
+			input_gain_db: DEFAULT_INPUT_GAIN_DB,
 		}
 	}
 }
+
+/// The default input gain, in decibels.
+pub const DEFAULT_INPUT_GAIN_DB: f64 = 30.0;
+
+/// The ends of the Input gain slider, in decibels.
+pub const MIN_INPUT_GAIN_DB: f64 = 0.0;
+pub const MAX_INPUT_GAIN_DB: f64 = 60.0;
 
 /// The shortest window the Window slider offers, in milliseconds.
 pub const MIN_WINDOW_MS: u32 = 10;
@@ -129,8 +141,12 @@ impl SpectrumGenerator for AudioSpectrumGenerator {
 		self.report_overruns();
 
 		let read = self.audio_buffer.read_latest(&mut self.samples);
-		self.analyzer
-			.run_dft(self.samples[..read].iter().map(|&sample| sample as f64));
+		let gain = 10f64.powf(self.config.input_gain_db / 20.0);
+		self.analyzer.run_dft(
+			self.samples[..read]
+				.iter()
+				.map(|&sample| sample as f64 * gain),
+		);
 		self.analyzer.fill_bins(buffer)
 	}
 
@@ -409,6 +425,7 @@ mod tests {
 		AudioSpectrumGenerator::new(
 			Config {
 				window_ms: WINDOW_MS,
+				input_gain_db: 0.0,
 				..Config::default()
 			},
 			sample_reader(samples),
@@ -438,6 +455,25 @@ mod tests {
 	const DFT_BIN_HZ: f64 = SAMPLE_RATE as f64 / WINDOW as f64;
 
 	#[test]
+	fn the_input_gain_scales_the_amplitude_in_decibels() {
+		let signal = sine_wave(&[(440.0, 0.01)], SAMPLE_RATE, WINDOW);
+		let params = spectrum_params(256);
+		let peak = |gain_db: f64| {
+			let mut generator = generator(&signal);
+			generator.set_config(Config {
+				window_ms: WINDOW_MS,
+				input_gain_db: gain_db,
+				..Config::default()
+			});
+			let spectrum = generator.generate(SpectrumBuffer::new(params.clone()));
+			spectrum.values().iter().cloned().fold(0.0, f64::max)
+		};
+
+		let ratio = peak(20.0) / peak(0.0);
+		assert!((ratio - 10.0).abs() < 1e-6, "+20 dB scaled by {ratio}");
+	}
+
+	#[test]
 	fn a_window_the_ring_cannot_fill_yet_leaves_nothing_of_the_last_transform() {
 		// A window grown past the audio the ring holds, as just after the
 		// window slider moves up: every tick reads short until the ring
@@ -447,6 +483,7 @@ mod tests {
 		let mut generator = generator(&signal);
 		generator.set_config(Config {
 			window_ms: 4 * WINDOW_MS,
+			input_gain_db: 0.0,
 			..Config::default()
 		});
 		let params = spectrum_params(256);
@@ -604,6 +641,7 @@ mod tests {
 				generator.set_config(Config {
 					window_ms,
 					update_rate,
+					..Config::default()
 				});
 
 				let second = generator.interval().as_secs_f64() * update_rate as f64;

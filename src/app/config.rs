@@ -14,7 +14,6 @@ use crate::spectrum::{
 		diffuser::{self, Diffuser},
 		harmonic_summation::{self, HarmonicSummation},
 		power_map::{self, PowerMap},
-		volume_normalizer::{self, VolumeNormalizer},
 	},
 };
 use crate::traits::Configurable;
@@ -183,7 +182,6 @@ define_spectrum_transform_config! {
 		Diffuser,
 		HarmonicSummation,
 		PowerMap,
-		VolumeNormalizer,
 	}
 }
 
@@ -199,7 +197,6 @@ impl Default for Config {
 			}),
 			SpectrumTransformConfig::PowerMap(power_map::Config { exponent: 2.0 }),
 			SpectrumTransformConfig::Diffuser(diffuser::Config { width: 1.0 / 24.0 }),
-			SpectrumTransformConfig::VolumeNormalizer(volume_normalizer::Config { rate: 0.1 }),
 		];
 		Config {
 			min_freq: note!(D, 2).frequency(),

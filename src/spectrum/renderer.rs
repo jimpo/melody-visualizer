@@ -243,7 +243,7 @@ mod tests {
 	use super::*;
 
 	use crate::spectrum::TransformId;
-	use crate::spectrum::transforms::{Diffuser, VolumeNormalizer, diffuser, volume_normalizer};
+	use crate::spectrum::transforms::{Diffuser, PowerMap, diffuser, power_map};
 	use crate::test_support::spectrum_params;
 	use crate::traits::Configurable;
 
@@ -277,17 +277,15 @@ mod tests {
 		renderer.transforms_mut().insert(
 			0,
 			TransformId(0),
-			Box::new(VolumeNormalizer::new(volume_normalizer::Config {
-				rate: 1.0,
-			})),
+			Box::new(PowerMap::new(power_map::Config { exponent: 2.0 })),
 		);
 
 		let spectrum = renderer.render(SpectrumBuffer::new(spectrum_params(4)));
 
 		assert_eq!(
 			spectrum.values(),
-			[0.25, 0.5, 0.75, 1.0],
-			"the generated ramp comes out scaled by the chain's normalizer",
+			[1.0, 4.0, 9.0, 16.0],
+			"the generated ramp comes out squared by the chain's power map",
 		);
 	}
 

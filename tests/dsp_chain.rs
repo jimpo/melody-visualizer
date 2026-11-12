@@ -165,12 +165,10 @@ fn a_chord_through_the_default_chain_comes_out_as_three_notes() {
 		);
 	}
 
-	// The chain ends in the volume normalizer, whose output is a fraction of a
-	// running peak that the first spectrum seeds — so the loudest bin is 1.0.
 	let loudest = spectrum.values().iter().cloned().fold(0.0f64, f64::max);
 	assert!(
-		(loudest - 1.0).abs() < 1e-12,
-		"the chain's output should peak at 1.0, peaked at {loudest}",
+		loudest > 0.0 && loudest.is_finite(),
+		"the chain's output should peak above zero, peaked at {loudest}",
 	);
 	assert!(
 		spectrum.values().iter().all(|&value| value >= 0.0),
@@ -188,7 +186,7 @@ fn a_silent_input_produces_a_silent_spectrum() {
 
 	assert!(
 		spectrum.values().iter().all(|&value| value == 0.0),
-		"silence in, silence out — and nothing the normalizer divides by zero",
+		"silence in, silence out",
 	);
 }
 
@@ -259,7 +257,7 @@ fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
 	);
 
 	// A steeper power map dims the ghost the summation leaves at the second
-	// harmonic, while the fundamental stays at full brightness.
+	// harmonic, while the fundamental stays the brightest bin.
 	let power_map = stage_id(&config, |config| {
 		matches!(config, SpectrumTransformConfig::PowerMap(_))
 	});
@@ -275,12 +273,13 @@ fn a_note_whose_second_harmonic_is_loudest_is_brightest_at_its_fundamental() {
 		})
 		.expect("a spectrum has bins");
 	assert_eq!(loudest_index(&steep), loudest);
-	assert_eq!(steep.values()[loudest], 1.0);
+	let ghost =
+		|spectrum: &Spectrum| spectrum.values()[second_harmonic] / spectrum.values()[loudest];
 	assert!(
-		steep.values()[second_harmonic] < summed.values()[second_harmonic],
-		"the second harmonic's ghost is {} at exponent 4, and {} at the default",
-		steep.values()[second_harmonic],
-		summed.values()[second_harmonic],
+		ghost(&steep) < ghost(&summed),
+		"the second harmonic's ghost is {} of the fundamental at exponent 4, and {} at the default",
+		ghost(&steep),
+		ghost(&summed),
 	);
 
 	// Without the stage the spiral lights the second harmonic instead.

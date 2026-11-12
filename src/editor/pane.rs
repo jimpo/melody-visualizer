@@ -50,7 +50,6 @@ pub enum Stage {
 	HarmonicSummation,
 	PowerMap,
 	Diffuser,
-	VolumeNormalizer,
 	Spiral,
 }
 
@@ -63,7 +62,6 @@ pub fn view<'a>(params: &'a PluginParams, open: Option<Stage>, midi: bool) -> El
 		Stage::HarmonicSummation,
 		Stage::PowerMap,
 		Stage::Diffuser,
-		Stage::VolumeNormalizer,
 		Stage::Spiral,
 	];
 	let mut pane = Column::new();
@@ -130,11 +128,6 @@ fn stage_row<'a>(
 			format!("exponent {}", params.exponent),
 		),
 		Stage::Diffuser => ("Diffuser", TRANSFORM, params.diffuser_width.to_string()),
-		Stage::VolumeNormalizer => (
-			"Volume Normalizer",
-			TRANSFORM,
-			format!("rate {}", params.normalizer_rate),
-		),
 		Stage::Spiral => (
 			"Spiral",
 			DISPLAY,
@@ -246,6 +239,11 @@ fn body<'a>(params: &'a PluginParams, stage: Stage, midi: bool) -> Element<'a, M
 				"Update rate",
 				"How often a new spectrum is produced, whatever the window.",
 			),
+			param_slider(
+				&params.input_gain,
+				"Input gain",
+				"Amplifies the audio before analysis. Louder sound draws brighter, so raise it until quiet playing shows.",
+			),
 		],
 		Stage::Envelope => vec![
 			param_slider(
@@ -290,11 +288,6 @@ fn body<'a>(params: &'a PluginParams, stage: Stage, midi: bool) -> Element<'a, M
 			&params.diffuser_width,
 			"Width",
 			"Spreads each partial across neighbouring semitones.",
-		)],
-		Stage::VolumeNormalizer => vec![param_slider(
-			&params.normalizer_rate,
-			"Rate",
-			"How fast the running peak follows the loudest partial.",
 		)],
 		Stage::Spiral => vec![
 			pitch_range(params),

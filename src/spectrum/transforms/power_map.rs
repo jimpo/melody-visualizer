@@ -12,9 +12,9 @@ pub struct Config {
 
 /// Raises every bin to a configured exponent, which sets the display's contrast.
 ///
-/// A bin at a ratio `r` of the loudest comes out at `r^exponent` of it, so after
-/// the volume normalizer the peak stays at full brightness while quieter bins
-/// dim or lift.
+/// A bin at a ratio `r` of the loudest comes out at `r^exponent` of it, so above
+/// an exponent of 1 the quieter bins dim against the loudest, and below 1 they
+/// lift.
 #[derive(Debug)]
 pub struct PowerMap {
 	config: Config,

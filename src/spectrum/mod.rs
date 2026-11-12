@@ -227,7 +227,7 @@ pub trait SpectrumTransform: Debug + Send {
 /// use melody_visualizer::spectrum::{
 ///     SpectrumBuffer, SpectrumParams, TransformChain, TransformId,
 /// };
-/// use melody_visualizer::spectrum::transforms::{VolumeNormalizer, volume_normalizer};
+/// use melody_visualizer::spectrum::transforms::{PowerMap, power_map};
 /// use melody_visualizer::traits::Configurable;
 ///
 /// let params = Arc::new(SpectrumParams::exp_spaced(4, 200.0, 1600.0));
@@ -238,12 +238,12 @@ pub trait SpectrumTransform: Debug + Send {
 /// chain.insert(
 ///     0,
 ///     TransformId(0),
-///     Box::new(VolumeNormalizer::new(volume_normalizer::Config { rate: 0.1 })),
+///     Box::new(PowerMap::new(power_map::Config { exponent: 2.0 })),
 /// );
 /// chain.set_params(&params);
 ///
-/// // The normalizer scales the spectrum by its running peak.
-/// assert_eq!(chain.apply(spectrum).values(), [0.25, 0.5, 1.0, 0.5]);
+/// // The power map squares every bin.
+/// assert_eq!(chain.apply(spectrum).values(), [1.0, 4.0, 16.0, 4.0]);
 /// ```
 #[derive(Debug, Default)]
 pub struct TransformChain {
@@ -580,8 +580,8 @@ mod tests {
 	}
 
 	#[test]
-	fn a_bypassed_normalizer_holds_its_running_peak() {
-		use crate::spectrum::transforms::{VolumeNormalizer, volume_normalizer};
+	fn a_bypassed_stage_passes_the_spectrum_through() {
+		use crate::spectrum::transforms::{PowerMap, power_map};
 		use crate::test_support::spectrum;
 		use crate::traits::Configurable;
 
@@ -590,30 +590,18 @@ mod tests {
 		chain.insert(
 			0,
 			id,
-			Box::new(VolumeNormalizer::new(volume_normalizer::Config {
-				rate: 0.5,
-			})),
+			Box::new(PowerMap::new(power_map::Config { exponent: 2.0 })),
 		);
 
-		// The first spectrum seeds the running peak at 2.0, and a spectrum with
-		// that same peak holds it there.
-		chain.apply(spectrum(&[1.0, 2.0]));
-
 		chain.set_enabled(id, false);
-		let bypassed = chain.apply(spectrum(&[100.0, 200.0]));
 		assert_eq!(
-			bypassed.values(),
-			[100.0, 200.0],
+			chain.apply(spectrum(&[1.0, 2.0])).values(),
+			[1.0, 2.0],
 			"a bypassed stage passes the spectrum through untouched",
 		);
 
 		chain.set_enabled(id, true);
-		assert_eq!(
-			chain.apply(spectrum(&[1.0, 2.0])).values(),
-			[0.5, 1.0],
-			"the peak did not follow the spectra that went by while off: a peak \
-			 that had chased 200.0 would scale this frame to about a fiftieth",
-		);
+		assert_eq!(chain.apply(spectrum(&[1.0, 2.0])).values(), [1.0, 4.0]);
 	}
 
 	#[test]

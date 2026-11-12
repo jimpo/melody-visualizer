@@ -64,11 +64,9 @@ pub struct PluginParams {
 	#[id = "diffuser_width"]
 	pub diffuser_width: FloatParam,
 
-	// The volume normalizer has no switch: it is the stage that scales the
-	// spectrum into the range the spiral draws, and the spiral goes dark without
-	// it.
-	#[id = "normalizer_rate"]
-	pub normalizer_rate: FloatParam,
+	/// The gain on the audio before the spectrum, in decibels.
+	#[id = "input_gain"]
+	pub input_gain: FloatParam,
 
 	/// The pitch range's ends, in semitones above [`LOWEST_NOTE`].
 	#[id = "lowest_note"]
@@ -102,7 +100,6 @@ impl Default for PluginParams {
 		let mut harmonic_summation = None;
 		let mut power_map = None;
 		let mut diffuser = None;
-		let mut normalizer = None;
 		for entry in &config.spectrum_transforms {
 			match &entry.config {
 				SpectrumTransformConfig::HarmonicSummation(c) => {
@@ -112,7 +109,6 @@ impl Default for PluginParams {
 					power_map = Some((entry.enabled, c.clone()))
 				}
 				SpectrumTransformConfig::Diffuser(c) => diffuser = Some((entry.enabled, c.clone())),
-				SpectrumTransformConfig::VolumeNormalizer(c) => normalizer = Some(c.clone()),
 				SpectrumTransformConfig::DecibelConverter(_) => {}
 			}
 		}
@@ -120,7 +116,6 @@ impl Default for PluginParams {
 		let harmonic_summation = harmonic_summation.expect(missing);
 		let power_map = power_map.expect(missing);
 		let diffuser = diffuser.expect(missing);
-		let normalizer = normalizer.expect(missing);
 
 		let notes = (HIGHEST_NOTE - LOWEST_NOTE) as i32;
 		let key = Note::nearest(spiral.key_log_freq) - note!(C, KEY_OCTAVE);
@@ -187,16 +182,17 @@ impl Default for PluginParams {
 			.with_value_to_string(formatters::v2s_f32_rounded(1))
 			.with_unit(" semitones"),
 
-			normalizer_rate: FloatParam::new(
-				"Normalizer rate",
-				normalizer.rate as f32,
+			input_gain: FloatParam::new(
+				"Input gain",
+				analysis.input_gain_db as f32,
 				FloatRange::Linear {
-					min: 0.01,
-					max: 1.0,
+					min: audio::MIN_INPUT_GAIN_DB as f32,
+					max: audio::MAX_INPUT_GAIN_DB as f32,
 				},
 			)
-			.with_step_size(0.01)
-			.with_value_to_string(formatters::v2s_f32_rounded(2)),
+			.with_step_size(0.5)
+			.with_value_to_string(formatters::v2s_f32_rounded(1))
+			.with_unit(" dB"),
 
 			lowest_note: IntParam::new(
 				"Lowest note",
@@ -275,6 +271,7 @@ impl PluginParams {
 			audio: audio::Config {
 				window_ms: self.window_ms.value() as u32,
 				update_rate: self.update_rate.value() as u32,
+				input_gain_db: plain(self.input_gain.value()),
 			},
 			envelope: midi::Envelope {
 				attack: plain(self.attack.value()) / MS_PER_SECOND,
@@ -298,9 +295,6 @@ impl PluginParams {
 				SpectrumTransformConfig::Diffuser(c) => {
 					entry.enabled = self.diffuser.value();
 					c.width = plain(self.diffuser_width.value()) / SEMITONES_PER_OCTAVE;
-				}
-				SpectrumTransformConfig::VolumeNormalizer(c) => {
-					c.rate = plain(self.normalizer_rate.value());
 				}
 				SpectrumTransformConfig::DecibelConverter(_) => {}
 			}

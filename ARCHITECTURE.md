@@ -215,17 +215,16 @@ One sample's journey:
    only add one note to another an octave or a fifth below it.
 3. **Transform** — `spectrum/transforms/`. The `Spectrum` passes through a
    `TransformChain`: `HarmonicSummation` (pitch salience), `PowerMap`
-   (contrast), `Diffuser` (spatial smoothing), `VolumeNormalizer` (auto-gain).
-   A fifth, `DecibelConverter` (log scaling), exists but is not in the default
+   (contrast), `Diffuser` (spatial smoothing).
+   A fourth, `DecibelConverter` (log scaling), exists but is not in the default
    chain. The harmonic summation scores each bin by its own value plus a
    weight of `decay^(h−1)` of the value at `h` times its frequency, for `h` up
    to `harmonics`. The fundamental collects its whole series and a harmonic
    collects only its own sparse one, so the note, not its overtones, lights up
    brightest. On the log grid a multiple of frequency is a constant index
    shift, `round(bins_per_octave · log2(h))`, derived in `set_params`. The
-   power map raises every bin to `exponent`. Values end up relative to the
-   running peak the normalizer sets, so a bin at a ratio `r` of the peak shows
-   at `r^exponent`: 2 gives the contrast of drawing power, 1 is amplitude, and
+   power map raises every bin to `exponent`. A bin at a ratio `r` of the
+   loudest shows at `r^exponent` of it: 2 gives the contrast of drawing power, 1 is amplitude, and
    below 1 compresses. It follows the summation so the sum adds amplitudes
    rather than letting the loudest partial dominate, and precedes the diffuser
    so the sharpened peak is what gets spread. Order is position in the chain,
@@ -260,26 +259,26 @@ stands.
 
 | Stage | Output units | Range |
 |---|---|---|
-| `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, unnormalized — order 0.06 for a full-scale sine, far smaller for real music |
+| `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, before the input gain, order 0.06 for a full-scale sine and far smaller for real music; the audio is scaled by the Input gain first, so the default +30 dB lifts it |
 | `SourceGenerator`, drawing notes | amplitude: velocity² × envelope, summed in power per bin | `[0, ~1]` for one note; a few notes on one bin add in power |
 | `HarmonicSummation` | amplitude, weighted sum | rescales: `[0, max · Σ decay^(h−1)]`, up to about 4.2× the input's peak at the defaults. A partial whose harmonics fall off the top of the grid keeps only its own value |
 | `PowerMap` | amplitude raised to `exponent` | rescales: `[0, max^exponent]`, saturating at `f64::MAX` rather than overflowing |
 | `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
-| `VolumeNormalizer` | fraction of a running peak | nominally `[0, ~1]`, **not clamped** — a transient louder than the peak has caught up with exceeds 1 |
 | `DecibelConverter` | decades above `min_level` | `[0, −log₁₀(min_level)]`, which is `[0, 3]` at a `min_level` of 1e-3 (−60 dB in amplitude) |
 | `SpiralGenerator` (consumer) | — | **expects** `[0, ~1]` with 1 as the peak, **not clamped**: `REST + (1 − REST) · exposure · spectrum[i]` in linear light. Light past 1 overexposes: the hue's brightest channel stays full and the colour moves toward white, reaching it at 2 |
 
 Two rules follow, and a new transform has to answer both:
 
 1. **A transform declares whether it preserves the range or rescales it.** The
-   diffuser preserves; the harmonic summation, the power map, the normalizer
-   and the decibel converter rescale.
-2. **The chain's last stage owns the output range**, because the consumer
-   treats 1 as the peak and draws anything above it as overexposure toward
-   white.
-
-This is why the volume normalizer has no on/off parameter: without it the
-generator's values, around 0.06, leave the spiral nearly black.
+   diffuser preserves; the harmonic summation, the power map and the decibel
+   converter rescale.
+2. **Nothing normalizes the output.** The input gain is a fixed, user-set
+   scale on the audio before the DFT, so loud looks loud and quiet looks quiet.
+   The consumer treats 1 as the peak and draws anything above it as
+   overexposure toward white, so a gain set too high whitens loud passages and
+   one set too low leaves the spiral nearly black. The power map doubles the
+   gain's effect in decibels at the default exponent of 2. Drawn MIDI notes
+   skip the gain: their values are already in `[0, ~1]`.
 
 ### Parameter bounds
 
@@ -296,7 +295,7 @@ Each parameter is declared in `params.rs`; its default is read out of
 | Harmonic decay | `0..1` | The weight of each harmonic against the one below it. 0 is the identity |
 | Exponent | `0.5..4`, step 0.1 | The power map's. 1 is the identity |
 | Diffuser width | `0..10` semitones | The config field is in octaves. Drives the O(bins²) cost — see the cliff in DEVELOPMENT.md |
-| Normalizer rate | `0.01..1` | Per spectrum. At 0 the running peak could never move |
+| Input gain | `0..60` dB | Scales the audio before the DFT, in `AudioSpectrumGenerator`; MIDI notes skip it. Needs tuning against the generator's raw scale |
 | Lowest note, Highest note | A0 to C8 | Semitones above A0, shown as note names. The default range is D2 to D6. The editor's range slider keeps the lowest at or below the highest; the host can still set them crossed, and `PluginParams::pitch_range` reads them lowest first |
 | Key | C to B | The pitch class at the top of the spiral |
 | Exposure, Centre hole, Outer padding, Glow core, Glow falloff | see `params.rs` | The spiral's look. The glow is set in cents and stored in octaves |
@@ -387,8 +386,7 @@ parameter changes → next frame: params.config() → Engine::apply(config)
 ```
 
 `Engine::apply` reconfigures a transform in place rather than rebuilding it, so
-a stage that keeps state across frames, like the volume normalizer's running
-peak, keeps it while one of its settings moves. The `Configurable` trait
+a stage that keeps state across frames keeps it while one of its settings moves. The `Configurable` trait
 (`new(config)` / `set_config(config)`) and the `define_*_config!` macros
 generate the plumbing. `update()` downcasts the live object: if it already has
 the right concrete type it is reconfigured in place, otherwise it is replaced.
@@ -534,13 +532,8 @@ next step is planned. Each item is a candidate for its own change.
 - **The stages do not compose over their value ranges.** `DecibelConverter`
   emits up to 3.0 into a consumer that treats 1 as the peak, which is why it
   is commented out of `Config::default` and has no parameters. Either it
-  normalizes to its own output range, or the `[0, ~1]` requirement moves onto
+  scales to its own output range, or the `[0, ~1]` requirement moves onto
   the chain's output instead of living as the consumer's private assumption.
-- **The transforms measure time in ticks, and the tick is adjustable.**
-  `VolumeNormalizer::rate` is per spectrum, so raising the update rate
-  shortens the time its running peak decays over without its own parameter
-  moving. A rate in seconds, scaled by `generator.interval()`, would decouple
-  them.
 - `TransformChain::remove` and `reorder` exist, but nothing calls them: the
   chain is fixed.
 - The spectrum thread's own loop — timing, backpressure, shutdown — has no

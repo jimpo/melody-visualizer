@@ -21,6 +21,7 @@ testing = []
 derive_more = { version = "2", features = ["display", "from", "error"] }
 futures = "0.3.5"
 futures-timer = "3.0.2"
+hound = "3.5.1"
 log = "0.4.8"
 # `assert_process_allocs` panics in debug builds if `process()` allocates.
 nice-plug = { version = "0.4.2", features = ["assert_process_allocs", "standalone"] }
@@ -30,6 +31,7 @@ parking_lot = "0.12"
 realfft = "3"
 rtrb = "0.4"
 serde = { version = "1", features = ["derive"] }
+toml = "1.2.2"
 tracing-log = { version = "0.2", default-features = false, features = ["log-tracer"] }
 
 [dev-dependencies]

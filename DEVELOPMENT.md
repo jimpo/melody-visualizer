@@ -531,3 +531,13 @@ that property. The principles below are all consequences of it.
 | **Frame poll** | nice-plug-iced's `poll_events`, up to 64 times a second after `process` notifies. Each one draws a frame |
 | **Stage** | A row of the editor's control pane: the spectrum, a transform, or the spiral |
 | **`AsyncProcessor<T>`** | The RPC handle. Ships a `FnOnce(&mut T)` to the thread that owns `T` and returns a future of its result |
+
+## Offline eval runner
+
+`cargo run --release --bin eval -- [--config chain.toml] [--out spectra.csv] input.wav`
+runs a WAV through the audio generator and transform chain at the configured
+update rate, with no threads, plugin or window. It writes one CSV row of bins
+per tick and prints median/p95/max time per tick. `--dump-config` prints the
+default `Config` as TOML, which is the file format `--config` reads, so the
+chain can be changed without recompiling. Runs with the same input and config
+produce identical spectra.

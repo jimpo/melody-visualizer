@@ -85,7 +85,7 @@ impl Plugin for MelodyVisualizer {
 		},
 	];
 
-	const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+	const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
 
 	type Editor = IcedEditor;
 	type SysExMessage = ();

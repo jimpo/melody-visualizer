@@ -247,24 +247,44 @@ fn body<'a>(params: &'a PluginParams, stage: Stage, midi: bool) -> Element<'a, M
 		],
 		Stage::Envelope => vec![
 			param_slider(
+				&params.delay,
+				"Delay",
+				"How long after the key goes down before a MIDI note starts to light.",
+			),
+			param_slider(
 				&params.attack,
 				"Attack",
-				"How long a MIDI note takes to light fully.",
+				"How long a note then takes to rise, in a straight line, to full brightness.",
+			),
+			param_slider(
+				&params.hold,
+				"Hold",
+				"How long it stays at full brightness.",
 			),
 			param_slider(
 				&params.decay,
 				"Decay",
-				"How long it then takes to fall to the sustain level.",
+				"How long a fade from full brightness to nothing would take. The note falls at that rate until it reaches the sustain level.",
 			),
 			param_slider(
 				&params.sustain,
 				"Sustain",
-				"The level a held note settles at, as a fraction of its peak.",
+				"The level a held note settles at, in dB below its peak.",
 			),
 			param_slider(
 				&params.release,
 				"Release",
-				"How long a note takes to fade once its key is let go.",
+				"How long a fade to nothing would take once the key (and the sustain pedal) is let go.",
+			),
+			param_slider(
+				&params.key_to_hold,
+				"Hold by key",
+				"How much each key above middle C shortens the hold, in timecents. Negative lengthens it.",
+			),
+			param_slider(
+				&params.key_to_decay,
+				"Decay by key",
+				"How much each key above middle C shortens the decay, in timecents. Negative lengthens it.",
 			),
 		],
 		Stage::HarmonicSummation => vec![

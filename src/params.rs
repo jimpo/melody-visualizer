@@ -37,15 +37,24 @@ pub struct PluginParams {
 	#[id = "update_rate"]
 	pub update_rate: IntParam,
 
-	/// The envelope's times, in milliseconds, and its sustain level.
+	/// The SoundFont volume envelope: times in milliseconds, the sustain in dB
+	/// below the peak and the key scaling in timecents a key.
+	#[id = "delay"]
+	pub delay: FloatParam,
 	#[id = "attack"]
 	pub attack: FloatParam,
+	#[id = "hold"]
+	pub hold: FloatParam,
 	#[id = "decay"]
 	pub decay: FloatParam,
 	#[id = "sustain"]
 	pub sustain: FloatParam,
 	#[id = "release"]
 	pub release: FloatParam,
+	#[id = "key_to_hold"]
+	pub key_to_hold: FloatParam,
+	#[id = "key_to_decay"]
+	pub key_to_decay: FloatParam,
 
 	#[id = "harmonic_summation"]
 	pub harmonic_summation: BoolParam,
@@ -134,16 +143,24 @@ impl Default for PluginParams {
 			)
 			.with_unit(" / sec"),
 
+			delay: envelope_time("Delay", envelope.delay, 5000.0),
 			attack: envelope_time("Attack", envelope.attack, 2000.0),
-			decay: envelope_time("Decay", envelope.decay, 5000.0),
+			hold: envelope_time("Hold", envelope.hold, 5000.0),
+			decay: envelope_time("Decay", envelope.decay, 20000.0),
 			sustain: FloatParam::new(
 				"Sustain",
 				envelope.sustain as f32,
-				FloatRange::Linear { min: 0.0, max: 1.0 },
+				FloatRange::Linear {
+					min: 0.0,
+					max: 100.0,
+				},
 			)
-			.with_step_size(0.01)
-			.with_value_to_string(formatters::v2s_f32_rounded(2)),
-			release: envelope_time("Release", envelope.release, 5000.0),
+			.with_step_size(0.1)
+			.with_value_to_string(formatters::v2s_f32_rounded(1))
+			.with_unit(" dB"),
+			release: envelope_time("Release", envelope.release, 20000.0),
+			key_to_hold: key_scaling("Hold by key", envelope.key_to_hold),
+			key_to_decay: key_scaling("Decay by key", envelope.key_to_decay),
 
 			harmonic_summation: BoolParam::new("Harmonic summation", harmonic_summation.0),
 			harmonics: IntParam::new(
@@ -274,10 +291,14 @@ impl PluginParams {
 				input_gain_db: plain(self.input_gain.value()),
 			},
 			envelope: midi::Envelope {
+				delay: plain(self.delay.value()) / MS_PER_SECOND,
 				attack: plain(self.attack.value()) / MS_PER_SECOND,
+				hold: plain(self.hold.value()) / MS_PER_SECOND,
 				decay: plain(self.decay.value()) / MS_PER_SECOND,
 				sustain: plain(self.sustain.value()),
 				release: plain(self.release.value()) / MS_PER_SECOND,
+				key_to_hold: plain(self.key_to_hold.value()),
+				key_to_decay: plain(self.key_to_decay.value()),
 			},
 		};
 
@@ -361,6 +382,22 @@ fn envelope_time(name: &str, seconds: f64, max_ms: f32) -> FloatParam {
 	.with_step_size(1.0)
 	.with_value_to_string(formatters::v2s_f32_rounded(0))
 	.with_unit(" ms")
+}
+
+/// How much a key shortens a time, as a SoundFont sets it: timecents a key
+/// above middle C.
+fn key_scaling(name: &str, timecents: f64) -> FloatParam {
+	FloatParam::new(
+		name,
+		timecents as f32,
+		FloatRange::Linear {
+			min: -1200.0,
+			max: 1200.0,
+		},
+	)
+	.with_step_size(1.0)
+	.with_value_to_string(formatters::v2s_f32_rounded(0))
+	.with_unit(" tc / key")
 }
 
 fn linear(min: i32, max: i32) -> IntRange {

@@ -516,7 +516,7 @@ next step is planned. Each item is a candidate for its own change.
 
 ### Audio and the host
 
-- **MIDI notes ignore the sustain pedal, pitch bend and MPE.** CC64 needs
+- **MIDI notes ignore pitch bend and MPE.** Pitch bend would
   `MidiConfig::MidiCCs`; pitch bend would move a voice between bins, which the
   linear split already supports.
 - **A full note ring drops events unannounced**, and a dropped note-off leaves

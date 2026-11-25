@@ -18,6 +18,7 @@ pub mod error;
 pub mod graphic;
 pub mod note;
 pub mod params;
+pub mod reference;
 pub mod spectrum;
 #[cfg(any(test, feature = "testing"))]
 pub mod test_support;

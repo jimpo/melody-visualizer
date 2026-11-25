@@ -541,3 +541,12 @@ per tick and prints median/p95/max time per tick. `--dump-config` prints the
 default `Config` as TOML, which is the file format `--config` reads, so the
 chain can be changed without recompiling. Runs with the same input and config
 produce identical spectra.
+
+`--reference song.mid` scores the chain against the MIDI file the WAV was
+rendered from (`src/reference.rs`). The reference is the MIDI generator's
+fundamentals under the config's envelope, with no transforms, on the same
+ticks. Both it and the chain's output are folded into the 88 piano keys by
+taking the max over the bins within ±½ semitone (a sum would change with the
+grid's resolution). The chain's latency is the lag, within `--max-lag-ms`
+(default 500), that maximises their normalised cross-correlation. It is printed
+along with the score at that lag, never aligned away.

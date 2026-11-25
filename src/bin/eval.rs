@@ -7,8 +7,14 @@
 //! membership needs no rebuild. The run is deterministic: the same input and
 //! config give the same spectra, byte for byte.
 //!
+//! With `--reference`, the MIDI file is rendered as the reference spectrum (the
+//! MIDI generator's fundamentals under the config's envelope, no transforms),
+//! both it and the chain's output are folded into the 88 piano keys, and the
+//! chain's latency is measured by cross-correlation and reported with the score
+//! at that offset.
+//!
 //! ```text
-//! eval [--config chain.toml] [--out spectra.csv] input.wav
+//! eval [--config chain.toml] [--out spectra.csv] [--reference song.mid [--max-lag-ms 500]] input.wav
 //! eval --dump-config > chain.toml
 //! ```
 
@@ -21,11 +27,11 @@ use std::time::Instant;
 
 use melody_visualizer::app::Config;
 use melody_visualizer::audio::ring::sample_ring;
+use melody_visualizer::reference;
 use melody_visualizer::spectrum::generators::audio::{self, AudioSpectrumGenerator, MAX_WINDOW_MS};
 use melody_visualizer::spectrum::{SpectrumBuffer, SpectrumGenerator, TransformChain};
 
-const USAGE: &str =
-	"usage: eval [--config chain.toml] [--out spectra.csv] input.wav\n       eval --dump-config";
+const USAGE: &str = "usage: eval [--config chain.toml] [--out spectra.csv] [--reference song.mid [--max-lag-ms N]] input.wav\n       eval --dump-config";
 
 fn main() -> ExitCode {
 	match run() {
@@ -41,11 +47,21 @@ fn run() -> Result<(), String> {
 	let mut config_path = None;
 	let mut out_path = None;
 	let mut input = None;
+	let mut reference_path = None;
+	let mut max_lag_ms = 500.0f64;
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
 		match arg.as_str() {
 			"--config" => config_path = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
 			"--out" => out_path = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
+			"--reference" => reference_path = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
+			"--max-lag-ms" => {
+				max_lag_ms = args
+					.next()
+					.ok_or(USAGE)?
+					.parse()
+					.map_err(|_| USAGE.to_string())?
+			}
 			"--dump-config" => {
 				let text = toml::to_string_pretty(&Config::default()).map_err(|e| e.to_string())?;
 				print!("{text}");
@@ -91,6 +107,7 @@ fn run() -> Result<(), String> {
 
 	let mut buffer = SpectrumBuffer::new(params.clone());
 	let mut times = Vec::new();
+	let mut folded = Vec::new();
 	let mut consumed = 0usize;
 	let mut tick = 0u64;
 	loop {
@@ -108,6 +125,9 @@ fn run() -> Result<(), String> {
 		let spectrum = chain.apply(generator.generate(buffer));
 		times.push(start.elapsed().as_secs_f64());
 
+		if reference_path.is_some() {
+			folded.push(reference::fold(spectrum.values(), spectrum.params()));
+		}
 		if let Some(out) = out.as_mut() {
 			let row: Vec<String> = spectrum.values().iter().map(|v| format!("{v:e}")).collect();
 			writeln!(out, "{}", row.join(",")).map_err(|e| e.to_string())?;
@@ -119,6 +139,27 @@ fn run() -> Result<(), String> {
 	}
 
 	report(&times, sample_rate, update_rate);
+	if let Some(path) = reference_path {
+		let bytes = std::fs::read(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+		let events =
+			reference::read_midi(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+		let rows = reference::render(
+			&events,
+			&config.spectrum_generator.envelope,
+			update_rate,
+			folded.len(),
+		);
+		let max_lag = (max_lag_ms / 1e3 * update_rate as f64).round() as usize;
+		match reference::align(&rows, &folded, max_lag) {
+			Some(a) => println!(
+				"latency {:.1} ms ({} ticks), score {:.4}",
+				a.lag as f64 * 1e3 / update_rate as f64,
+				a.lag,
+				a.score
+			),
+			None => println!("no alignment: the reference or the output is silent"),
+		}
+	}
 	Ok(())
 }
 

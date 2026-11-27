@@ -550,3 +550,69 @@ taking the max over the bins within ±½ semitone (a sum would change with the
 grid's resolution). The chain's latency is the lag, within `--max-lag-ms`
 (default 500), that maximises their normalised cross-correlation. It is printed
 along with the score at that lag, never aligned away.
+
+## Eval SoundFonts and the render tool
+
+All eval audio is rendered from MIDI through FluidSynth with a piano whose
+volume envelope we wrote ourselves, so the reference spectrum
+([`src/reference.rs`](src/reference.rs)) describes it exactly. Everything is in
+`eval/soundfont/`:
+
+| File | What |
+|---|---|
+| `generaluser.sf2` | The tuning set's piano, cut from GeneralUser GS |
+| `fluidr3.sf2` | The held-out set's piano, cut from FluidR3 GM: a different recording, to check the chain is not tuned to one timbre |
+| `manifest.toml` | Each source's URL, licence and checksums, and the checksum of what was derived |
+| `build.py` | Cuts the pianos out of the sources and writes the envelope into them |
+| `render.py` | MIDI to WAV through FluidSynth |
+| `sf2.py` | A small SoundFont 2 reader and writer used by `build.py` |
+
+```bash
+uv run eval/soundfont/build.py                                   # rebuild both SoundFonts
+python3 eval/soundfont/render.py --soundfont eval/soundfont/generaluser.sf2 song.mid song.wav
+```
+
+`render.py` needs `fluidsynth` on the PATH (or `$FLUIDSYNTH`). It turns reverb
+and chorus off, so no note gets a tail the reference does not know about, and
+fixes the sample rate (44.1 kHz), gain, polyphony and core count, so renders are
+identical from run to run. A FluidSynth built without libsndfile works too: the
+tool takes raw PCM and writes the WAV header itself.
+
+`build.py` reads the envelope from the plugin's own `Config` (the
+`[spectrum_generator.envelope]` table of `eval --dump-config`), so the MIDI
+generator and the SoundFont are set from one set of numbers. Change
+`Envelope::default()` and the SoundFonts must be rebuilt: the envelope test
+fails until they are. It needs `uv` (it runs with numpy) and downloads the
+sources to `target/soundfont-sources/`, checking them against the manifest.
+
+Why the SoundFonts are cut down, not used as they are:
+
+* `fluid_synth_set_gen()` only adds an offset to the SoundFont's own value, so
+  the envelope is written into the file.
+* Both sources' pianos are recordings with a long natural decay and a loop that
+  is not periodic, which beats at the wrap. Each sample is replaced by a
+  resynthesis of its loop: whole periods of its own harmonics at exactly the
+  key's pitch, so the level is flat until the envelope moves it.
+* Every preset-level generator and modulator, the filter, LFOs, modulation
+  envelope, reverb and chorus sends, pan, tuning offsets and key-scaling
+  generators (`GEN_KEYTOVOLENVDECAY`, `GEN_KEYTOVOLENVHOLD`) are removed. The
+  key scaling is set from `key_to_hold` and `key_to_decay`. The only
+  modulators left are the SoundFont defaults, of which velocity to attenuation
+  is the one in play.
+* Only the left sample of a stereo pair is kept: the pair's phase difference
+  moves with a fraction of a cent of detune, and the sum's fundamental walks
+  with it.
+
+`tests/soundfont_envelope.rs` is the check that the two agree. It renders single
+notes at several velocities across the keyboard, measures the energy at each
+note's fundamental over time, and compares it to the MIDI generator's envelope
+(within 1 dB, and 0.5 dB for the velocity curve). It needs `fluidsynth` and
+skips without it, unless `REQUIRE_FLUIDSYNTH` is set. It is a test, not a
+source of data.
+
+The envelope's fade rate is 96 dB per `decay` or `release` time, not 100:
+FluidSynth's volume envelope spans 960 centibels (`FLUID_PEAK_ATTENUATION`),
+and the test found the 100 dB assumption 4% slow.
+
+Install FluidSynth with `apt install fluidsynth`, or build it from source with
+the audio drivers and libsndfile off (`cmake -Denable-libsndfile=off ...`).

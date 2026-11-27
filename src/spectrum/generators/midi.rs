@@ -26,8 +26,11 @@ const KEYS: usize = 128;
 const SUSTAIN_PEDAL: u8 = 64;
 
 /// The fade rate's reference: a SoundFont's decay and release times are how
-/// long a fade from the peak to silence would take, and silence is 100 dB down.
-const FADE_DB: f64 = 100.0;
+/// long a fade from the peak to silence would take, and silence is 96 dB down.
+/// The SoundFont spec leaves the range open; FluidSynth, which renders the eval
+/// audio, uses 960 centibels (`FLUID_PEAK_ATTENUATION`), and the envelope test
+/// in `tests/soundfont_envelope.rs` holds the two together.
+const FADE_DB: f64 = 96.0;
 
 /// Below this fraction of the peak a fading note is gone.
 fn silent(level: f64) -> bool {

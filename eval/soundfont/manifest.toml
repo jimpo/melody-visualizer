@@ -1,0 +1,35 @@
+# The source SoundFonts the eval pianos are cut from. `build.py` downloads each,
+# checks both checksums, and writes a derived SoundFont with a known envelope.
+#
+# The sources are not committed (30 and 148 MB); they download to
+# target/soundfont-sources/. The derived SoundFonts are small and are committed
+# beside this file, so the tests need neither the sources nor numpy. Both
+# licences allow redistributing a modified file. `derived_sha256` is what the
+# build must produce, so a change to the build or the envelope shows as a diff.
+
+# The tuning set's piano. Its piano samples are short loops.
+[[source]]
+id = "generaluser"
+name = "GeneralUser GS 2.0.3, preset 0:0 Grand Piano"
+author = "S. Christian Collins"
+url = "https://github.com/mrbumpy409/GeneralUser-GS/raw/684543d5e5efaef08d02be50dcda8d552478fa60/GeneralUser-GS.sf2"
+file = "GeneralUser-GS.sf2"
+license = "GeneralUser GS License v2.0: free for any use, commercial included, and may be modified; it inherits the terms of its samples, which the author states all allow full use (documentation/LICENSE.txt)"
+download_sha256 = "9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe"
+sha256 = "9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe"
+derived_sha256 = "64baa4b78c9095d9f03514913271239825af12734847996cca3013ad6ae2ee63"
+
+# The held-out set's piano: a different recording, to check the chain is not
+# tuned to one timbre.
+[[source]]
+id = "fluidr3"
+name = "FluidR3 GM 3.1, preset 0:0 Yamaha Grand Piano"
+author = "Frank Wen"
+url = "https://deb.debian.org/debian/pool/main/f/fluid-soundfont/fluid-soundfont-gm_3.1-6_all.deb"
+archive = "deb"
+member = "./usr/share/sounds/sf2/FluidR3_GM.sf2"
+file = "FluidR3_GM.sf2"
+license = "MIT (Debian copyright file of fluid-soundfont-gm 3.1-6)"
+download_sha256 = "9965fbcc6acee17d6f72b685d28c7f968ec64eba14645445b476d5c6cc2eee4c"
+sha256 = "74594e8f4250680adf590507a306655a299935343583256f3b722c48a1bc1cb0"
+derived_sha256 = "6c834d98559791f63a3f5788a5db5715ae3cdcdebe59a6807ba931da4af0148a"

@@ -5,3 +5,4 @@ target/
 FOREGENT.md
 .worktreeinclude
 
+__pycache__/

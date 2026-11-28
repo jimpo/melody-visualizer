@@ -544,7 +544,7 @@ produce identical spectra.
 
 `--reference song.mid` scores the chain against the MIDI file the WAV was
 rendered from (`src/reference.rs`). The reference is the MIDI generator's
-fundamentals under the config's envelope, with no transforms, on the same
+fundamentals under the config's SoundFont, with no transforms, on the same
 ticks. Both it and the chain's output are folded into the 88 piano keys by
 taking the max over the bins within ±½ semitone (a sum would change with the
 grid's resolution). The chain's latency is the lag, within `--max-lag-ms`

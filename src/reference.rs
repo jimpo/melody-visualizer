@@ -1,7 +1,7 @@
 //! The reference the audio chain is scored against, and the score.
 //!
 //! The reference is the MIDI generator's own output: each sounding note is its
-//! fundamental alone, at the amplitude the SoundFont envelope gives it, with no
+//! fundamental alone, at the amplitude the SoundFont's zones give it, with no
 //! transforms. The diffuser and the rest of the chain are taste, not truth, so
 //! they are left out. It runs on the eval runner's ticks (tick `k` ends at
 //! `k / update_rate` seconds), so row `k` of the reference lines up with row `k`
@@ -14,12 +14,15 @@
 //! two over a range of offsets and scores at the best one. The offset is the
 //! latency, and is reported.
 
+use std::sync::Arc;
+
 use midly::{MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use nice_plug::midi::{Channel, Key, NoteEvent, VoiceID};
 use rtrb::RingBuffer;
 
 use crate::spectrum::SpectrumParams;
-use crate::spectrum::generators::midi::{Envelope, Voices};
+use crate::spectrum::generators::midi::Voices;
+use crate::spectrum::generators::soundfont::Bank;
 
 /// The piano's keys, A0 to C8: MIDI notes 21 to 108.
 pub const KEYS: usize = 88;
@@ -133,7 +136,7 @@ fn collect<F: Fn(f64, ()) -> f64>(smf: &Smf, to_seconds: F) -> Vec<Timed> {
 /// voices aged one tick, and the row drawn. `ticks` rows are returned.
 pub fn render(
 	events: &[Timed],
-	envelope: &Envelope,
+	bank: &Arc<Bank>,
 	update_rate: u32,
 	ticks: usize,
 ) -> Vec<[f64; KEYS]> {
@@ -145,7 +148,7 @@ pub fn render(
 	}
 	let capacity = per_tick.values().copied().max().unwrap_or(0).max(1);
 	let (mut writer, reader) = RingBuffer::new(capacity);
-	let mut voices = Voices::new(envelope.clone(), reader);
+	let mut voices = Voices::new(Arc::clone(bank), reader);
 
 	// One bin per key, so the generator's impulse lands exactly on its key.
 	let low = key_frequency(0);
@@ -339,11 +342,16 @@ mod tests {
 			velocity: 0.0,
 		};
 		let events = [(0.0, on), (0.5, off)];
-		let rows = render(&events, &Envelope::default(), 50, 100);
+		let rows = render(&events, &Arc::new(Bank::fallback()), 50, 100);
 		let a4 = usize::from(69 - LOWEST_KEY);
 		assert!(rows[0][a4] > 0.0);
+		// The zone's tuning puts a few cents of the note on the key below.
 		for (key, v) in rows[10].iter().enumerate() {
-			assert!(key == a4 || *v < 1e-6, "key {key} = {v}");
+			let near = key.abs_diff(a4) == 1;
+			assert!(
+				key == a4 || *v < if near { 0.25 * rows[10][a4] } else { 1e-6 },
+				"key {key} = {v}"
+			);
 		}
 		assert!(rows[99][a4] < rows[10][a4] * 0.01, "released note fades");
 	}

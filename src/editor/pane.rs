@@ -46,7 +46,6 @@ const CONTROL_SPACING: f32 = 8.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
 	Spectrum,
-	Envelope,
 	HarmonicSummation,
 	PowerMap,
 	Diffuser,
@@ -58,7 +57,6 @@ pub enum Stage {
 pub fn view<'a>(params: &'a PluginParams, open: Option<Stage>, midi: bool) -> Element<'a, Message> {
 	let stages = [
 		Stage::Spectrum,
-		Stage::Envelope,
 		Stage::HarmonicSummation,
 		Stage::PowerMap,
 		Stage::Diffuser,
@@ -97,7 +95,6 @@ fn stage_row<'a>(
 	let switch = switch_param(params, stage);
 	let enabled = switch.is_none_or(|param| param.value())
 		&& match stage {
-			Stage::Envelope => midi,
 			Stage::HarmonicSummation => !midi,
 			_ => true,
 		};
@@ -111,11 +108,6 @@ fn stage_row<'a>(
 			"Spectrum",
 			ANALYSIS,
 			format!("{} · {}", params.window_ms, params.update_rate),
-		),
-		Stage::Envelope => (
-			"Envelope",
-			ANALYSIS,
-			format!("{} · {}", params.attack, params.release),
 		),
 		Stage::HarmonicSummation => (
 			"Harmonic Summation",
@@ -243,48 +235,6 @@ fn body<'a>(params: &'a PluginParams, stage: Stage, midi: bool) -> Element<'a, M
 				&params.input_gain,
 				"Input gain",
 				"Amplifies the audio before analysis. Louder sound draws brighter, so raise it until quiet playing shows.",
-			),
-		],
-		Stage::Envelope => vec![
-			param_slider(
-				&params.delay,
-				"Delay",
-				"How long after the key goes down before a MIDI note starts to light.",
-			),
-			param_slider(
-				&params.attack,
-				"Attack",
-				"How long a note then takes to rise, in a straight line, to full brightness.",
-			),
-			param_slider(
-				&params.hold,
-				"Hold",
-				"How long it stays at full brightness.",
-			),
-			param_slider(
-				&params.decay,
-				"Decay",
-				"How long a fade from full brightness to nothing would take. The note falls at that rate until it reaches the sustain level.",
-			),
-			param_slider(
-				&params.sustain,
-				"Sustain",
-				"The level a held note settles at, in dB below its peak.",
-			),
-			param_slider(
-				&params.release,
-				"Release",
-				"How long a fade to nothing would take once the key (and the sustain pedal) is let go.",
-			),
-			param_slider(
-				&params.key_to_hold,
-				"Hold by key",
-				"How much each key above middle C shortens the hold, in timecents. Negative lengthens it.",
-			),
-			param_slider(
-				&params.key_to_decay,
-				"Decay by key",
-				"How much each key above middle C shortens the decay, in timecents. Negative lengthens it.",
 			),
 		],
 		Stage::HarmonicSummation => vec![

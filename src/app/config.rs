@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, path::PathBuf};
 
 use crate::error::Error;
 use crate::graphic::{
@@ -8,7 +8,7 @@ use crate::graphic::{
 use crate::note;
 use crate::spectrum::{
 	Hz, SpectrumGenerator, SpectrumParams, SpectrumTransform, TransformChain, TransformId,
-	generators::{SourceGenerator, audio, midi},
+	generators::{SourceGenerator, audio},
 	transforms::{
 		decibel_converter::DecibelConverter,
 		diffuser::{self, Diffuser},
@@ -57,11 +57,15 @@ impl FromIterator<TransformEntry> for TransformChain {
 }
 
 /// The generator's settings: the audio analysis it runs until the host plays a
-/// note, and the envelope it gives notes from then on.
+/// note, and the SoundFont it draws notes from then on.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SpectrumGeneratorConfig {
 	pub audio: audio::Config,
-	pub envelope: midi::Envelope,
+	/// The SoundFont file whose zones set each note's envelope, level and pitch.
+	/// The generator uses the one built into the plugin when this is unset or
+	/// the file does not load.
+	#[serde(default)]
+	pub soundfont: Option<PathBuf>,
 }
 
 impl SpectrumGeneratorConfig {
@@ -206,7 +210,7 @@ impl Default for Config {
 			samples_per_octave: 180,
 			spectrum_generator: SpectrumGeneratorConfig {
 				audio: audio::Config::default(),
-				envelope: midi::Envelope::default(),
+				soundfont: None,
 			},
 			spectrum_transforms: transforms
 				.into_iter()

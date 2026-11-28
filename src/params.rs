@@ -14,7 +14,7 @@ use crate::app::config::{
 };
 use crate::note;
 use crate::note::Note;
-use crate::spectrum::generators::{audio, midi};
+use crate::spectrum::generators::audio;
 
 /// The ends of the pitch range, the 88 keys of a piano.
 const LOWEST_NOTE: Note = note!(A, 0);
@@ -26,7 +26,6 @@ const KEY_OCTAVE: i8 = 4;
 
 const SEMITONES_PER_OCTAVE: f64 = 12.0;
 const CENTS_PER_OCTAVE: f64 = 1200.0;
-const MS_PER_SECOND: f64 = 1000.0;
 
 /// The parameter IDs are saved in every host project that uses the plugin:
 /// never change one.
@@ -36,25 +35,6 @@ pub struct PluginParams {
 	pub window_ms: IntParam,
 	#[id = "update_rate"]
 	pub update_rate: IntParam,
-
-	/// The SoundFont volume envelope: times in milliseconds, the sustain in dB
-	/// below the peak and the key scaling in timecents a key.
-	#[id = "delay"]
-	pub delay: FloatParam,
-	#[id = "attack"]
-	pub attack: FloatParam,
-	#[id = "hold"]
-	pub hold: FloatParam,
-	#[id = "decay"]
-	pub decay: FloatParam,
-	#[id = "sustain"]
-	pub sustain: FloatParam,
-	#[id = "release"]
-	pub release: FloatParam,
-	#[id = "key_to_hold"]
-	pub key_to_hold: FloatParam,
-	#[id = "key_to_decay"]
-	pub key_to_decay: FloatParam,
 
 	#[id = "harmonic_summation"]
 	pub harmonic_summation: BoolParam,
@@ -103,7 +83,6 @@ impl Default for PluginParams {
 	fn default() -> Self {
 		let config = Config::default();
 		let analysis = &config.spectrum_generator.audio;
-		let envelope = &config.spectrum_generator.envelope;
 		let GraphicGeneratorConfig::Spiral(spiral) = &config.graphic_generator;
 		// Each stage's parameters, and whether it runs, from the default chain.
 		let mut harmonic_summation = None;
@@ -142,25 +121,6 @@ impl Default for PluginParams {
 				linear(audio::MIN_UPDATE_RATE as i32, audio::MAX_UPDATE_RATE as i32),
 			)
 			.with_unit(" / sec"),
-
-			delay: envelope_time("Delay", envelope.delay, 5000.0),
-			attack: envelope_time("Attack", envelope.attack, 2000.0),
-			hold: envelope_time("Hold", envelope.hold, 5000.0),
-			decay: envelope_time("Decay", envelope.decay, 20000.0),
-			sustain: FloatParam::new(
-				"Sustain",
-				envelope.sustain as f32,
-				FloatRange::Linear {
-					min: 0.0,
-					max: 100.0,
-				},
-			)
-			.with_step_size(0.1)
-			.with_value_to_string(formatters::v2s_f32_rounded(1))
-			.with_unit(" dB"),
-			release: envelope_time("Release", envelope.release, 20000.0),
-			key_to_hold: key_scaling("Hold by key", envelope.key_to_hold),
-			key_to_decay: key_scaling("Decay by key", envelope.key_to_decay),
 
 			harmonic_summation: BoolParam::new("Harmonic summation", harmonic_summation.0),
 			harmonics: IntParam::new(
@@ -290,16 +250,7 @@ impl PluginParams {
 				update_rate: self.update_rate.value() as u32,
 				input_gain_db: plain(self.input_gain.value()),
 			},
-			envelope: midi::Envelope {
-				delay: plain(self.delay.value()) / MS_PER_SECOND,
-				attack: plain(self.attack.value()) / MS_PER_SECOND,
-				hold: plain(self.hold.value()) / MS_PER_SECOND,
-				decay: plain(self.decay.value()) / MS_PER_SECOND,
-				sustain: plain(self.sustain.value()),
-				release: plain(self.release.value()) / MS_PER_SECOND,
-				key_to_hold: plain(self.key_to_hold.value()),
-				key_to_decay: plain(self.key_to_decay.value()),
-			},
+			soundfont: None,
 		};
 
 		for entry in &mut config.spectrum_transforms {
@@ -364,40 +315,6 @@ fn key_name(semitones: i32) -> String {
 /// back, as the user typed it or as `name` wrote it.
 fn parse_name(max: i32, name: fn(i32) -> String) -> impl Fn(&str) -> Option<i32> + Send + Sync {
 	move |text| (0..=max).find(|&value| name(value) == text.trim())
-}
-
-/// One of the envelope's times, set in milliseconds and stored in seconds. The
-/// range is skewed so the short times a percussive note needs get most of the
-/// slider.
-fn envelope_time(name: &str, seconds: f64, max_ms: f32) -> FloatParam {
-	FloatParam::new(
-		name,
-		(seconds * MS_PER_SECOND) as f32,
-		FloatRange::Skewed {
-			min: 0.0,
-			max: max_ms,
-			factor: FloatRange::skew_factor(-2.0),
-		},
-	)
-	.with_step_size(1.0)
-	.with_value_to_string(formatters::v2s_f32_rounded(0))
-	.with_unit(" ms")
-}
-
-/// How much a key shortens a time, as a SoundFont sets it: timecents a key
-/// above middle C.
-fn key_scaling(name: &str, timecents: f64) -> FloatParam {
-	FloatParam::new(
-		name,
-		timecents as f32,
-		FloatRange::Linear {
-			min: -1200.0,
-			max: 1200.0,
-		},
-	)
-	.with_step_size(1.0)
-	.with_value_to_string(formatters::v2s_f32_rounded(0))
-	.with_unit(" tc / key")
 }
 
 fn linear(min: i32, max: i32) -> IntRange {

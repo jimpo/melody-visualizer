@@ -69,8 +69,9 @@ processing audio through the plugin.
 
 Route a MIDI track's notes into the plugin and it draws the notes instead of
 the audio, from the first note until the plugin is reactivated. Each note
-lights at its pitch, as bright as its velocity, and fades by the Envelope
-stage's attack, decay, sustain and release.
+lights at its pitch, as bright as its velocity, and fades as the SoundFont
+says. The config's `soundfont` names an SF2 file to read; the plugin uses a
+built-in piano when it is unset or does not load.
 
 Set `NICE_LOG=/path/to/file` in the host's environment to capture the plugin's
 log.

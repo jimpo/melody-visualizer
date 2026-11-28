@@ -1,8 +1,10 @@
 pub mod audio;
 pub mod midi;
+pub mod soundfont;
 
 use std::{
 	fmt::{self, Debug},
+	path::PathBuf,
 	sync::{
 		Arc,
 		atomic::{AtomicBool, Ordering},
@@ -15,6 +17,7 @@ use crate::audio::SampleReader;
 use crate::spectrum::{Spectrum, SpectrumBuffer, SpectrumGenerator};
 use audio::AudioSpectrumGenerator;
 use midi::{NoteReader, Voices};
+use soundfont::Bank;
 
 /// The generator the engine runs: the audio, until the host plays a note, and
 /// the notes from then on.
@@ -24,6 +27,8 @@ use midi::{NoteReader, Voices};
 pub struct SourceGenerator {
 	audio: AudioSpectrumGenerator,
 	voices: Voices,
+	/// The file the bank was read from, if the config named one.
+	soundfont: Option<PathBuf>,
 	/// Raised the tick the first note is played, for the editor to read.
 	midi: Arc<AtomicBool>,
 }
@@ -47,14 +52,24 @@ impl SourceGenerator {
 	) -> Self {
 		SourceGenerator {
 			audio: AudioSpectrumGenerator::new(config.audio, samples, sample_rate),
-			voices: Voices::new(config.envelope, notes),
+			voices: Voices::new(
+				Arc::new(Bank::load_or_fallback(config.soundfont.as_deref())),
+				notes,
+			),
+			soundfont: config.soundfont,
 			midi,
 		}
 	}
 
 	pub fn set_config(&mut self, config: SpectrumGeneratorConfig) {
 		self.audio.set_config(config.audio);
-		self.voices.envelope = config.envelope;
+		// Reads the file on the spectrum thread, which stalls a tick or two but
+		// never the audio.
+		if config.soundfont != self.soundfont {
+			let bank = Bank::load_or_fallback(config.soundfont.as_deref());
+			self.voices.set_bank(Arc::new(bank));
+			self.soundfont = config.soundfont;
+		}
 	}
 }
 

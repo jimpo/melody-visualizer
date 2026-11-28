@@ -8,7 +8,7 @@
 //! config give the same spectra, byte for byte.
 //!
 //! With `--reference`, the MIDI file is rendered as the reference spectrum (the
-//! MIDI generator's fundamentals under the config's envelope, no transforms),
+//! MIDI generator's fundamentals under the config's SoundFont, no transforms),
 //! both it and the chain's output are folded into the 88 piano keys, and the
 //! chain's latency is measured by cross-correlation and reported with the score
 //! at that offset.
@@ -29,6 +29,7 @@ use melody_visualizer::app::Config;
 use melody_visualizer::audio::ring::sample_ring;
 use melody_visualizer::reference;
 use melody_visualizer::spectrum::generators::audio::{self, AudioSpectrumGenerator, MAX_WINDOW_MS};
+use melody_visualizer::spectrum::generators::soundfont::Bank;
 use melody_visualizer::spectrum::{SpectrumBuffer, SpectrumGenerator, TransformChain};
 
 const USAGE: &str = "usage: eval [--config chain.toml] [--out spectra.csv] [--reference song.mid [--max-lag-ms N]] input.wav\n       eval --dump-config";
@@ -143,12 +144,10 @@ fn run() -> Result<(), String> {
 		let bytes = std::fs::read(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
 		let events =
 			reference::read_midi(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-		let rows = reference::render(
-			&events,
-			&config.spectrum_generator.envelope,
-			update_rate,
-			folded.len(),
-		);
+		let bank = Arc::new(Bank::load_or_fallback(
+			config.spectrum_generator.soundfont.as_deref(),
+		));
+		let rows = reference::render(&events, &bank, update_rate, folded.len());
 		let max_lag = (max_lag_ms / 1e3 * update_rate as f64).round() as usize;
 		match reference::align(&rows, &folded, max_lag) {
 			Some(a) => println!(

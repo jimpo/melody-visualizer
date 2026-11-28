@@ -202,11 +202,21 @@ One sample's journey:
    **Or draw the notes** — `spectrum/generators/midi.rs`. The engine runs a
    `SourceGenerator`, which drains the note ring every tick and draws the
    audio until the first note-on arrives, then the notes for as long as
-   the plugin stays active. Each sounding voice, one per channel and key, is
-   an impulse at its pitch, its power split linearly between the two nearest
-   bins, and voices on one bin add in power. A voice's amplitude is its
-   velocity squared, the DLS and General MIDI 2 default curve of
-   40·log₁₀(v) dB, times a linear ADSR envelope. Events are timed by the
+   the plugin stays active. The generator is a SoundFont synth whose output is
+   one partial per voice: it reads the SoundFont named in the config
+   (`spectrum/generators/soundfont.rs`, the only user of the `rustysynth`
+   crate; the committed `assets/soundfont/piano.sf2` when none is set or it
+   fails to load) once, off the audio thread, and keeps only what moves the
+   fundamental's loudness, pitch and lifetime. A note-on is a voice with one
+   layer per zone that plays it (instrument zone in a preset zone, settings
+   merged as a synth does). Each layer is an impulse at its pitch (root key,
+   tuning, scale tuning, pitch bend and its RPN 0 range), its power split
+   linearly between the two nearest bins; layers and voices on one bin add
+   in power. A layer's amplitude is the velocity, zone attenuation, CC7 and
+   CC11 attenuations (FluidSynth's default modulators), times the zone's
+   volume envelope. Striking a sounding key releases the old voice, which
+   fades. The sustain and sostenuto pedals hold released keys; the soft pedal
+   is ignored, as FluidSynth ignores it. Events are timed by the
    tick they arrive in: a note-on from the start of the tick's interval and
    a note-off from its end, so a note shorter than a tick still shows for
    one. A wildcard channel or key, a host's "all notes off", addresses every
@@ -260,7 +270,7 @@ stands.
 | Stage | Output units | Range |
 |---|---|---|
 | `AudioSpectrumGenerator` | amplitude (√ of the power binned per Parseval) | `[0, ∞)`, before the input gain, order 0.06 for a full-scale sine and far smaller for real music; the audio is scaled by the Input gain first, so the default +30 dB lifts it |
-| `SourceGenerator`, drawing notes | amplitude: velocity² × envelope, summed in power per bin | `[0, ~1]` for one note; a few notes on one bin add in power |
+| `SourceGenerator`, drawing notes | amplitude: velocity² × zone attenuation × CC7/CC11 × zone envelope, summed in power per bin | `[0, ~1]` for one note; a few notes on one bin add in power |
 | `HarmonicSummation` | amplitude, weighted sum | rescales: `[0, max · Σ decay^(h−1)]`, up to about 4.2× the input's peak at the defaults. A partial whose harmonics fall off the top of the grid keeps only its own value |
 | `PowerMap` | amplitude raised to `exponent` | rescales: `[0, max^exponent]`, saturating at `f64::MAX` rather than overflowing |
 | `Diffuser` | unchanged | unchanged: the window is normalized to sum 1, so the transform is a weighted average and preserves both the values' sum and range. Spreading amplitude linearly spreads less power than spreading power would, so a narrow peak loses more of its power than a wide hump |
@@ -438,10 +448,9 @@ summation, the power map and the diffuser qualify.
 The spectrum stage exposes two sliders, both in units a listener can read
 without the sample rate: the **Window** in milliseconds, which is the audio
 each spectrum analyses and so both its frequency resolution and its latency,
-and the **Update rate** in spectra per second. Below it, the **Envelope** stage
-holds the attack, decay, sustain and release a MIDI note is drawn with. The
-pane dims the stages that do nothing for the source being drawn: the envelope
-while it draws audio, the harmonic summation while it draws notes.
+and the **Update rate** in spectra per second. The pane dims the stages that do
+nothing for the source being drawn: the harmonic summation while it draws
+notes.
 
 Each control reads its parameter on every redraw, so host automation moves the
 controls. A slider drag is one gesture to the host: `raw_begin_set_parameter`
@@ -480,7 +489,8 @@ each other.
 | `note.rs` | Musical note and pitch-class math; the `note!` macro. |
 | `app/config.rs` | `Config` plus the config-enum macros. |
 | `spectrum/` | `Spectrum` types, spectrum thread, generators, transforms. |
-| `spectrum/generators/midi.rs` | The note ring, the voices and their ADSR envelope. |
+| `spectrum/generators/midi.rs` | The note ring, the voices, the pedals and controllers, and the envelope. |
+| `spectrum/generators/soundfont.rs` | Reads a SoundFont into the zones the voices draw from. |
 | `graphic/` | `Graphic`/`GraphicBuffer`, graphic thread, generators. |
 | `traits.rs` | `Configurable` — build or update a component from its config. |
 | `error.rs` | Crate-wide `Error`. |
@@ -516,9 +526,9 @@ next step is planned. Each item is a candidate for its own change.
 
 ### Audio and the host
 
-- **MIDI notes ignore pitch bend and MPE.** Pitch bend would
-  `MidiConfig::MidiCCs`; pitch bend would move a voice between bins, which the
-  linear split already supports.
+- **MIDI notes ignore MPE**, program and bank changes (every note plays bank 0
+  program 0), and the sample's own recorded fade; the envelope alone sets the
+  fade.
 - **A full note ring drops events unannounced**, and a dropped note-off leaves
   its note on. The ring holds a thousand events a tick.
 - **The switch to MIDI is one way** until the plugin is reactivated.
